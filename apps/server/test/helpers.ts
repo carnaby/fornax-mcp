@@ -20,6 +20,7 @@ export function testConfig(dataDir: string, overrides: Partial<Config> = {}): Co
     dbFile: join(dataDir, 'fornax.db'),
     filesDir: join(dataDir, 'files'),
     publicUrl: 'https://fornax.example.com',
+    publicUrlConfigured: true,
     secret: TEST_SECRET,
     port: 0,
     host: '127.0.0.1',

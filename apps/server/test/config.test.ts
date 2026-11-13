@@ -18,6 +18,7 @@ describe('loadConfig', () => {
     expect(c.filesDir).toBe(join(dir, 'files'));
     expect(c.port).toBe(3000);
     expect(c.publicUrl).toBe('http://localhost:3000');
+    expect(c.publicUrlConfigured).toBe(false);
     expect(c.limits.maxQueuedPerToken).toBe(50);
     expect(c.retention.finishedMs).toBe(14 * 86_400_000);
     expect(c.retention.orphanUploadMs).toBe(24 * 3_600_000);
@@ -29,6 +30,7 @@ describe('loadConfig', () => {
     writeFileSync(join(dir, 'fornax.yaml'), 'public_url: https://fornax.example.com\nlimits:\n  max_upload_mb: 10\nretention:\n  finished_days: 2\n');
     const c = loadConfig(e);
     expect(c.publicUrl).toBe('https://fornax.example.com');
+    expect(c.publicUrlConfigured).toBe(true);
     expect(c.limits.maxUploadBytes).toBe(10 * 1024 * 1024);
     expect(c.limits.maxOutputBytes).toBe(4096 * 1024 * 1024);
     expect(c.retention.finishedMs).toBe(2 * 86_400_000);

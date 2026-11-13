@@ -7,7 +7,7 @@ import { notFound } from '../domain/errors.js';
 import { announceTypes } from '../domain/job-types.js';
 import { claimJob, claimView, failJob, heartbeatJob, ownedJob, releaseJob } from '../domain/queue.js';
 import { workerQueue } from '../domain/maintenance.js';
-import { completeJob, discardOutputs, outputBudget, storeOutput } from '../domain/outputs.js';
+import { completeJob, discardOutputs, hasProducedFiles, outputBudget, storeOutput } from '../domain/outputs.js';
 import { jobSignal } from '../domain/signal.js';
 import { touchWorker } from '../domain/worker-state.js';
 import { requireRole } from './auth.js';
@@ -73,8 +73,8 @@ export const workerRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps) => 
         if (stop.signal.aborted) return reply.code(204).send();
         const job = claimJob(deps.db, deps.clock());
         if (job) {
-          if (!gone && job.attempts > 1) {
-            // An earlier attempt whose lease ran out may have left outputs; they must not reach this attempt's manifest.
+          if (!gone && hasProducedFiles(deps.db, job.id)) {
+            // An earlier attempt (lease ran out, or a failed discard on release) may have left outputs; they must not reach this attempt's manifest.
             try {
               await discardOutputs(deps, job.id, { keepLog: false });
             } catch (e) {

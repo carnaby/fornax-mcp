@@ -37,6 +37,8 @@ export type Config = {
   dbFile: string;
   filesDir: string;
   publicUrl: string;
+  /** False when `public_url` was not set: links then point to localhost. */
+  publicUrlConfigured: boolean;
   /** Key for signed links (FORNAX_SECRET). */
   secret: string;
   port: number;
@@ -63,6 +65,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     dataDir,
     dbFile: join(dataDir, 'fornax.db'),
     filesDir: join(dataDir, 'files'),
+    publicUrlConfigured: f.public_url !== undefined,
     publicUrl: (f.public_url ?? `http://localhost:${port}`).replace(/\/+$/, ''),
     secret,
     port,

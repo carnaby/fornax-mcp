@@ -49,6 +49,11 @@ export async function storeOutput(
   return row;
 }
 
+/** Whether the job holds any produced file (output, preview or log). */
+export function hasProducedFiles(db: Db, jobId: string): boolean {
+  return db.select({ id: files.id }).from(files).where(and(eq(files.jobId, jobId), inArray(files.kind, [...PRODUCED] as FileRow['kind'][]))).limit(1).get() !== undefined;
+}
+
 /** Remove what an attempt produced (a retry starts clean); the log stays when asked. */
 export async function discardOutputs(deps: RouteDeps, jobId: string, opts: { keepLog: boolean }): Promise<void> {
   const kinds = opts.keepLog ? ['output', 'preview'] : [...PRODUCED];

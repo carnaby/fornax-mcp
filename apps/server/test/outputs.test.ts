@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { files, jobs } from '../src/db/schema.js';
+import { releaseJob } from '../src/domain/queue.js';
 import { FileStore } from '../src/files/store.js';
 import { buildApp } from '../src/http/app.js';
 import { renderContract } from './fixtures.js';
@@ -113,6 +114,16 @@ describe('outputs', () => {
     expect((await r.complete({}, again.lease)).statusCode).toBe(200);
     const job = (await t.app.inject({ method: 'GET', url: `/api/jobs/${r.id}`, headers: { authorization: `Bearer ${r.alice}` } })).json();
     expect(job.outputs.map((o: { name: string }) => o.name)).toEqual(['fresh.png']);
+    expect(t.db.select().from(files).all().filter((f) => f.jobId === r.id).map((f) => f.name)).not.toContain('stale.png');
+  });
+
+  test('stale outputs are discarded on any claim, also when attempts went back to 0', async () => {
+    const r = await running();
+    await r.put('stale.png', 'old');
+    releaseJob(t.db, r.id, t.db.select().from(jobs).get()!.leaseId!, t.clock.now);
+    expect(t.db.select().from(jobs).get()).toMatchObject({ state: 'queued', attempts: 0 });
+    const res = await t.app.inject({ method: 'POST', url: '/api/worker/jobs/claim', headers: { authorization: `Bearer ${r.worker}` }, payload: { wait: 0 } });
+    expect(res.json().attempt).toBe(1);
     expect(t.db.select().from(files).all().filter((f) => f.jobId === r.id).map((f) => f.name)).not.toContain('stale.png');
   });
 

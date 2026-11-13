@@ -17,8 +17,13 @@ export async function runMaintenance(deps: RouteDeps) {
 
   const leases = expireLeases(db, now);
 
-  const orphanRows = db.select().from(files).where(and(eq(files.kind, 'input'), isNull(files.jobId), lt(files.createdAt, ago(now, r.orphanUploadMs)))).all();
-  await deleteFiles(deps, orphanRows);
+  // The rows go first, in one guarded statement: a file bound to a job meanwhile is no longer matched and keeps its disk file.
+  const orphanRows = db
+    .delete(files)
+    .where(and(eq(files.kind, 'input'), isNull(files.jobId), lt(files.createdAt, ago(now, r.orphanUploadMs))))
+    .returning({ id: files.id })
+    .all();
+  for (const row of orphanRows) await deps.store.remove(row.id);
   db.delete(uploads).where(lt(uploads.expiresAt, now)).run();
   db.delete(invites).where(lt(invites.expiresAt, now)).run();
 
