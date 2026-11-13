@@ -1,11 +1,10 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { tooLarge } from '../domain/errors.js';
 import { createUploadLink, fileView, getOwnFile, saveFile } from '../domain/files.js';
 import { requireRole } from './auth.js';
 import type { RouteDeps } from './deps.js';
 import { parse } from './parse.js';
-import { rawBody } from './uploads.js';
+import { rawBody, refuseOversized } from './uploads.js';
 
 /** /api/*: the client API. Only tokens with role "client" open it. */
 export const clientRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps) => {
@@ -18,8 +17,7 @@ export const clientRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps) => 
     rawBody(raw);
     raw.post('/files', async (req, reply) => {
       const { name } = parse(z.object({ name: z.string().min(1).max(500) }), req.query);
-      const declared = Number(req.headers['content-length'] ?? 0);
-      if (declared > deps.config.limits.maxUploadBytes) throw tooLarge('the file is too large');
+      refuseOversized(req, deps.config.limits.maxUploadBytes);
       const row = await saveFile(deps, { owner: req.identity!.tokenId, name, kind: 'input', source: req.raw, maxBytes: deps.config.limits.maxUploadBytes });
       return reply.code(201).send(fileView(row));
     });

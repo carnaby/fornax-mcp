@@ -34,3 +34,24 @@ test('remove is idempotent', async () => {
   await store.remove('01X');
   expect(existsSync(store.pathOf('01X'))).toBe(false);
 });
+
+test('a source that errors mid-stream rejects the write and leaves nothing behind', async () => {
+  const source = new Readable({ read() {} });
+  const p = store.write('01ERR', source, 100);
+  source.push(Buffer.from('partial'));
+  await new Promise((r) => setTimeout(r, 20));
+  source.destroy(new Error('socket reset'));
+  await expect(p).rejects.toThrow('socket reset');
+  expect(existsSync(store.pathOf('01ERR'))).toBe(false);
+  expect(readdirSync(store.tmp)).toEqual([]);
+});
+
+test('a source closed early counts as an aborted upload', async () => {
+  const source = new Readable({ read() {} });
+  const p = store.write('01CUT', source, 100);
+  source.push(Buffer.from('partial'));
+  await new Promise((r) => setTimeout(r, 20));
+  source.destroy();
+  await expect(p).rejects.toThrow('upload aborted');
+  expect(readdirSync(store.tmp)).toEqual([]);
+});

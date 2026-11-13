@@ -68,3 +68,63 @@ describe('upload links', () => {
     expect((await t.app.inject({ method: 'PUT', url: path, headers, payload: 'ok' })).statusCode).toBe(201);
   });
 });
+
+describe('aborted and oversized uploads', () => {
+  test('after an aborted upload through a link, the link is usable again', async () => {
+    const { Readable } = await import('node:stream');
+    const { createUploadLink, takeUploadLink, releaseUploadLink, saveFile } = await import('../src/domain/files.js');
+    const majo = issueToken(t.db, 'majo');
+    const owner = (await t.app.inject({ method: 'GET', url: '/api/whoami', headers: { authorization: `Bearer ${majo}` } })).json().name;
+    expect(owner).toBe('majo');
+    const { tokens } = await import('../src/db/schema.js');
+    const tokenId = t.db.select().from(tokens).all()[0]!.id;
+    const deps = { config: t.config, db: t.db, store: new (await import('../src/files/store.js')).FileStore(t.config.filesDir), clock: () => t.clock.now };
+    const link = createUploadLink(deps, tokenId, 'a.bin');
+    const id = new URL(link.url).pathname.split('/').pop()!.split('.')[0]!;
+    const row = takeUploadLink(t.db, id, t.clock.now)!;
+    const source = new Readable({ read() {} });
+    const p = saveFile(deps, { owner: tokenId, id: row.fileId, name: row.name, kind: 'input', source, maxBytes: 100 });
+    source.push(Buffer.from('x'));
+    source.destroy();
+    await expect(p).rejects.toThrow('upload aborted');
+    releaseUploadLink(t.db, row.id);
+    expect(takeUploadLink(t.db, id, t.clock.now)).not.toBeNull();
+  });
+
+  test('real socket: an oversized body gets 413 and the connection closes', async () => {
+    const { request } = await import('node:http');
+    const majo = issueToken(t.db, 'majo');
+    await t.app.listen({ port: 0, host: '127.0.0.1' });
+    const port = (t.app.server.address() as { port: number }).port;
+    // The server closes the connection without reading the rest of the body. Depending on the OS the
+    // client then sees the 413 reply or a connection reset (unread data makes the close an RST); either
+    // way the call finishes instead of hanging.
+    const outcome = await new Promise<number | 'reset'>((resolve, reject) => {
+      const req = request(
+        { host: '127.0.0.1', port, method: 'POST', path: '/api/files?name=big.bin', headers: { authorization: `Bearer ${majo}`, 'transfer-encoding': 'chunked' } },
+        (res) => {
+          res.resume();
+          resolve(res.statusCode ?? 0);
+        },
+      );
+      req.on('error', (e) => {
+        const code = (e as NodeJS.ErrnoException).code;
+        if (code === 'ECONNRESET' || code === 'EPIPE') resolve('reset');
+        else reject(e);
+      });
+      const chunk = Buffer.alloc(64 * 1024);
+      let sent = 0;
+      const pump = () => {
+        while (sent < 4 * 1024 * 1024) {
+          sent += chunk.length;
+          if (!req.write(chunk)) return void req.once('drain', pump);
+        }
+        req.end();
+      };
+      pump();
+    });
+    expect([413, 'reset']).toContain(outcome);
+    expect(t.db.select().from(files).all()).toEqual([]);
+    expect(readdirSync(join(t.config.filesDir, 'tmp'))).toEqual([]);
+  });
+});

@@ -35,16 +35,25 @@ export class FileStore {
     // pipeline() destroys every stream it was given on error, which would kill the request socket
     // before the 413 reply is sent. The source is piped into a PassThrough instead, so only that is destroyed.
     const guard = new PassThrough();
+    const onError = (err: Error) => guard.destroy(err);
+    const onClose = () => {
+      if (!source.readableEnded) guard.destroy(new Error('upload aborted'));
+    };
+    source.once('error', onError);
+    source.once('close', onClose);
     try {
       source.pipe(guard);
       await pipeline(guard, meter, createWriteStream(part));
       await rename(part, this.pathOf(id));
     } catch (e) {
-      // Stop writing but drain the rest of the body so the reply can still be delivered.
+      // Stop reading; the rest of the body is never consumed (the caller closes the connection).
       source.unpipe(guard);
-      source.resume();
+      source.pause();
       await rm(part, { force: true });
       throw e;
+    } finally {
+      source.off('error', onError);
+      source.off('close', onClose);
     }
     return { size, sha256: hash.digest('hex') };
   }

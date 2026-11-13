@@ -47,7 +47,11 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   app.setNotFoundHandler((_req, reply) => reply.code(404).send({ error: 'not_found', message: 'not found' }));
 
   app.setErrorHandler<FastifyError>((err, req, reply) => {
-    if (err instanceof DomainError) return reply.code(err.status).send({ error: err.code, message: err.message });
+    if (err instanceof DomainError) {
+      // After an oversized upload the rest of the body is never read: close the connection.
+      if (err.status === 413) reply.header('connection', 'close');
+      return reply.code(err.status).send({ error: err.code, message: err.message });
+    }
     const status = err.statusCode ?? 500;
     if (status >= 500) {
       // Message and stack only: database errors may carry query values (params, names).
