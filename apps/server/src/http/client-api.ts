@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { createUploadLink, fileView, getOwnFile, saveFile } from '../domain/files.js';
+import { cancelJob, getOwnJob, GROUP, jobView, listJobs, PRIORITIES, submitJob } from '../domain/jobs.js';
 import { offeredTypes, typeView } from '../domain/job-types.js';
 import { workerOnline } from '../domain/worker-state.js';
 import { requireRole } from './auth.js';
@@ -39,4 +40,37 @@ export const clientRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps) => 
       curl: `curl -fsS -X PUT -H "Content-Type: application/octet-stream" --data-binary @<path> "${link.url}"`,
     });
   });
+
+  const submitSchema = z.strictObject({
+    type: z.string().min(1).max(40),
+    params: z.record(z.string(), z.unknown()).default({}),
+    inputs: z.record(z.string(), z.string().min(1).max(40)).default({}),
+    priority: z.enum(PRIORITIES).default('normal'),
+    group: z.string().regex(GROUP).nullable().default(null),
+    callback_url: z.string().max(2000).nullable().default(null),
+  });
+
+  app.post('/jobs', async (req, reply) => {
+    const body = parse(submitSchema, req.body);
+    const row = submitJob(deps.db, deps.config, req.identity!.tokenId, body, deps.clock());
+    return reply.code(201).send(jobView(deps.db, row));
+  });
+
+  app.get('/jobs', async (req) => {
+    const q = parse(
+      z.object({
+        state: z.enum(['queued', 'running', 'succeeded', 'failed', 'canceled']).optional(),
+        group: z.string().regex(GROUP).optional(),
+        limit: z.coerce.number().int().min(1).max(200).default(50),
+      }),
+      req.query,
+    );
+    return { jobs: listJobs(deps.db, req.identity!.tokenId, q).map((r) => jobView(deps.db, r)) };
+  });
+
+  app.get<{ Params: { id: string } }>('/jobs/:id', async (req) => jobView(deps.db, getOwnJob(deps.db, req.identity!.tokenId, req.params.id)));
+
+  app.post<{ Params: { id: string } }>('/jobs/:id/cancel', async (req) =>
+    jobView(deps.db, cancelJob(deps.db, req.identity!.tokenId, req.params.id, deps.clock())),
+  );
 };

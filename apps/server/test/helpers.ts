@@ -1,11 +1,12 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { generateToken, type TokenRole } from '@fornax/protocol';
+import { generateToken, jobTypeContract, type TokenRole } from '@fornax/protocol';
 import type { FastifyInstance } from 'fastify';
 import { afterEach, beforeEach } from 'vitest';
 import type { Config } from '../src/config.js';
 import { type Db, openDb } from '../src/db/client.js';
+import { announceTypes } from '../src/domain/job-types.js';
 import { approveToken, createInvite, resolveToken } from '../src/domain/tokens.js';
 import { buildApp } from '../src/http/app.js';
 
@@ -28,11 +29,11 @@ export function testConfig(dataDir: string, overrides: Partial<Config> = {}): Co
 }
 
 /** A fresh database in a fresh temp directory for every test; closed (Windows locks open files) and removed after. */
-export function useTestDb() {
+export function useTestDb(overrides: Partial<Config> = {}) {
   let state: { db: Db; close: () => void; dir: string; config: Config } | undefined;
   beforeEach(() => {
     const dir = mkdtempSync(join(tmpdir(), 'fornax-test-'));
-    const config = testConfig(dir);
+    const config = testConfig(dir, overrides);
     const { db, close } = openDb(config.dbFile);
     state = { db, close, dir, config };
   });
@@ -64,8 +65,8 @@ export function issueToken(db: Db, name: string, role: TokenRole = 'client', now
 }
 
 /** A test database plus an app over it, with a clock the test moves by hand. */
-export function useTestApp() {
-  const t = useTestDb();
+export function useTestApp(overrides: Partial<Config> = {}) {
+  const t = useTestDb(overrides);
   const clock = {
     now: new Date('2026-11-13T10:00:00Z'),
     advance(ms: number) {
@@ -95,4 +96,17 @@ export function useTestApp() {
       return t.dir;
     },
   };
+}
+
+export async function uploadFile(app: FastifyInstance, token: string, name: string, body: string | Buffer): Promise<string> {
+  const res = await app.inject({
+    method: 'POST', url: `/api/files?name=${encodeURIComponent(name)}`,
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/octet-stream' }, payload: body,
+  });
+  if (res.statusCode !== 201) throw new Error(`upload failed: ${res.statusCode} ${res.body}`);
+  return res.json().id as string;
+}
+
+export function announce(db: Db, contracts: unknown[], now: Date): void {
+  announceTypes(db, contracts.map((c) => jobTypeContract.parse(c)), now);
 }
