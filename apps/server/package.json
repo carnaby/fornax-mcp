@@ -10,6 +10,12 @@
   "bin": {
     "fornax-admin": "dist/src/admin.js"
   },
+  "exports": {
+    "./testing": {
+      "source": "./src/testing.ts",
+      "default": "./dist/src/testing.js"
+    }
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/src/main.js",
