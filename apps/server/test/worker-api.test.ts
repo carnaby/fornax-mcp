@@ -87,4 +87,20 @@ describe('worker API', () => {
     const rel = await t.app.inject({ method: 'POST', url: `/api/worker/jobs/${jobId}/release`, headers: w(worker), payload: { lease: again.lease } });
     expect(rel.statusCode).toBe(204);
   });
+
+  test('a claim after a lost claim answer gets the same job back without losing an attempt', async () => {
+    const { worker, jobId } = await setup();
+    const lost = (await t.app.inject({ method: 'POST', url: '/api/worker/jobs/claim', headers: w(worker), payload: { wait: 0 } })).json();
+    const again = (await t.app.inject({ method: 'POST', url: '/api/worker/jobs/claim', headers: w(worker), payload: { wait: 0 } })).json();
+    expect(again).toMatchObject({ id: jobId, attempt: 1 });
+    expect(again.lease).not.toBe(lost.lease);
+  });
+
+  test('downloading an input confirms the job: abandoning it then counts the attempt', async () => {
+    const { worker, jobId } = await setup();
+    const first = (await t.app.inject({ method: 'POST', url: '/api/worker/jobs/claim', headers: w(worker), payload: { wait: 0 } })).json();
+    await t.app.inject({ method: 'GET', url: `/api/worker/jobs/${jobId}/inputs/scene`, headers: w(worker, { 'x-fornax-lease': first.lease }) });
+    const again = (await t.app.inject({ method: 'POST', url: '/api/worker/jobs/claim', headers: w(worker), payload: { wait: 0 } })).json();
+    expect(again).toMatchObject({ id: jobId, attempt: 2 });
+  });
 });

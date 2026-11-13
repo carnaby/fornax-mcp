@@ -1,7 +1,8 @@
+import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, test } from 'vitest';
 import { jobs } from '../src/db/schema.js';
 import { cancelJob, getOwnJob, submitJob } from '../src/domain/jobs.js';
-import { claimJob, expireLeases, failJob, heartbeatJob, LEASE_MS, releaseJob } from '../src/domain/queue.js';
+import { ABANDONED, abandonRunning, claimJob, confirmJob, expireLeases, failJob, heartbeatJob, LEASE_MS, releaseJob } from '../src/domain/queue.js';
 import { renderContract, transcribeContract } from './fixtures.js';
 import { announce, issueToken, tokenIdOf, uploadFile, useTestApp } from './helpers.js';
 
@@ -146,5 +147,62 @@ describe('fail and release', () => {
     const c = claimJob(t.db, t.clock.now)!;
     releaseJob(t.db, c.id, c.leaseId!, t.clock.now);
     expect(getOwnJob(t.db, c.ownerTokenId, c.id)).toMatchObject({ state: 'queued', attempts: 0, leaseId: null });
+  });
+});
+
+describe('abandoned claims', () => {
+  test('a claim while a job runs requeues it; a job never confirmed gets its attempt back', async () => {
+    await job();
+    const c = claimJob(t.db, t.clock.now)!;
+    expect(abandonRunning(t.db, at(1000))).toBe(1);
+    expect(getOwnJob(t.db, c.ownerTokenId, c.id)).toMatchObject({ state: 'queued', attempts: 0, leaseId: null, error: null });
+    expect(() => heartbeatJob(t.db, c.id, c.leaseId!, { progress: null, message: null }, at(2000))).toThrow(/no longer yours/);
+  });
+
+  test('a confirmed job counts the attempt', async () => {
+    await job();
+    const c = claimJob(t.db, t.clock.now)!;
+    heartbeatJob(t.db, c.id, c.leaseId!, { progress: 0.1, message: null }, at(1000));
+    abandonRunning(t.db, at(2000));
+    expect(getOwnJob(t.db, c.ownerTokenId, c.id)).toMatchObject({ state: 'queued', attempts: 1, error: ABANDONED, confirmedAt: null });
+  });
+
+  test('a confirmed job on its last attempt fails', async () => {
+    await job();
+    const c = claimJob(t.db, t.clock.now)!;
+    confirmJob(t.db, c.id, at(1000));
+    t.db.update(jobs).set({ attempts: 3 }).where(eq(jobs.id, c.id)).run();
+    abandonRunning(t.db, at(2000));
+    expect(getOwnJob(t.db, c.ownerTokenId, c.id)).toMatchObject({ state: 'failed', error: ABANDONED });
+  });
+
+  test('an expired lease is handled as before: the attempt counts', async () => {
+    await job();
+    const c = claimJob(t.db, t.clock.now)!;
+    abandonRunning(t.db, at(LEASE_MS + 1));
+    expect(getOwnJob(t.db, c.ownerTokenId, c.id)).toMatchObject({ state: 'queued', attempts: 1 });
+  });
+
+  test('nothing running, nothing to do', () => {
+    expect(abandonRunning(t.db, t.clock.now)).toBe(0);
+  });
+});
+
+describe('heartbeat messages and withdrawn types', () => {
+  test('an empty message clears the text instead of showing "unknown error"', async () => {
+    await job();
+    const c = claimJob(t.db, t.clock.now)!;
+    heartbeatJob(t.db, c.id, c.leaseId!, { progress: 0.1, message: 'frame 1' }, at(1000));
+    heartbeatJob(t.db, c.id, c.leaseId!, { progress: 0.2, message: '   ' }, at(2000));
+    expect(getOwnJob(t.db, c.ownerTokenId, c.id).progressMessage).toBeNull();
+  });
+
+  test('a late heartbeat does not revive a job whose type was withdrawn', async () => {
+    await job();
+    const c = claimJob(t.db, t.clock.now)!;
+    expireLeases(t.db, at(LEASE_MS + 1));
+    announce(t.db, [transcribeContract], t.clock.now);
+    expect(() => heartbeatJob(t.db, c.id, c.leaseId!, { progress: null, message: null }, at(LEASE_MS + 2))).toThrow(/no longer yours/);
+    expect(getOwnJob(t.db, c.ownerTokenId, c.id).state).toBe('queued');
   });
 });

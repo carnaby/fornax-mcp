@@ -8,6 +8,13 @@
       "when": 1794586171274,
       "tag": "0000_greedy_loki",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1794594090965,
+      "tag": "0001_natural_black_knight",
+      "breakpoints": true
     }
   ]
 }

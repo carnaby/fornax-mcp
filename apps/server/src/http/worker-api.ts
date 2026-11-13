@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { files } from '../db/schema.js';
 import { notFound } from '../domain/errors.js';
 import { announceTypes } from '../domain/job-types.js';
-import { claimJob, claimView, failJob, heartbeatJob, ownedJob, releaseJob } from '../domain/queue.js';
+import { abandonRunning, claimJob, claimView, confirmJob, failJob, heartbeatJob, ownedJob, releaseJob } from '../domain/queue.js';
 import { workerQueue } from '../domain/maintenance.js';
 import { completeJob, discardOutputs, hasProducedFiles, outputBudget, storeOutput } from '../domain/outputs.js';
 import { jobSignal } from '../domain/signal.js';
@@ -56,6 +56,8 @@ export const workerRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps) => 
 
   app.post('/jobs/claim', async (req, reply) => {
     const { wait } = parse(claimBody, req.body ?? {});
+    // One worker runs one job at a time: a job still running now was abandoned (see abandonRunning).
+    abandonRunning(deps.db, deps.clock());
     const deadline = Date.now() + wait * 1000;
     const stop = new AbortController();
     let gone = req.raw.socket?.destroyed === true;
@@ -137,6 +139,7 @@ export const workerRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps) => 
   app.get<{ Params: { id: string; name: string } }>('/jobs/:id/inputs/:name', async (req, reply) => {
     const lease = parse(z.string().min(1), req.headers[WORKER_HEADERS.lease]);
     const job = ownedJob(deps.db, req.params.id, lease, ['running']);
+    confirmJob(deps.db, job.id, deps.clock());
     const fileId = Object.hasOwn(job.inputs, req.params.name) ? job.inputs[req.params.name] : undefined;
     const file = fileId ? deps.db.select().from(files).where(eq(files.id, fileId)).get() : undefined;
     if (!file) throw notFound(`input ${req.params.name} not found`);

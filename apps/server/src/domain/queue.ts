@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { type ClaimedJob, contractHash } from '@fornax/protocol';
-import { and, asc, desc, eq, inArray, lt, lte } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, lt, lte } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { files, type JobState, jobs, jobTypes } from '../db/schema.js';
 import { conflict, notFound } from './errors.js';
+import { isOffered } from './job-types.js';
 import type { JobRow } from './jobs.js';
 import { jobSignal } from './signal.js';
 
@@ -15,12 +16,15 @@ export const retryDelayMs = (attempts: number): number => 60_000 * 4 ** Math.max
 
 export const LEASE_EXPIRED = 'the worker stopped answering (its lease ran out)';
 export const LEASE_LOST = 'the job is no longer yours: it finished, was canceled, retried, or claimed again';
+export const ABANDONED = 'the worker asked for a new job while this one was still running (it restarted or lost the connection)';
 
-/** One line of at most 500 characters. */
-function cleanError(raw: string): string {
-  const line = raw.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim();
-  return [...(line || 'unknown error')].slice(0, 500).join('');
+/** One line of at most `max` characters, without control characters; null when nothing is left. */
+function oneLine(raw: string, max: number): string | null {
+  const line = raw.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return line ? [...line].slice(0, max).join('') : null;
 }
+
+const cleanError = (raw: string): string => oneLine(raw, 500) ?? 'unknown error';
 
 /**
  * Jobs whose worker stopped answering go back to the queue (lease id kept, so a worker that only slept can take the
@@ -45,6 +49,34 @@ export function expireLeases(db: Db, now: Date): number {
   return expired.length;
 }
 
+/**
+ * One worker runs one job at a time, so a claim while a job is still `running` means that job was abandoned: the
+ * answer to its claim was lost (PC asleep, Wi-Fi drop) or the worker restarted. Lapsed leases expire first, as
+ * always; every other running job goes back to the queue at once. A job the worker never confirmed gets its
+ * attempt back; a confirmed one counts it, and fails after the last attempt, like an expired lease.
+ */
+export function abandonRunning(db: Db, now: Date): number {
+  expireLeases(db, now);
+  const running = db.select().from(jobs).where(eq(jobs.state, 'running')).all();
+  if (!running.length) return 0;
+  db.transaction((tx) => {
+    for (const j of running) {
+      const confirmed = j.confirmedAt !== null;
+      const values = !confirmed
+        ? { state: 'queued' as const, attempts: Math.max(j.attempts - 1, 0), error: null, startedAt: null }
+        : j.attempts >= MAX_ATTEMPTS
+          ? { state: 'failed' as const, error: ABANDONED, finishedAt: now }
+          : { state: 'queued' as const, error: ABANDONED };
+      tx.update(jobs)
+        .set({ ...values, leaseId: null, leaseExpiresAt: null, confirmedAt: null, runAfter: now, updatedAt: now })
+        .where(and(eq(jobs.id, j.id), eq(jobs.state, 'running')))
+        .run();
+    }
+  });
+  jobSignal.wake();
+  return running.length;
+}
+
 /** The next due job of an offered type, under a fresh lease; null when there is none. */
 export function claimJob(db: Db, now: Date): JobRow | null {
   expireLeases(db, now);
@@ -63,12 +95,17 @@ export function claimJob(db: Db, now: Date): JobRow | null {
       .update(jobs)
       .set({
         state: 'running', attempts: row.attempts + 1, leaseId: randomUUID(), leaseExpiresAt: new Date(now.getTime() + LEASE_MS),
-        startedAt: now, progress: null, progressMessage: null, error: null, updatedAt: now,
+        confirmedAt: null, startedAt: now, progress: null, progressMessage: null, error: null, updatedAt: now,
       })
       .where(eq(jobs.id, next.id))
       .returning()
       .get()!;
   });
+}
+
+/** The worker has shown it holds the job (first heartbeat or input download). */
+export function confirmJob(db: Db, id: string, now: Date): void {
+  db.update(jobs).set({ confirmedAt: now }).where(and(eq(jobs.id, id), isNull(jobs.confirmedAt))).run();
 }
 
 /** The job, if `lease` still holds it in one of `states`; 404 when it does not exist, 409 otherwise. */
@@ -85,12 +122,15 @@ export function heartbeatJob(
   return db.transaction(() => {
     const row = ownedJob(db, id, lease, ['running', 'queued', 'canceled']);
     if (row.state === 'canceled') return { leaseUntil: null, cancel: true };
+    // A late heartbeat may take an expired job back, but not one whose type the worker no longer offers.
+    if (row.state === 'queued' && !isOffered(db, row.type)) throw conflict(LEASE_LOST);
     const leaseUntil = new Date(now.getTime() + LEASE_MS);
     db.update(jobs)
       .set({
-        state: 'running', leaseExpiresAt: leaseUntil, error: null, updatedAt: now,
+        state: 'running', leaseExpiresAt: leaseUntil, error: null, confirmedAt: row.confirmedAt ?? now, updatedAt: now,
         ...(input.progress !== null ? { progress: input.progress } : {}),
-        ...(input.message !== null ? { progressMessage: cleanError(input.message).slice(0, 200) } : {}),
+        // An empty message clears the text; null leaves it as it was.
+        ...(input.message !== null ? { progressMessage: oneLine(input.message, 200) } : {}),
       })
       .where(eq(jobs.id, id))
       .run();

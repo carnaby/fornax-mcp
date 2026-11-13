@@ -19,9 +19,20 @@ test('client invite prints the pairing link', () => {
   expect(r.text).toMatch(/https:\/\/fornax\.example\.com\/pair\/[A-Za-z0-9_-]{22}/);
 });
 
-test('worker invite prints the pair command', () => {
+test('worker invite prints the pair command with the name', () => {
   const r = admin('tokens', 'invite', 'pc', '--worker');
-  expect(r.text).toMatch(/fornax worker pair --server https:\/\/fornax\.example\.com --invite [A-Za-z0-9_-]{22}/);
+  expect(r.code).toBe(0);
+  expect(r.text).toContain('fornax worker pair --server https://fornax.example.com --name pc');
+  expect(r.text).not.toContain('--invite');
+});
+
+test('unknown flags and extra words are refused, and nothing is created', () => {
+  expect(admin('tokens', 'invite', 'pc', '--wroker')).toMatchObject({ code: 2, text: expect.stringContaining('--wroker') });
+  expect(admin('tokens', 'list', '--worker').code).toBe(2);
+  expect(admin('tokens', 'pending', 'alice').code).toBe(2);
+  expect(admin('tokens', 'approve', 'a', 'b').code).toBe(2);
+  // The refused invite left nothing behind, so this one is not "already open".
+  expect(admin('tokens', 'invite', 'pc', '--worker').code).toBe(0);
 });
 
 test('pending, approve, list, revoke', () => {

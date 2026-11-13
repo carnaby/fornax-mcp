@@ -88,6 +88,8 @@ export const jobs = sqliteTable(
     runAfter: ts('run_after').notNull(),
     leaseId: text('lease_id'),
     leaseExpiresAt: ts('lease_expires_at'),
+    /** The worker's first sign of holding the job (heartbeat or input download); null until then. */
+    confirmedAt: ts('confirmed_at'),
     progress: real('progress'),
     progressMessage: text('progress_message'),
     error: text('error'),

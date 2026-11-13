@@ -14,24 +14,35 @@ const USAGE = [
   '       fornax-admin tokens revoke <name>',
 ].join('\n');
 
+/** Flags each command accepts; anything else is refused, so a typo like --wroker cannot silently change the meaning. */
+const FLAGS: Record<string, string[]> = { invite: ['--worker'] };
+const NEEDS_NAME = ['invite', 'approve', 'revoke'];
+
 export function runAdmin(argv: string[], deps: { db: Db; config: Config; now?: Date; out: (line: string) => void }): number {
   const { db, config, out } = deps;
   const now = deps.now ?? new Date();
-  const [group, cmd, name, ...rest] = argv;
+  const [group, cmd, ...args] = argv;
+  const flags = args.filter((a) => a.startsWith('-'));
+  const words = args.filter((a) => !a.startsWith('-'));
+  const allowed = cmd !== undefined && Object.hasOwn(FLAGS, cmd) ? FLAGS[cmd]! : [];
+  const unexpected = flags.find((f) => !allowed.includes(f)) ?? words[NEEDS_NAME.includes(cmd ?? '') ? 1 : 0];
+  if (group !== 'tokens' || unexpected !== undefined) {
+    if (unexpected !== undefined) out(`unexpected argument: ${unexpected}`);
+    out(USAGE);
+    return 2;
+  }
+  const name = words[0];
   try {
-    if (group !== 'tokens') {
-      out(USAGE);
-      return 2;
-    }
     switch (cmd) {
       case 'invite': {
         if (!name) break;
-        const worker = rest.includes('--worker');
+        const worker = flags.includes('--worker');
         const inv = createInvite(db, { name, role: worker ? 'worker' : 'client' }, now);
         const until = inv.expiresAt.toISOString();
         if (worker) {
-          out(`Run on the worker PC (invite valid until ${until}):`);
-          out(`  fornax worker pair --server ${config.publicUrl} --invite ${inv.id}`);
+          // The worker registers by name: its first call with a token named <name> takes this invite.
+          out(`Run on the worker PC (the invite is valid until ${until}):`);
+          out(`  fornax worker pair --server ${config.publicUrl} --name ${name}`);
         } else {
           out(`Send this link to ${name} (valid until ${until}):`);
           out(`  ${config.publicUrl}/pair/${inv.id}`);
