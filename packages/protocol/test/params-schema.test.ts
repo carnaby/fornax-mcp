@@ -11,6 +11,8 @@ const schema = paramSchema.parse({
     format: { enum: ['png', 'jpg'], default: 'png' },
     language: { type: 'string', pattern: '[a-z]{2}', maxLength: 2 },
     title: { type: 'string', maxLength: 20 },
+    code: { type: 'string', pattern: '[a-z]{2}' },
+    ab: { type: 'string', pattern: 'a|b' },
     diarize: { type: 'boolean', default: false },
     tags: { type: 'array', items: { type: 'string', maxLength: 10 }, maxItems: 2 },
   },
@@ -72,6 +74,14 @@ describe('validateParams', () => {
   test('pattern is anchored', () => {
     expect(validateParams(schema, { frame_start: 0, language: 'sk' }).ok).toBe(true);
     expect(validateParams(schema, { frame_start: 0, language: 'xsk' }).ok).toBe(false);
+    // No maxLength here, so only the anchoring can refuse these.
+    expect(validateParams(schema, { frame_start: 0, code: 'sk' }).ok).toBe(true);
+    expect(validateParams(schema, { frame_start: 0, code: 'xsk' }).ok).toBe(false);
+    expect(validateParams(schema, { frame_start: 0, code: 'skx' }).ok).toBe(false);
+    // The (?:...) group keeps the alternation inside the anchors.
+    expect(validateParams(schema, { frame_start: 0, ab: 'a' }).ok).toBe(true);
+    expect(validateParams(schema, { frame_start: 0, ab: 'ab' }).ok).toBe(false);
+    expect(validateParams(schema, { frame_start: 0, ab: 'xb' }).ok).toBe(false);
   });
   test('checks arrays item by item and maxItems', () => {
     expect(validateParams(schema, { frame_start: 0, tags: ['a', 'b'] }).ok).toBe(true);

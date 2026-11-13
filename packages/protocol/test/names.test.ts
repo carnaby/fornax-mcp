@@ -7,7 +7,7 @@ test('accepts plain relative names', () => {
 });
 
 test('refuses traversal, absolute paths, backslashes and odd names', () => {
-  for (const bad of ['../x', 'a/../b', '/etc/passwd', 'C:/x', 'a\b', '.hidden', 'a//b', '', 'a/', 'x'.repeat(201), 'a/b/c/d/e/f/g/h/i']) {
+  for (const bad of ['../x', 'a/../b', '/etc/passwd', 'C:/x', 'a\\b', '.hidden', 'a//b', '', 'a/', 'x'.repeat(201), 'a/b/c/d/e/f/g/h/i']) {
     expect(cleanOutputName(bad), bad).toBeNull();
   }
 });
