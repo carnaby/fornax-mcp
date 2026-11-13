@@ -100,4 +100,27 @@ describe('runWorker', () => {
     expect(announces).toBe(0);
     expect(out.some((l) => l.startsWith('offering'))).toBe(false);
   });
+
+  test('the console shows neither a tool message nor a job failure detail', async () => {
+    const { paths, api, alice, out, say } = await setup();
+    const worker = runWorker({ api, paths, tools: NODE_TOOLS, out: say, signal: new AbortController().signal, once: true, ...fast });
+    await waitFor(async () => (await alice.offered()).includes('echo'), 10_000, 'echo to be offered');
+    const job = await alice.submit('echo', { mode: 'exit', code: 1 });
+    expect(await worker).toBe(0);
+    expect(await alice.job(job.id)).toMatchObject({ state: 'queued' });
+    expect(out.join('\n')).not.toContain('the file is empty');
+    expect(out).toContain(`job ${job.id}: retry`);
+  });
+
+  test('a failing check shows a single short line', async () => {
+    const { paths, api, out, say } = await setup();
+    const script = 'console.log("one\\ntwo " + "z".repeat(400)); process.exitCode = 2';
+    writeEchoPack(paths.typesDir, { name: 'noisy', check: ['{tool.node}', '-e', script] });
+    await runWorker({ api, paths, tools: NODE_TOOLS, out: say, signal: new AbortController().signal, once: true, claimWaitS: 0 });
+    const prefix = 'not offered: type pack noisy: check failed (exit code 2): ';
+    const line = out.find((x) => x.startsWith(prefix))!;
+    expect(line).toBeDefined();
+    expect(line).not.toMatch(/[\r\n]/);
+    expect(line.length).toBeLessThanOrEqual(prefix.length + 200);
+  });
 });

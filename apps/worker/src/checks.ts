@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { delimiter, isAbsolute, join } from 'node:path';
 import { loadPacks, missingTools, type Pack } from './pack.js';
-import { childEnv, logTail, runProcess } from './process.js';
+import { childEnv, runProcess } from './process.js';
 import { expandArgv } from './template.js';
 
 /** A type's check may take this long (loading a model, asking the GPU) before it counts as failed. */
@@ -11,15 +11,41 @@ export const CHECK_TIMEOUT_MS = 120_000;
 export const isBatchFile = (cmd: string, platform: NodeJS.Platform = process.platform): boolean =>
   platform === 'win32' && /\.(cmd|bat)$/i.test(cmd);
 
+const isFile = (p: string): boolean => {
+  try {
+    return statSync(p).isFile();
+  } catch {
+    return false;
+  }
+};
+
+/** One console-safe line: control characters (and so line breaks) become spaces, at most `max` characters. */
+export function oneLine(text: string, max = 200): string {
+  const flat = text.replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ').replace(/ {2,}/g, ' ').trim();
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+}
+
 /** Where a tool from worker.yaml points, or null when nothing is there. Bare names are looked up on PATH; on Windows only real executables count (no .cmd/.bat). */
 export function findTool(cmd: string, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string | null {
-  if (isAbsolute(cmd) || cmd.includes('/') || cmd.includes('\\')) return existsSync(cmd) ? cmd : null;
+  if (isAbsolute(cmd) || cmd.includes('/') || cmd.includes('\\')) return isFile(cmd) ? cmd : null;
   const pathExt = (env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';').filter((e) => e && !/^\.(cmd|bat)$/i.test(e));
   const exts = platform === 'win32' ? ['', ...pathExt] : [''];
   for (const dir of (env.PATH ?? '').split(delimiter).filter(Boolean)) {
     for (const ext of exts) {
       const p = join(dir, cmd + ext);
-      if (!isBatchFile(p, platform) && existsSync(p)) return p;
+      if (!isBatchFile(p, platform) && isFile(p)) return p;
+    }
+  }
+  return null;
+}
+
+/** A bare name that exists on PATH only as a .cmd/.bat (win32): the caller can say so instead of "not found". */
+export function findBatchOnly(cmd: string, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string | null {
+  if (platform !== 'win32' || isAbsolute(cmd) || cmd.includes('/') || cmd.includes('\\') || findTool(cmd, env, platform)) return null;
+  for (const dir of (env.PATH ?? '').split(delimiter).filter(Boolean)) {
+    for (const ext of ['.cmd', '.bat']) {
+      const p = join(dir, cmd + ext);
+      if (isFile(p)) return p;
     }
   }
   return null;
@@ -32,7 +58,7 @@ export async function checkPack(pack: Pack, tools: Record<string, string>, opts:
   const missing = missingTools(pack, tools);
   if (missing.length) return `tools missing in worker.yaml: ${missing.join(', ')}`;
   for (const name of pack.impl.tools) {
-    if (isBatchFile(tools[name]!)) return `tool ${name}: ${tools[name]} is a batch file; point worker.yaml at the real executable`;
+    if (isBatchFile(tools[name]!) || findBatchOnly(tools[name]!)) return `tool ${name}: ${tools[name]} is a batch file; point worker.yaml at the real executable`;
     if (!findTool(tools[name]!)) return `tool ${name}: ${tools[name]} was not found`;
   }
   if (!pack.impl.check) return null;
@@ -45,7 +71,7 @@ export async function checkPack(pack: Pack, tools: Record<string, string>, opts:
     killGraceMs: opts.killGraceMs,
     signal: opts.signal,
   });
-  const tail = logTail(r.log);
+  const tail = oneLine(r.log.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).at(-1) ?? '');
   if (r.spawnError) return `check could not start: ${r.spawnError}`;
   if (r.canceled) return 'check was interrupted';
   if (r.timedOut) return `check did not finish within ${timeoutMs / 1000} s`;
@@ -57,8 +83,9 @@ export async function checkPack(pack: Pack, tools: Record<string, string>, opts:
 export async function preparePacks(typesDir: string, tools: Record<string, string>, opts: CheckOptions = {}): Promise<{ ready: Pack[]; problems: string[] }> {
   const { packs, errors } = loadPacks(typesDir);
   const ready: Pack[] = [];
-  const problems = [...errors];
+  const problems = errors.map((e) => oneLine(e));
   for (const pack of packs) {
+    if (opts.signal?.aborted) break;
     const problem = await checkPack(pack, tools, opts);
     if (problem) problems.push(`type pack ${pack.contract.name}: ${problem}`);
     else ready.push(pack);

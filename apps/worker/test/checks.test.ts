@@ -1,9 +1,9 @@
-import { utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { describe, expect, test } from 'vitest';
-import { checkPack, findTool, isBatchFile, packsSignature, preparePacks } from '../src/checks.js';
+import { checkPack, findBatchOnly, findTool, isBatchFile, oneLine, packsSignature, preparePacks } from '../src/checks.js';
 import { loadPack } from '../src/pack.js';
-import { NODE_TOOLS, useTempDir, writeEchoPack } from './helpers.js';
+import { isAlive, NODE_TOOLS, readPids, useTempDir, waitFor, writeEchoPack } from './helpers.js';
 
 const tmp = useTempDir();
 
@@ -34,6 +34,74 @@ describe('findTool', () => {
     writeFileSync(batch, '');
     const pack = loadPack(writeEchoPack(join(tmp(), 'types')));
     expect(await checkPack(pack, { node: batch })).toBe(`tool node: ${batch} is a batch file; point worker.yaml at the real executable`);
+  });
+});
+
+describe('tool paths', () => {
+  test('a directory is not a tool', () => {
+    const dir = join(tmp(), 'a-dir');
+    mkdirSync(dir);
+    expect(findTool(dir)).toBeNull();
+  });
+
+  test('a bare name that exists only as a batch file is recognised on Windows', () => {
+    const dir = tmp();
+    writeFileSync(join(dir, 'npm.cmd'), '');
+    const env = { PATH: dir, PATHEXT: '.COM;.EXE;.BAT;.CMD' };
+    expect(findTool('npm', env, 'win32')).toBeNull();
+    expect(findBatchOnly('npm', env, 'win32')).toBe(join(dir, 'npm.cmd'));
+    expect(findBatchOnly('npm', env, 'linux')).toBeNull();
+    expect(findBatchOnly('nothing', env, 'win32')).toBeNull();
+  });
+});
+
+describe('oneLine', () => {
+  test('control characters and line breaks become spaces; the length is capped', () => {
+    expect(oneLine('a\r\nb\u0007\tc')).toBe('a b c');
+    const long = oneLine('x'.repeat(500));
+    expect(long).toHaveLength(200);
+    expect(long.endsWith('…')).toBe(true);
+  });
+});
+
+describe('check isolation', () => {
+  test('a failing check shows one short line of its output', async () => {
+    const script = 'console.log("first\\nsecond\\u0007 " + "y".repeat(400)); process.exitCode = 4';
+    const pack = loadPack(writeEchoPack(join(tmp(), 'types'), { name: 'noisy', check: ['{tool.node}', '-e', script] }));
+    const reason = (await checkPack(pack, NODE_TOOLS))!;
+    expect(reason.startsWith('check failed (exit code 4): ')).toBe(true);
+    const shown = reason.slice('check failed (exit code 4): '.length);
+    expect(shown.length).toBeLessThanOrEqual(200);
+    expect(shown).not.toMatch(/[\u0000-\u001f]/);
+  });
+
+  test('a hanging check is killed with everything it started', async () => {
+    const pidFile = join(tmp(), 'check-pids.json');
+    const dir = writeEchoPack(join(tmp(), 'types'), { name: 'tree', check: ['{tool.node}', '{pack}/check-tree.mjs', pidFile] });
+    // A check that starts a grandchild ignoring SIGTERM, records both pids and hangs.
+    writeFileSync(
+      join(dir, 'check-tree.mjs'),
+      [
+        "import { spawn } from 'node:child_process';",
+        "import { writeFileSync } from 'node:fs';",
+        "const c = spawn(process.execPath, ['-e', 'process.on(\"SIGTERM\", () => {}); setInterval(() => {}, 1000);'], { stdio: 'ignore' });",
+        'writeFileSync(process.argv[2], JSON.stringify({ parent: process.pid, child: c.pid }));',
+        'setInterval(() => {}, 1000);',
+      ].join('\n'),
+    );
+    const pack = loadPack(dir);
+    expect(await checkPack(pack, NODE_TOOLS, { timeoutMs: 1500, killGraceMs: 300 })).toBe('check did not finish within 1.5 s');
+    const pids = await waitFor(() => readPids(pidFile), 5000, 'the check to record its pids');
+    await waitFor(() => !isAlive(pids.parent) && !isAlive(pids.child), 5000, 'the check tree to die');
+  });
+
+  test('preparePacks starts no further check once stopped', async () => {
+    const types = join(tmp(), 'types');
+    writeEchoPack(types, { name: 'a' });
+    writeEchoPack(types, { name: 'b' });
+    const stop = new AbortController();
+    stop.abort();
+    expect(await preparePacks(types, NODE_TOOLS, { signal: stop.signal })).toEqual({ ready: [], problems: [] });
   });
 });
 
