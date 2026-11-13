@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
 import { runCli } from '../src/cli.js';
+import { typesInstall } from '../src/commands/types.js';
 import type { Ctx } from '../src/commands/context.js';
 import { testPaths, useTempDir, writeEchoPack } from './helpers.js';
 
@@ -87,5 +88,72 @@ describe('fornax types', () => {
     expect(r.text).toContain('test-clipboard');
     expect((await run('types', 'list')).text).toMatch(/type pack upscale: [\s\S]*run/);
     expect((await run('types', 'add', 'upscale')).code).toBe(1);
+  });
+
+  test('invalid names are refused by add and install', async () => {
+    const { run } = cli();
+    for (const bad of ['Bad_Name', '../x']) {
+      expect((await run('types', 'add', bad)).code, bad).toBe(2);
+      expect((await run('types', 'install', bad, '--from', source())).code, bad).toBe(2);
+    }
+  });
+
+  test('a copy that fails midway leaves nothing and says so', async () => {
+    const { ctx } = cli();
+    const lines: string[] = [];
+    ctx.out = (l) => lines.push(l);
+    const code = await typesInstall(ctx, 'echo', source(), {
+      copy: (src, dest, o) => {
+        cpSync(src, dest, o);
+        throw Object.assign(new Error('secret local path'), { code: 'EIO' });
+      },
+    });
+    expect(code).toBe(1);
+    expect(existsSync(join(ctx.paths.typesDir, 'echo'))).toBe(false);
+    const text = lines.join('\n');
+    expect(text).toContain('installing echo failed (Error, EIO)');
+    expect(text).not.toContain('secret local path');
+  });
+
+  test('when the failed copy cannot be removed, the real failure and the directory are named', async () => {
+    const { ctx } = cli();
+    const lines: string[] = [];
+    ctx.out = (l) => lines.push(l);
+    const code = await typesInstall(ctx, 'echo', source('fail'), {
+      remove: () => {
+        throw Object.assign(new Error('busy'), { code: 'EBUSY' });
+      },
+    });
+    const text = lines.join('\n');
+    expect(code).toBe(1);
+    expect(text).toContain('the setup of echo failed (exit code 1)');
+    expect(text).toContain(`${join(ctx.paths.typesDir, 'echo')} could not be removed`);
+  });
+
+  test('a link inside the source pack is refused before anything is copied', async () => {
+    const { ctx, run } = cli();
+    const src = source();
+    try {
+      symlinkSync(process.execPath, join(src, 'scripts', 'sneaky'), 'file');
+    } catch {
+      return; // no permission to create links on this machine
+    }
+    const r = await run('types', 'install', 'echo', '--from', src);
+    expect(r.code).toBe(1);
+    expect(r.text).toContain(join('scripts', 'sneaky'));
+    expect(existsSync(join(ctx.paths.typesDir, 'echo'))).toBe(false);
+  });
+
+  test('a source that contains the types directory, or lies inside it, is refused', async () => {
+    const { ctx, run } = cli();
+    mkdirSync(ctx.paths.typesDir, { recursive: true });
+    const inside = writeEchoPack(ctx.paths.typesDir, { name: 'other' });
+    const parent = join(ctx.paths.typesDir, '..');
+    copyFileSync(join(inside, 'type.yaml'), join(parent, 'type.yaml'));
+    for (const from of [inside, parent]) {
+      const r = await run('types', 'install', 'other', '--from', from);
+      expect(r.code, from).toBe(1);
+      expect(r.text).toContain('must not contain one another');
+    }
   });
 });

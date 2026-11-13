@@ -1,5 +1,5 @@
-import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { join, relative, resolve, sep } from 'node:path';
+import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { TYPE_NAME } from '@fornax/protocol';
 import { checkPack } from '../checks.js';
 import { copyToClipboard } from '../clipboard.js';
@@ -24,6 +24,23 @@ function localTools(ctx: Ctx): Record<string, string> {
   }
 }
 
+const removeDir = (dir: string): void => rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+
+/** The first link (symlink or junction) in the pack outside env/, relative to it; null when there is none. */
+function findLink(root: string, dir: string = root): string | null {
+  for (const e of readdirSync(dir)) {
+    const p = join(dir, e);
+    if (relative(root, p).split(sep)[0] === 'env') continue;
+    const st = lstatSync(p);
+    if (st.isSymbolicLink()) return relative(root, p);
+    if (st.isDirectory()) {
+      const inner = findLink(root, p);
+      if (inner) return inner;
+    }
+  }
+  return null;
+}
+
 /** `fornax types list`: installed packs and whether each is ready. */
 export async function typesList(ctx: Ctx): Promise<number> {
   const tools = localTools(ctx);
@@ -38,7 +55,13 @@ export async function typesList(ctx: Ctx): Promise<number> {
 }
 
 /** `fornax types install <name> [--from <dir>]`: copy the pack (without env/), run its setup, check it. */
-export async function typesInstall(ctx: Ctx, name: string, from?: string): Promise<number> {
+export async function typesInstall(
+  ctx: Ctx,
+  name: string,
+  from?: string,
+  /** Tests replace the file operations. */
+  deps: { copy?: typeof cpSync; remove?: (dir: string) => void } = {},
+): Promise<number> {
   if (!TYPE_NAME.test(name)) {
     ctx.out('a type name is a-z, 0-9 and "-", starting with a letter or digit');
     return 2;
@@ -54,6 +77,16 @@ export async function typesInstall(ctx: Ctx, name: string, from?: string): Promi
     return 1;
   }
   const dest = join(ctx.paths.typesDir, name);
+  const types = resolve(ctx.paths.typesDir);
+  const rel = (a: string, b: string) => relative(a, b);
+  const inside = (outer: string, inner: string) => {
+    const r = rel(outer, inner);
+    return r === '' || (!r.startsWith('..') && !isAbsolute(r));
+  };
+  if (inside(source, types) || inside(types, source)) {
+    ctx.out(`the pack directory ${source} and the installed types directory ${types} must not contain one another`);
+    return 1;
+  }
   if (existsSync(dest)) {
     ctx.out(`${name} is already installed in ${dest}; remove that directory to install it again`);
     return 1;
@@ -65,27 +98,51 @@ export async function typesInstall(ctx: Ctx, name: string, from?: string): Promi
     return 1;
   }
 
+  const link = findLink(source);
+  if (link) {
+    ctx.out(`the pack in ${source} holds a link (${link}); links are not copied, replace it with the file itself`);
+    return 1;
+  }
+
   mkdirSync(ctx.paths.typesDir, { recursive: true });
-  // env/ is made by setup on this PC; a copied one would belong to another machine.
-  cpSync(source, dest, { recursive: true, filter: (src) => relative(source, src).split(sep)[0] !== 'env' });
-  if (pack.impl.setup) {
-    ctx.out(`running the setup of ${name}…`);
-    const r = await runProcess({
-      argv: expandArgv(pack.impl.setup, { pack: dest, tools }),
-      cwd: dest,
-      env: childEnv(process.env, {}),
-      timeoutMs: SETUP_TIMEOUT_MS,
-      signal: ctx.signal,
-      onOutput: ctx.write,
-    });
-    if (r.code !== 0) {
-      rmSync(dest, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
-      const why = r.spawnError ?? (r.timedOut ? 'it ran too long' : r.canceled ? 'interrupted' : `exit code ${r.code ?? r.signal}`);
-      const tail = logTail(r.log);
-      ctx.out(`the setup of ${name} failed (${why})${tail ? `: ${tail}` : ''}; nothing was installed`);
-      return 1;
+  let installed = false;
+  let failure: string | null = null;
+  try {
+    // env/ is made by setup on this PC; a copied one would belong to another machine.
+    (deps.copy ?? cpSync)(source, dest, { recursive: true, filter: (src) => relative(source, src).split(sep)[0] !== 'env' });
+    if (pack.impl.setup) {
+      ctx.out(`running the setup of ${name}…`);
+      const r = await runProcess({
+        argv: expandArgv(pack.impl.setup, { pack: dest, tools }),
+        cwd: dest,
+        env: childEnv(process.env, {}),
+        timeoutMs: SETUP_TIMEOUT_MS,
+        signal: ctx.signal,
+        onOutput: ctx.write,
+      });
+      if (r.code !== 0) {
+        const why = r.spawnError ?? (r.timedOut ? 'it ran too long' : r.canceled ? 'interrupted' : `exit code ${r.code ?? r.signal}`);
+        const tail = logTail(r.log);
+        failure = `the setup of ${name} failed (${why})${tail ? `: ${tail}` : ''}`;
+      }
+    }
+    installed = failure === null;
+  } catch (e) {
+    // Only the class and code: the message may carry local paths or tool output.
+    const code = (e as NodeJS.ErrnoException).code;
+    failure = `installing ${name} failed (${e instanceof Error ? e.constructor.name : typeof e}${typeof code === 'string' ? `, ${code}` : ''})`;
+  } finally {
+    if (!installed) {
+      if (failure) ctx.out(failure);
+      try {
+        (deps.remove ?? removeDir)(dest);
+        ctx.out('nothing was installed');
+      } catch {
+        ctx.out(`${dest} could not be removed (a file in it is probably still in use); delete that directory by hand before installing again`);
+      }
     }
   }
+  if (!installed) return 1;
   const problem = await checkPack(loadPack(dest), tools, { signal: ctx.signal });
   ctx.out(problem ? `installed ${name} in ${dest}, but it is not ready: ${problem}` : `installed ${name} in ${dest}; it is ready`);
   ctx.out('a running worker picks it up between jobs');
