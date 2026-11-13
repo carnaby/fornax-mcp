@@ -1,11 +1,14 @@
 import { eq } from 'drizzle-orm';
 import { describe, expect, test } from 'vitest';
-import { jobs } from '../src/db/schema.js';
+import type { Db } from '../src/db/client.js';
+import { jobs, webhookDeliveries } from '../src/db/schema.js';
+import { finishJob } from '../src/domain/finish.js';
+import { cancelJob } from '../src/domain/jobs.js';
 import { runMaintenance, TYPE_UNAVAILABLE } from '../src/domain/maintenance.js';
 import { ABANDONED, abandonRunning, claimJob, confirmJob, expireLeases, LEASE_EXPIRED, LEASE_MS } from '../src/domain/queue.js';
 import { FileStore } from '../src/files/store.js';
 import { renderContract, transcribeContract } from './fixtures.js';
-import { announce, issueToken, uploadFile, useTestApp } from './helpers.js';
+import { announce, issueToken, tokenIdOf, uploadFile, useTestApp } from './helpers.js';
 
 const t = useTestApp();
 const row = (id: string) => t.db.select().from(jobs).where(eq(jobs.id, id)).get()!;
@@ -114,5 +117,51 @@ describe('downloads are limited to the manifest', () => {
     expect((await r.download('previews/a.jpg')).body).toBe('J');
     expect((await r.download('log.txt')).body).toBe('L');
     expect((await r.download('scene.blend')).statusCode).toBe(404);
+  });
+});
+
+describe('finishJob is guarded by the state its caller saw', () => {
+  /** Alice's queued job with a callback, so every final state queues a webhook. */
+  async function withCallback() {
+    t.config.webhooks = { allowedPrefixes: ['https://app.example.com/hooks/'] };
+    announce(t.db, [renderContract], t.clock.now);
+    const alice = issueToken(t.db, 'alice');
+    const scene = await uploadFile(t.app, alice, 'scene.blend', 'B');
+    const res = await t.app.inject({
+      method: 'POST', url: '/api/jobs', headers: bearer(alice),
+      payload: { type: 'render', params: { frame_start: 1 }, inputs: { scene }, callback_url: 'https://app.example.com/hooks/x' },
+    });
+    expect(res.statusCode).toBe(201);
+    return { alice, id: res.json().id as string };
+  }
+  const webhooks = () => t.db.select().from(webhookDeliveries).all();
+
+  test('a stale row (the job already finished by another path) changes nothing and queues no second webhook', async () => {
+    const { alice, id } = await withCallback();
+    const stale = row(id);
+    expect((await t.app.inject({ method: 'POST', url: `/api/jobs/${id}/cancel`, headers: bearer(alice) })).statusCode).toBe(200);
+    expect(webhooks()).toHaveLength(1);
+    expect(finishJob(t.db, stale, { state: 'failed', error: 'late' }, t.clock.now)).toBeNull();
+    expect(row(id)).toMatchObject({ state: 'canceled', error: null });
+    expect(webhooks()).toMatchObject([{ jobId: id, payload: JSON.stringify({ job_id: id, state: 'canceled' }) }]);
+  });
+
+  test('cancelJob on a job that moved between its read and its write is 409', async () => {
+    const { id } = await withCallback();
+    let moved = false;
+    // The worker claims the job right before the cancel writes.
+    const racing = new Proxy(t.db, {
+      get(target, prop, receiver) {
+        if (prop === 'update' && !moved) {
+          moved = true;
+          expect(claimJob(target, t.clock.now)?.id).toBe(id);
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    }) as Db;
+    expect(() => cancelJob(racing, tokenIdOf(t.db, 'alice'), id, t.clock.now)).toThrow(expect.objectContaining({ status: 409 }));
+    expect(moved).toBe(true);
+    expect(row(id)).toMatchObject({ state: 'running', finishedAt: null });
+    expect(webhooks()).toEqual([]);
   });
 });
