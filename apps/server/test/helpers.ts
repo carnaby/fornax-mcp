@@ -2,10 +2,12 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generateToken, jobTypeContract, type TokenRole } from '@fornax/protocol';
+import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { afterEach, beforeEach } from 'vitest';
 import type { Config } from '../src/config.js';
 import { type Db, openDb } from '../src/db/client.js';
+import { tokens } from '../src/db/schema.js';
 import { announceTypes } from '../src/domain/job-types.js';
 import { approveToken, createInvite, resolveToken } from '../src/domain/tokens.js';
 import { buildApp } from '../src/http/app.js';
@@ -110,3 +112,5 @@ export async function uploadFile(app: FastifyInstance, token: string, name: stri
 export function announce(db: Db, contracts: unknown[], now: Date): void {
   announceTypes(db, contracts.map((c) => jobTypeContract.parse(c)), now);
 }
+
+export const tokenIdOf = (db: Db, name: string): string => db.select({ id: tokens.id }).from(tokens).where(eq(tokens.name, name)).get()!.id;
