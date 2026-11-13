@@ -1,11 +1,13 @@
 import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { Readable } from 'node:stream';
 import sharp from 'sharp';
 import { describe, expect, test } from 'vitest';
 import { files } from '../src/db/schema.js';
 import { outputBudget } from '../src/domain/outputs.js';
 import { PREVIEW_MAX_PX, renderPreview, serverPreviewName } from '../src/files/preview.js';
 import { FileStore } from '../src/files/store.js';
+import { buildApp } from '../src/http/app.js';
 import { renderContract } from './fixtures.js';
 import { announce, issueToken, uploadFile, useTestApp } from './helpers.js';
 
@@ -27,6 +29,7 @@ async function running() {
   return {
     id,
     lease,
+    headers: { ...bearer(worker), 'x-fornax-lease': lease },
     put: (name: string, body: string | Buffer, kind = 'output') =>
       t.app.inject({
         method: 'PUT', url: `/api/worker/jobs/${id}/outputs/${name}?kind=${kind}`,
@@ -53,6 +56,14 @@ describe('renderPreview', () => {
       writeFileSync(src, await image(64, 32, format));
       expect((await sharp(await renderPreview(src)).metadata()).format, format).toBe('jpeg');
     }
+  });
+
+  test('decodes only png, jpeg, webp, tiff and gif, whatever the extension says', async () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="red"/></svg>';
+    expect((await sharp(Buffer.from(svg)).metadata()).format).toBe('svg'); // sharp itself would render it
+    const src = join(t.dir, 'drawing.png');
+    writeFileSync(src, svg);
+    await expect(renderPreview(src)).rejects.toThrow();
   });
 
   test('refuses what is not an image', async () => {
@@ -92,6 +103,13 @@ describe('server previews', () => {
     expect((await r.get(`/api/jobs/${r.id}`)).json().outputs).toEqual([expect.objectContaining({ name: 'broken.png', preview: null })]);
   });
 
+  test('an SVG named .png gets none', async () => {
+    const r = await running();
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="red"/></svg>';
+    expect((await r.put('drawing.png', svg)).statusCode).toBe(201);
+    expect(previewRow('drawing.png')).toBeUndefined();
+  });
+
   test('other formats get none', async () => {
     const r = await running();
     await r.put('render.exr', 'EXR');
@@ -118,6 +136,65 @@ describe('server previews', () => {
     await r.put('frame.png', png);
     expect(previewRow('frame.png')).toBeDefined();
     expect(outputBudget(deps(), r.id, r.lease, 'other.bin')).toBe(t.config.limits.maxOutputBytes - png.length);
+  });
+});
+
+describe('a disk error while storing a preview', () => {
+  /** A store that fails on demand: every write after the next `writesLeft` ones, or removing the ids in `failRemove`. */
+  class FlakyStore extends FileStore {
+    failRemove = new Set<string>();
+    writesLeft = Number.POSITIVE_INFINITY;
+    override async write(id: string, source: Readable, maxBytes: number) {
+      if (this.writesLeft-- <= 0) throw new Error('disk full');
+      return super.write(id, source, maxBytes);
+    }
+    override async remove(id: string): Promise<void> {
+      if (this.failRemove.has(id)) throw new Error('disk error');
+      return super.remove(id);
+    }
+  }
+
+  async function flaky() {
+    const r = await running();
+    const store = new FlakyStore(t.config.filesDir);
+    const lines: string[] = [];
+    const app = await buildApp({ config: t.config, db: t.db, store, clock: () => t.clock.now, logStream: { write: (m) => void lines.push(m) } });
+    const put = (name: string, body: Buffer) =>
+      app.inject({ method: 'PUT', url: `/api/worker/jobs/${r.id}/outputs/${name}`, headers: { ...r.headers, 'content-type': 'application/octet-stream' }, payload: body });
+    return { r, store, lines, app, put };
+  }
+
+  test('a failing write of the preview is logged with the file id only; the upload succeeds', async () => {
+    const f = await flaky();
+    try {
+      f.store.writesLeft = 1; // the output itself is stored; its preview is not
+      const res = await f.put('frame.png', await image(2048, 1024));
+      expect(res.statusCode).toBe(201);
+      expect(previewRow('frame.png')).toBeUndefined();
+      const output = t.db.select().from(files).all().find((x) => x.name === 'frame.png')!;
+      expect(f.lines.join('')).toContain(output.id);
+      expect(f.lines.join('')).not.toContain('disk full');
+    } finally {
+      await f.app.close();
+    }
+  });
+
+  test('a failing removal of the previous preview is logged and ignored', async () => {
+    const f = await flaky();
+    try {
+      expect((await f.put('frame.png', await image(400, 200))).statusCode).toBe(201);
+      const first = previewRow('frame.png')!.id;
+      f.store.failRemove.add(first);
+      expect((await f.put('frame.png', await image(800, 400))).statusCode).toBe(201);
+      // The stale preview is never shown again: one preview row, of the new upload.
+      const rows = t.db.select().from(files).all().filter((x) => x.name === serverPreviewName('frame.png'));
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.id).not.toBe(first);
+      expect(f.lines.join('')).toContain(first);
+      expect(f.lines.join('')).not.toContain('disk error');
+    } finally {
+      await f.app.close();
+    }
   });
 });
 
