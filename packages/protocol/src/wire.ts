@@ -1,0 +1,41 @@
+import { z } from 'zod';
+import { jobTypeContract } from './contract.js';
+
+export const WORKER_HEADERS = { name: 'x-fornax-worker', version: 'x-fornax-version', lease: 'x-fornax-lease' } as const;
+
+/** The longest a claim waits for a job before answering 204, in seconds. */
+export const MAX_CLAIM_WAIT_S = 30;
+
+export const announceBody = z.strictObject({ types: z.array(jobTypeContract).max(100) });
+
+export const claimBody = z.strictObject({ wait: z.number().int().min(0).max(MAX_CLAIM_WAIT_S).default(25) });
+
+export const claimedJob = z.object({
+  id: z.string(),
+  lease: z.string(),
+  lease_until: z.string(),
+  attempt: z.number().int(),
+  type: z.string(),
+  contract_hash: z.string(),
+  params: z.record(z.string(), z.unknown()),
+  inputs: z.array(z.object({ name: z.string(), file_name: z.string(), size: z.number().int(), sha256: z.string() })),
+});
+export type ClaimedJob = z.infer<typeof claimedJob>;
+
+export const heartbeatBody = z.strictObject({
+  lease: z.string().min(1),
+  progress: z.number().min(0).max(1).nullable().default(null),
+  message: z.string().max(200).nullable().default(null),
+});
+export const heartbeatReply = z.object({ lease_until: z.string().nullable(), cancel: z.boolean() });
+
+export const failBody = z.strictObject({ lease: z.string().min(1), error: z.string().max(10_000), permanent: z.boolean().default(false) });
+export const releaseBody = z.strictObject({ lease: z.string().min(1) });
+
+const metaValue = z.union([z.string().max(1000), z.number(), z.boolean(), z.null()]);
+export const completeBody = z.strictObject({
+  lease: z.string().min(1),
+  /** Metadata per uploaded output name; `preview` names another uploaded output that becomes its preview. */
+  outputs: z.record(z.string(), z.strictObject({ meta: z.record(z.string(), metaValue).optional(), preview: z.string().optional() })).default({}),
+});
+export type CompleteBody = z.infer<typeof completeBody>;
