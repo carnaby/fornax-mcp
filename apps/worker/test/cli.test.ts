@@ -1,12 +1,13 @@
 import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import { Writable } from 'node:stream';
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fingerprint, generateToken } from '@fornax/protocol';
 import { startTestServer, type TestServer } from '@fornax/server/testing';
 import { afterEach, describe, expect, test } from 'vitest';
 import { ApiError, type WorkerApi } from '../src/api.js';
-import { makeSignalHandler, runCli, wireSignals } from '../src/cli.js';
+import { consoleWriter, makeSignalHandler, runCli, wireSignals } from '../src/cli.js';
 import { hasRunning, killRunning, runProcess } from '../src/process.js';
 import type { Ctx } from '../src/commands/context.js';
 import { readToken, readWorkerConfig, saveToken } from '../src/config.js';
@@ -299,6 +300,30 @@ describe('signal handling', () => {
     handler();
     expect(events[0]).toMatch(/^say stopping/);
     expect(events[0]).not.toContain('job');
+  });
+
+  test('a console gone with the terminal (EIO after a hangup, EPIPE) neither crashes the handler nor stops the abort', async () => {
+    for (const code of ['EIO', 'EPIPE']) {
+      // A terminal that hung up: every write fails, reported as a stream 'error' after the write call returned.
+      const tty = new Writable({ write: (_chunk, _enc, cb) => cb(Object.assign(new Error(`write ${code}`), { code })) });
+      const say = consoleWriter(tty);
+      const events: string[] = [];
+      const handler = makeSignalHandler({
+        abort: () => events.push('abort'),
+        killRunning: async () => void events.push('kill'),
+        hasRunning: () => true,
+        exit: (c) => events.push(`exit ${c}`),
+        say: (t) => say(`${t}\n`),
+      });
+      handler();
+      await tick();
+      expect(events).toEqual(['abort']);
+      say('more output after the hangup\n');
+      await tick();
+      handler();
+      await tick();
+      expect(events).toEqual(['abort', 'kill', 'exit 130']);
+    }
   });
 
   test('SIGINT, SIGTERM and SIGHUP (terminal or SSH closed; on Windows the console window) reach the same handler', () => {

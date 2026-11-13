@@ -106,6 +106,34 @@ export function makeSignalHandler(d: SignalDeps): () => void {
   };
 }
 
+/**
+ * Write errors that only mean nobody reads the console any more: EIO once the terminal or SSH session hung up (Linux),
+ * EPIPE once the reading end of a pipe closed; later writes to the then destroyed stream report ERR_STREAM_DESTROYED.
+ */
+const CONSOLE_GONE = new Set(['EIO', 'EPIPE', 'ERR_STREAM_DESTROYED']);
+const guarded = new WeakSet<NodeJS.WritableStream>();
+
+/**
+ * A writer for a console stream that a lost console cannot crash. Such a write error comes as a stream 'error' event
+ * after the write call returned; without a listener it would end the worker before the running job is given back.
+ * Any other error still surfaces.
+ */
+export function consoleWriter(stream: NodeJS.WritableStream): (text: string) => void {
+  if (!guarded.has(stream)) {
+    guarded.add(stream);
+    stream.on('error', (e: NodeJS.ErrnoException) => {
+      if (!CONSOLE_GONE.has(e.code ?? '')) throw e;
+    });
+  }
+  return (text) => {
+    try {
+      stream.write(text);
+    } catch (e) {
+      if (!CONSOLE_GONE.has((e as NodeJS.ErrnoException).code ?? '')) throw e;
+    }
+  };
+}
+
 /** The signals that stop the worker. SIGHUP: the terminal or SSH session closed (Linux), the console window closed (Windows). */
 export const STOP_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const;
 
@@ -128,16 +156,18 @@ function isMainModule(): boolean {
 
 if (isMainModule()) {
   const stop = new AbortController();
+  // Every line the worker prints goes through these: a hung-up terminal must not crash it (see consoleWriter).
+  const out = consoleWriter(process.stdout);
+  const err = consoleWriter(process.stderr);
   const onSignal = makeSignalHandler({
     abort: () => stop.abort(),
     killRunning: () => killRunning(2000),
     hasRunning,
     exit: (c) => process.exit(c),
-    say: (t) => process.stderr.write(`${t}
-`),
+    say: (t) => err(`${t}\n`),
   });
   const unwire = wireSignals(process, onSignal);
-  const ctx: Ctx = { paths: resolvePaths(), out: (l) => console.log(l), write: (t) => process.stdout.write(t), signal: stop.signal };
+  const ctx: Ctx = { paths: resolvePaths(), out: (l) => out(`${l}\n`), write: out, signal: stop.signal };
   process.exitCode = await runCli(process.argv.slice(2), ctx);
   unwire();
 }
