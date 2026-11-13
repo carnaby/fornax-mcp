@@ -57,6 +57,20 @@ describe('maintenance', () => {
     expect(t.db.select().from(jobs).get()).toMatchObject({ id, state: 'failed', error: TYPE_UNAVAILABLE });
   });
 
+  test('the unavailable period counts from the withdrawal, not from the last announcement', async () => {
+    announce(t.db, [renderContract, transcribeContract], t.clock.now);
+    const alice = issueToken(t.db, 'alice');
+    t.clock.advance(DAY);
+    const id = await submit(alice, await uploadFile(t.app, alice, 'a.blend', 'A'));
+    t.clock.advance(8 * DAY);
+    announce(t.db, [transcribeContract], t.clock.now);
+    expect((await runMaintenance(deps())).unavailable).toBe(0);
+    expect(t.db.select().from(jobs).get()).toMatchObject({ id, state: 'queued' });
+    t.clock.advance(7 * DAY + 1);
+    expect((await runMaintenance(deps())).unavailable).toBe(1);
+    expect(t.db.select().from(jobs).get()).toMatchObject({ id, state: 'failed' });
+  });
+
   test('a type still offered is never failed, however old the job', async () => {
     announce(t.db, [renderContract], t.clock.now);
     const alice = issueToken(t.db, 'alice');

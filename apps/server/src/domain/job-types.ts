@@ -15,7 +15,7 @@ export function announceTypes(db: Db, contracts: JobTypeContract[], now: Date): 
       tx.insert(jobTypes).values({ name: c.name, ...values }).onConflictDoUpdate({ target: jobTypes.name, set: values }).run();
     }
     const withdrawn = names.length ? and(eq(jobTypes.offered, true), notInArray(jobTypes.name, names)) : eq(jobTypes.offered, true);
-    tx.update(jobTypes).set({ offered: false }).where(withdrawn).run();
+    tx.update(jobTypes).set({ offered: false, lastOfferedAt: now }).where(withdrawn).run();
   });
   jobSignal.wake();
   return { offered: [...names].sort() };

@@ -1,7 +1,7 @@
 import { fingerprint, generateToken, webhookKey } from '@fornax/protocol';
 import { eq } from 'drizzle-orm';
 import { describe, expect, test } from 'vitest';
-import { tokens } from '../src/db/schema.js';
+import { invites, tokens } from '../src/db/schema.js';
 import { approveToken, createInvite, listTokens, resolveToken, revokeToken } from '../src/domain/tokens.js';
 import { useTestDb } from './helpers.js';
 
@@ -31,6 +31,22 @@ describe('tokens', () => {
   test('an expired invite is refused', () => {
     createInvite(t.db, { name: 'alice', role: 'client' }, now);
     expect(resolveToken(t.db, generateToken('alice'), later(86_400_001))).toBeNull();
+  });
+
+  test('a second invite is refused while the first is unused and unexpired', () => {
+    createInvite(t.db, { name: 'alice', role: 'client' }, now);
+    expect(() => createInvite(t.db, { name: 'alice', role: 'client' }, later(1000))).toThrow(/invite/);
+    expect(() => createInvite(t.db, { name: 'alice', role: 'client' }, later(86_400_001))).not.toThrow();
+  });
+
+  test('no second pending token is registered for a name that already has one', () => {
+    createInvite(t.db, { name: 'alice', role: 'client' }, now);
+    const first = generateToken('alice');
+    resolveToken(t.db, first, now);
+    // A second unused invite for the same name, inserted directly (createInvite refuses it).
+    t.db.insert(invites).values({ id: 'second', name: 'alice', role: 'client', expiresAt: later(86_400_000), createdAt: now }).run();
+    expect(resolveToken(t.db, generateToken('alice'), now)).toBeNull();
+    expect(t.db.select().from(tokens).all()).toHaveLength(1);
   });
 
   test('one invite gives one token', () => {

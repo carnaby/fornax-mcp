@@ -14,6 +14,8 @@ export function createInvite(db: Db, input: { name: string; role: TokenRole }, n
   if (!TOKEN_NAME.test(input.name)) throw badRequest('the name must be 1-24 characters a-z or 0-9');
   const pending = db.select({ id: tokens.id }).from(tokens).where(and(eq(tokens.name, input.name), eq(tokens.status, 'pending'))).get();
   if (pending) throw conflict(`a token named ${input.name} is waiting for approval; approve or revoke it first`);
+  const open = db.select({ id: invites.id }).from(invites).where(and(eq(invites.name, input.name), isNull(invites.tokenId), gt(invites.expiresAt, now))).get();
+  if (open) throw conflict(`an unused invite for ${input.name} already exists; wait for it to be used or to expire`);
   const id = randomBytes(16).toString('base64url');
   const expiresAt = new Date(now.getTime() + INVITE_TTL_MS);
   db.insert(invites).values({ id, name: input.name, role: input.role, expiresAt, createdAt: now }).run();
@@ -45,6 +47,9 @@ export function resolveToken(db: Db, raw: string, now: Date): Resolved {
       .limit(1)
       .get();
     if (!invite) return null;
+    // Two pending tokens with one name would make `approve <name>` ambiguous.
+    const waiting = tx.select({ id: tokens.id }).from(tokens).where(and(eq(tokens.name, parsed.name), eq(tokens.status, 'pending'))).get();
+    if (waiting) return null;
     const id = randomUUID();
     const fp = fingerprint(raw);
     tx.insert(tokens)
