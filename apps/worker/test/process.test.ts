@@ -113,3 +113,23 @@ describe('parseProgress', () => {
     expect(parseProgress(JSON.stringify({ progress: 0.1, message: 'x'.repeat(300) }))?.message).toHaveLength(200);
   });
 });
+
+describe('kill fallback', () => {
+  // The seam points the Windows taskkill at a program that cannot start; the tool must still be stopped.
+  test.runIf(process.platform === 'win32')('a failing taskkill falls back to killing the process itself', async () => {
+    const pidFile = join(tmp(), 'pids.json');
+    const stop = new AbortController();
+    const running = run(tool('tree', pidFile), { signal: stop.signal, killGraceMs: 500, taskkillProgram: 'fornax-test-no-such-taskkill' });
+    const pids = await waitFor(() => readPids(pidFile), 10_000, 'the tool to write its pids');
+    stop.abort();
+    const r = await Promise.race([running, new Promise<'hung'>((res) => setTimeout(() => res('hung'), 8000))]);
+    expect(r).toMatchObject({ canceled: true });
+    await waitFor(() => !isAlive(pids.parent), 5000, 'the tool to die');
+    // Clean up the grandchild, which the fallback cannot reach.
+    try {
+      process.kill(pids.child);
+    } catch {
+      // already gone
+    }
+  }, 20_000);
+});

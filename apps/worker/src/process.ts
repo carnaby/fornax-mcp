@@ -24,6 +24,8 @@ export type RunOptions = {
   onProgress?: (p: Progress) => void;
   /** Log text as it arrives (a pack's setup shown live). */
   onOutput?: (text: string) => void;
+  /** Test seam: the program used for taskkill on Windows. */
+  taskkillProgram?: string;
 };
 
 export type RunResult = {
@@ -103,14 +105,26 @@ export function childEnv(base: NodeJS.ProcessEnv, extra: Record<string, string>)
 }
 
 /** Kill a process and everything it started. Windows: taskkill /T /F. Linux: SIGTERM to its group, SIGKILL after the grace period. */
-export async function killTree(pid: number, graceMs: number = KILL_GRACE_MS): Promise<void> {
+export async function killTree(pid: number, graceMs: number = KILL_GRACE_MS, taskkillProgram?: string): Promise<void> {
   if (process.platform === 'win32') {
-    const taskkill = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'taskkill.exe');
-    await new Promise<void>((resolve) => {
-      const k = spawn(taskkill, ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
-      k.on('error', () => resolve());
-      k.on('exit', () => resolve());
+    const taskkill = taskkillProgram ?? join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'taskkill.exe');
+    const ok = await new Promise<boolean>((resolve) => {
+      try {
+        const k = spawn(taskkill, ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+        k.on('error', () => resolve(false));
+        k.on('exit', (code) => resolve(code === 0));
+      } catch {
+        resolve(false);
+      }
     });
+    if (!ok) {
+      // taskkill failed (or the process is already gone): at least end the process itself.
+      try {
+        process.kill(pid);
+      } catch {
+        // already gone
+      }
+    }
     return;
   }
   const group = (sig: NodeJS.Signals | 0): boolean => {
@@ -163,14 +177,17 @@ export function runProcess(opts: RunOptions): Promise<RunResult> {
     let canceled = false;
     let settled = false;
     let stopping = false;
+    let exited = false;
     let killing: Promise<void> = Promise.resolve();
     let exit: { code: number | null; signal: NodeJS.Signals | null } = { code: null, signal: null };
     let pipeTimer: NodeJS.Timeout | undefined;
 
     const stop = () => {
       if (stopping || child.pid === undefined) return;
+      // Windows: after exit the pid may be reused, taskkill must not touch it.
+      if (exited && process.platform === 'win32') return;
       stopping = true;
-      killing = killTree(child.pid, opts.killGraceMs ?? KILL_GRACE_MS);
+      killing = killTree(child.pid, opts.killGraceMs ?? KILL_GRACE_MS, opts.taskkillProgram).catch(() => {});
     };
     const timer =
       opts.timeoutMs !== undefined
@@ -217,6 +234,14 @@ export function runProcess(opts: RunOptions): Promise<RunResult> {
       if (rest) takeLine(rest);
       write(errText.end());
       await killing;
+      if (child.exitCode === null && child.signalCode === null) {
+        // The tree kill did not end the tool: last resort.
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          // already gone
+        }
+      }
       resolve({ ...exit, timedOut, canceled, spawnError, log: log.toString() });
     };
 
@@ -226,6 +251,7 @@ export function runProcess(opts: RunOptions): Promise<RunResult> {
     });
     child.on('exit', (code, signal) => {
       exit = { code, signal };
+      exited = true;
       pipeTimer = setTimeout(() => {
         child.stdout!.destroy();
         child.stderr!.destroy();
