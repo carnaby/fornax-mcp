@@ -1,13 +1,15 @@
+import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fingerprint } from '@fornax/protocol';
 import { startTestServer, type TestServer } from '@fornax/server/testing';
 import { afterEach, describe, expect, test } from 'vitest';
 import { ApiError, type WorkerApi } from '../src/api.js';
-import { makeSignalHandler, runCli } from '../src/cli.js';
+import { makeSignalHandler, runCli, wireSignals } from '../src/cli.js';
 import { hasRunning, killRunning, runProcess } from '../src/process.js';
 import type { Ctx } from '../src/commands/context.js';
-import { readToken, readWorkerConfig } from '../src/config.js';
+import { readToken, readWorkerConfig, saveToken } from '../src/config.js';
+import { lockWorker } from '../src/instance.js';
 import { testPaths, useTempDir, waitFor, writeEchoPack } from './helpers.js';
 
 const tmp = useTempDir();
@@ -121,6 +123,24 @@ describe('fornax CLI', () => {
     }
   });
 
+  test('a second worker on this PC refuses to start; leftovers of earlier runs are swept at start', async () => {
+    const s = await server();
+    const { ctx, run } = cli();
+    mkdirSync(ctx.paths.configDir, { recursive: true });
+    writeFileSync(ctx.paths.configFile, `server: ${s.url}\ntools:\n  node: ${JSON.stringify(process.execPath)}\n`);
+    saveToken(ctx.paths, s.issueToken('pc', 'worker'));
+    const held = lockWorker(ctx.paths);
+    const refused = await run('worker', '--once');
+    expect(refused.code).toBe(1);
+    expect(refused.text).toMatch(/another fornax worker runs on this PC \(pid \d+\)/);
+    if ('release' in held) held.release();
+    mkdirSync(join(ctx.paths.jobsDir, 'OLDJOB', 'out'), { recursive: true });
+    const served = await run('worker', '--once');
+    expect(served.code).toBe(0);
+    expect(existsSync(join(ctx.paths.jobsDir, 'OLDJOB'))).toBe(false);
+    expect(existsSync(join(ctx.paths.dataDir, 'worker.lock'))).toBe(false);
+  });
+
   test('commands that need pairing say how to pair', async () => {
     const { run } = cli();
     expect(await run('worker', 'queue')).toMatchObject({ code: 1, text: expect.stringContaining('fornax worker pair') });
@@ -201,6 +221,16 @@ describe('signal handling', () => {
     handler();
     expect(events[0]).toMatch(/^say stopping/);
     expect(events[0]).not.toContain('job');
+  });
+
+  test('SIGINT, SIGTERM and SIGHUP (terminal or SSH closed; on Windows the console window) reach the same handler', () => {
+    const proc = new EventEmitter();
+    const seen: string[] = [];
+    const unwire = wireSignals(proc, () => seen.push('signal'));
+    for (const s of ['SIGINT', 'SIGTERM', 'SIGHUP']) proc.emit(s);
+    expect(seen).toHaveLength(3);
+    unwire();
+    expect(proc.eventNames()).toEqual([]);
   });
 
   test('killRunning ends a live tool and returns', async () => {

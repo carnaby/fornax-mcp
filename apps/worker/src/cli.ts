@@ -106,6 +106,17 @@ export function makeSignalHandler(d: SignalDeps): () => void {
   };
 }
 
+/** The signals that stop the worker. SIGHUP: the terminal or SSH session closed (Linux), the console window closed (Windows). */
+export const STOP_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const;
+
+/** Wire `handler` to every stop signal; returns the unwiring. */
+export function wireSignals(target: Pick<NodeJS.EventEmitter, 'on' | 'off'>, handler: () => void): () => void {
+  for (const s of STOP_SIGNALS) target.on(s, handler);
+  return () => {
+    for (const s of STOP_SIGNALS) target.off(s, handler);
+  };
+}
+
 /** Both sides resolved the way the OS names the file (drive letter case, links); false when argv[1] is no file. */
 function isMainModule(): boolean {
   try {
@@ -125,10 +136,8 @@ if (isMainModule()) {
     say: (t) => process.stderr.write(`${t}
 `),
   });
-  process.on('SIGINT', onSignal);
-  process.on('SIGTERM', onSignal);
+  const unwire = wireSignals(process, onSignal);
   const ctx: Ctx = { paths: resolvePaths(), out: (l) => console.log(l), write: (t) => process.stdout.write(t), signal: stop.signal };
   process.exitCode = await runCli(process.argv.slice(2), ctx);
-  process.off('SIGINT', onSignal);
-  process.off('SIGTERM', onSignal);
+  unwire();
 }
