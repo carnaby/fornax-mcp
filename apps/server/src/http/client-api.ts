@@ -1,12 +1,9 @@
-import { basename } from 'node:path';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { notFound } from '../domain/errors.js';
 import { createUploadLink, fileView, getOwnFile, saveFile } from '../domain/files.js';
 import { cancelJob, getOwnJob, GROUP, jobView, listJobs, PRIORITIES, submitJob } from '../domain/jobs.js';
 import { offeredTypes, typeView } from '../domain/job-types.js';
 import { queueStatus } from '../domain/maintenance.js';
-import { downloadableFile } from '../domain/outputs.js';
 import { workerOnline } from '../domain/worker-state.js';
 import { requireRole } from './auth.js';
 import type { RouteDeps } from './deps.js';
@@ -79,17 +76,4 @@ export const clientRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps) => 
   app.post<{ Params: { id: string } }>('/jobs/:id/cancel', async (req) =>
     jobView(deps.db, cancelJob(deps.db, req.identity!.tokenId, req.params.id, deps.clock())),
   );
-
-  app.get<{ Params: { id: string; '*': string } }>('/jobs/:id/outputs/*', async (req, reply) => {
-    const job = getOwnJob(deps.db, req.identity!.tokenId, req.params.id);
-    const file = downloadableFile(deps.db, job, req.params['*']);
-    if (!file) throw notFound(`output ${req.params['*']} not found`);
-    return reply
-      .header('content-type', file.mime)
-      .header('content-length', file.size)
-      .header('x-content-type-options', 'nosniff')
-      .header('cache-control', 'private, max-age=0')
-      .header('content-disposition', `inline; filename*=UTF-8''${encodeURIComponent(basename(file.name))}`)
-      .send(deps.store.openRead(file.id));
-  });
 };

@@ -111,3 +111,8 @@ export function listTokens(db: Db) {
     .orderBy(tokens.name, tokens.createdAt)
     .all();
 }
+
+/** Signed links act for their owner: they work only while the owner's token is active. */
+export function ownerActive(db: Db, tokenId: string): boolean {
+  return db.select({ status: tokens.status }).from(tokens).where(eq(tokens.id, tokenId)).get()?.status === 'active';
+}
