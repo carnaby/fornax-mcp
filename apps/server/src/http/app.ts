@@ -6,6 +6,7 @@ import { DomainError } from '../domain/errors.js';
 import { FileStore } from '../files/store.js';
 import { clientRoutes } from './client-api.js';
 import type { RouteDeps } from './deps.js';
+import { uploadLinkRoutes } from './uploads.js';
 import { workerRoutes } from './worker-api.js';
 
 export type AppDeps = {
@@ -62,6 +63,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   });
   // Siblings: each plugin's auth hook applies only to its own routes.
   await app.register(workerRoutes, { prefix: '/api/worker', ...routeDeps });
+  await app.register(uploadLinkRoutes, routeDeps);
   await app.register(clientRoutes, { prefix: '/api', ...routeDeps });
   return app;
 }
