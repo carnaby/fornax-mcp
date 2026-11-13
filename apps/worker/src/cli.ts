@@ -6,6 +6,7 @@ import { ApiError, NetworkError } from './api.js';
 import type { Ctx } from './commands/context.js';
 import { doctor } from './commands/doctor.js';
 import { pair } from './commands/pair.js';
+import { typesAdd, typesInstall, typesList } from './commands/types.js';
 import { queueCommand, workerCommand } from './commands/worker.js';
 import { ConfigError } from './config.js';
 import { PackError } from './pack.js';
@@ -16,9 +17,12 @@ export const USAGE = [
   '       fornax worker [--once]',
   '       fornax worker queue',
   '       fornax doctor [type]',
+  '       fornax types list',
+  '       fornax types install <name> [--from <dir>]',
+  '       fornax types add <name>',
 ].join('\n');
 
-type Flags = { server?: string; name?: string; force?: boolean; once?: boolean; help?: boolean };
+type Flags = { server?: string; name?: string; force?: boolean; from?: string; once?: boolean; help?: boolean };
 
 /** Parse and dispatch. 0 done, 1 failed (the message says why), 2 usage. */
 export async function runCli(argv: string[], ctx: Ctx): Promise<number> {
@@ -33,6 +37,7 @@ export async function runCli(argv: string[], ctx: Ctx): Promise<number> {
         server: { type: 'string' },
         name: { type: 'string' },
         force: { type: 'boolean' },
+        from: { type: 'string' },
         once: { type: 'boolean' },
         help: { type: 'boolean', short: 'h' },
       },
@@ -50,7 +55,7 @@ export async function runCli(argv: string[], ctx: Ctx): Promise<number> {
   }
   /** Exactly `n` words, and no flag the command does not take (a typo must not silently change the meaning). */
   const shape = (n: number, ...allowed: (keyof Flags)[]) => words.length === n && Object.keys(flags).every((k) => allowed.includes(k as keyof Flags));
-  const [group, sub] = words;
+  const [group, sub, arg] = words;
   try {
     if (group === 'worker' && sub === 'pair' && shape(2, 'server', 'name', 'force') && flags.server && flags.name) {
       return await pair(ctx, { server: flags.server, name: flags.name, force: flags.force === true });
@@ -58,6 +63,9 @@ export async function runCli(argv: string[], ctx: Ctx): Promise<number> {
     if (group === 'worker' && sub === undefined && shape(1, 'once')) return await workerCommand(ctx, flags.once === true);
     if (group === 'worker' && sub === 'queue' && shape(2)) return await queueCommand(ctx);
     if (group === 'doctor' && (shape(1) || shape(2))) return await doctor(ctx, sub);
+    if (group === 'types' && sub === 'list' && shape(2)) return await typesList(ctx);
+    if (group === 'types' && sub === 'install' && arg !== undefined && shape(3, 'from')) return await typesInstall(ctx, arg, flags.from);
+    if (group === 'types' && sub === 'add' && arg !== undefined && shape(3)) return await typesAdd(ctx, arg);
   } catch (e) {
     if (e instanceof ConfigError || e instanceof PackError || e instanceof NetworkError || e instanceof ApiError) {
       ctx.out(e.message);
