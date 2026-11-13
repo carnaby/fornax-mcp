@@ -1,7 +1,7 @@
 import { fingerprint, generateToken } from '@fornax/protocol';
 import { describe, expect, test } from 'vitest';
 import { createInvite, resolveToken } from '../src/domain/tokens.js';
-import { maskUrl } from '../src/http/app.js';
+import { logUrl, maskUrl } from '../src/http/app.js';
 import { issueToken, useTestApp } from './helpers.js';
 
 const t = useTestApp();
@@ -41,7 +41,7 @@ describe('authentication', () => {
 });
 
 describe('maskUrl', () => {
-  test('hides tokens in /mcp paths, upload links and signatures', () => {
+  test('hides tokens in /mcp paths, upload links, result links, invite ids and signatures', () => {
     expect(maskUrl('/mcp/fornax-alice-abc')).toBe('/mcp/***');
     expect(maskUrl('/api/uploads/abc.123.sig')).toBe('/api/uploads/***');
     expect(maskUrl('/r/abc.123.sig')).toBe('/r/***');
@@ -50,5 +50,23 @@ describe('maskUrl', () => {
     expect(maskUrl('/mcp/tok?x=1')).toBe('/mcp/***?x=1');
     expect(maskUrl('/api/jobs/1?SIG=x')).toBe('/api/jobs/1?SIG=***');
     expect(maskUrl('//mcp/tok')).toBe('/mcp/***');
+    expect(maskUrl('/pair/abcDEF_-123')).toBe('/pair/***');
+    expect(maskUrl('/pair/abc?x=1')).toBe('/pair/***?x=1');
+  });
+});
+
+describe('logUrl', () => {
+  const req = (url: string, route?: string) => ({ url, is404: route === undefined, routeOptions: { url: route } });
+  test('logs a secret route as its masked template, also when the path was percent-encoded', () => {
+    expect(logUrl(req('/%70air/abc', '/pair/:invite'))).toBe('/pair/***');
+    expect(logUrl(req('/%6Dcp/fornax-alice-abc', '/mcp/:token'))).toBe('/mcp/***');
+    expect(logUrl(req('/%72/abc.1.sig', '/r/:signed'))).toBe('/r/***');
+    expect(logUrl(req('/api/%75ploads/abc.1.sig', '/api/uploads/:signed'))).toBe('/api/uploads/***');
+  });
+
+  test('keeps the path of other routes without the query, and logs no unmatched URL', () => {
+    expect(logUrl(req('/api/jobs/j1?x=secret', '/api/jobs/:id'))).toBe('/api/jobs/j1');
+    expect(logUrl(req('/api/jobs/j1/outputs/a.png?sig=x', '/api/jobs/:id/outputs/*'))).toBe('/api/jobs/j1/outputs/a.png');
+    expect(logUrl(req('/nope/secret'))).toBe('(unmatched)');
   });
 });

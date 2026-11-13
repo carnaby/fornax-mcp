@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from 'vitest';
+import { createInvite } from '../src/domain/tokens.js';
 import { buildApp } from '../src/http/app.js';
 import { issueToken, useTestDb } from './helpers.js';
 
@@ -39,6 +40,24 @@ describe('log masking', () => {
     }
     const out = lines.join('');
     expect(out).toContain('incoming request');
+    expect(out).not.toContain(SECRET);
+  });
+
+  test('pairing pages never log the invite id, also when the path is percent-encoded', async () => {
+    const lines: string[] = [];
+    const a = await build(lines);
+    const invite = createInvite(t.db, { name: 'alice', role: 'client' }, new Date());
+    const encoded = `/%70air/${invite.id}`;
+    expect((await a.inject({ method: 'GET', url: `/pair/${invite.id}` })).statusCode).toBe(200);
+    expect((await a.inject({ method: 'GET', url: encoded })).statusCode).toBe(200);
+    // The router decodes the other secret routes the same way.
+    for (const url of [`/%6Dcp/fornax-alice-${SECRET}`, `/%72/${SECRET}.1.sig`, `/api/%75ploads/${SECRET}.1.sig`]) {
+      await a.inject({ method: 'GET', url });
+    }
+    await a.inject({ method: 'PUT', url: `/api/%75ploads/${SECRET}.1.sig`, payload: 'x' });
+    const out = lines.join('');
+    expect(out).toContain('/pair/***');
+    expect(out).not.toContain(invite.id);
     expect(out).not.toContain(SECRET);
   });
 

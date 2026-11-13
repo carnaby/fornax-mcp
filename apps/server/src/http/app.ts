@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyError, type FastifyInstance, type FastifyRequest } from 'fastify';
 import type { Config } from '../config.js';
 import type { Db } from '../db/client.js';
 import { DomainError } from '../domain/errors.js';
@@ -8,6 +8,7 @@ import { mcpRoutes } from '../mcp/routes.js';
 import { clientRoutes } from './client-api.js';
 import { downloadRoutes } from './downloads.js';
 import type { RouteDeps } from './deps.js';
+import { pairPageRoutes } from './pages/pair.js';
 import { resultPageRoutes } from './pages/result.js';
 import { uploadLinkRoutes } from './uploads.js';
 import { workerRoutes } from './worker-api.js';
@@ -27,11 +28,24 @@ export function maskUrl(url: string): string {
     .replace(/^\/+mcp\/[^?#]+/, '/mcp/***')
     .replace(/^\/+api\/uploads\/[^?#]+/, '/api/uploads/***')
     .replace(/^\/+r\/[^?#]+/, '/r/***')
+    .replace(/^\/+pair\/[^?#]+/, '/pair/***')
     .replace(/([?&]sig=)[^&#]*/gi, '$1***');
 }
 
 /** Query strings carry client file names and groups; the logs get the path only. */
 const withoutQuery = (url: string): string => url.replace(/[?#].*$/s, '');
+
+/**
+ * The URL a log line gets. A route that carries a secret is logged as its masked template: the router decodes
+ * percent-encoded paths, so "/%70air/<id>" reaches /pair/:invite while its raw URL slips past maskUrl. Other routes
+ * keep their path (ids help) without the query; unmatched URLs are not logged at all, since any path may carry a secret.
+ */
+export function logUrl(req: { url: string; is404: boolean; routeOptions: { url?: string | undefined } }): string {
+  if (req.is404) return '(unmatched)';
+  const route = req.routeOptions.url;
+  if (route !== undefined && maskUrl(route) !== route) return maskUrl(route);
+  return maskUrl(withoutQuery(req.url));
+}
 
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const routeDeps: RouteDeps = {
@@ -44,8 +58,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     logger: {
       level: process.env.LOG_LEVEL ?? 'info',
       ...(deps.logStream ? { stream: deps.logStream } : {}),
-      // Unmatched URLs are not logged at all: any path may carry a secret.
-      serializers: { req: (req) => ({ method: req.method, url: req.is404 ? '(unmatched)' : maskUrl(withoutQuery(req.url)) }) },
+      serializers: { req: (req: FastifyRequest) => ({ method: req.method, url: logUrl(req) }) },
     },
   });
 
@@ -78,5 +91,6 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   await app.register(clientRoutes, { prefix: '/api', ...routeDeps });
   await app.register(mcpRoutes, routeDeps);
   await app.register(resultPageRoutes, routeDeps);
+  await app.register(pairPageRoutes, routeDeps);
   return app;
 }
