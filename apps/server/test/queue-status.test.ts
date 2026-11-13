@@ -4,7 +4,7 @@ import { announce, issueToken, uploadFile, useTestApp } from './helpers.js';
 
 const t = useTestApp();
 
-test('queue status shows counts and the running job without ids of others', async () => {
+test("queue status shows counts and the running job; its message only to the job's owner", async () => {
   announce(t.db, [renderContract], t.clock.now);
   const worker = issueToken(t.db, 'pc', 'worker');
   const alice = issueToken(t.db, 'alice');
@@ -17,8 +17,10 @@ test('queue status shows counts and the running job without ids of others', asyn
   await t.app.inject({ method: 'POST', url: `/api/worker/jobs/${job.id}/heartbeat`, headers: { authorization: `Bearer ${worker}` }, payload: { lease: job.lease, progress: 0.5, message: 'half' } });
 
   const q = (await t.app.inject({ method: 'GET', url: '/api/queue', headers: { authorization: `Bearer ${eve}` } })).json();
-  expect(q).toEqual({ queued: 1, running: 1, worker: { online: true, last_seen: expect.any(String) }, current: { type: 'render', progress: 0.5, progress_message: 'half' } });
+  expect(q).toEqual({ queued: 1, running: 1, worker: { online: true, last_seen: expect.any(String) }, current: { type: 'render', progress: 0.5, progress_message: null } });
   expect(JSON.stringify(q)).not.toContain(job.id);
+  const own = (await t.app.inject({ method: 'GET', url: '/api/queue', headers: { authorization: `Bearer ${alice}` } })).json();
+  expect(own.current).toEqual({ type: 'render', progress: 0.5, progress_message: 'half' });
 
   const wq = (await t.app.inject({ method: 'GET', url: '/api/worker/queue', headers: { authorization: `Bearer ${worker}` } })).json();
   expect(wq).toEqual({ queued: 1, running: 1, unavailable: [] });

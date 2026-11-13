@@ -65,7 +65,8 @@ export async function runMaintenance(deps: RouteDeps) {
   return { leases, orphans: orphanRows.length, unavailable, finished: old.length, pendingTokens };
 }
 
-export function queueStatus(db: Db, now: Date) {
+/** The queue as every client sees it. The running job's message is its owner's free text: only the owner (viewer) gets it. */
+export function queueStatus(db: Db, now: Date, viewer: string | null = null) {
   const counts = db
     .select({ state: jobs.state, n: count() })
     .from(jobs)
@@ -78,7 +79,9 @@ export function queueStatus(db: Db, now: Date) {
     queued: counts.find((c) => c.state === 'queued')?.n ?? 0,
     running: counts.find((c) => c.state === 'running')?.n ?? 0,
     worker: workerOnline(db, now),
-    current: running ? { type: running.type, progress: running.progress, progress_message: running.progressMessage } : null,
+    current: running
+      ? { type: running.type, progress: running.progress, progress_message: running.ownerTokenId === viewer ? running.progressMessage : null }
+      : null,
   };
 }
 

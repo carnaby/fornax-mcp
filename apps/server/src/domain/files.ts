@@ -43,6 +43,16 @@ export function createUploadLink(deps: RouteDeps, owner: string, name: string): 
   return { fileId, expiresAt, url: `${deps.config.publicUrl}/api/uploads/${sign(deps.config.secret, 'upload', id, expiresAt)}` };
 }
 
+/** What create_upload and POST /api/uploads answer: the link and a curl command to run with the local path. */
+export function uploadLinkView(link: { fileId: string; url: string; expiresAt: Date }) {
+  return {
+    file_id: link.fileId,
+    url: link.url,
+    expires_at: link.expiresAt.toISOString(),
+    curl: `curl -fsS -X PUT -H "Content-Type: application/octet-stream" --data-binary @<path> "${link.url}"`,
+  };
+}
+
 /** Take an upload link for one upload; null when unknown, used or expired. */
 export function takeUploadLink(db: Db, id: string, now: Date) {
   return db.update(uploads).set({ usedAt: now }).where(and(eq(uploads.id, id), isNull(uploads.usedAt), gt(uploads.expiresAt, now))).returning().get() ?? null;

@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { createUploadLink, fileView, getOwnFile, saveFile } from '../domain/files.js';
-import { cancelJob, getOwnJob, GROUP, jobView, listJobs, PRIORITIES, submitJob } from '../domain/jobs.js';
+import { createUploadLink, fileView, getOwnFile, saveFile, uploadLinkView } from '../domain/files.js';
+import { cancelJob, getOwnJob, GROUP, JOB_STATES, jobView, listJobs, PRIORITIES, submitJob } from '../domain/jobs.js';
 import { offeredTypes, typeView } from '../domain/job-types.js';
 import { queueStatus } from '../domain/maintenance.js';
 import { workerOnline } from '../domain/worker-state.js';
@@ -18,7 +18,7 @@ export const clientRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps) => 
 
   app.get('/types', async () => ({ types: offeredTypes(deps.db).map(typeView), worker: workerOnline(deps.db, deps.clock()) }));
 
-  app.get('/queue', async () => queueStatus(deps.db, deps.clock()));
+  app.get('/queue', async (req) => queueStatus(deps.db, deps.clock(), req.identity!.tokenId));
 
   // Raw uploads live in a child plugin so JSON parsing stays on for the other routes.
   await app.register(async (raw) => {
@@ -35,13 +35,7 @@ export const clientRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps) => 
 
   app.post('/uploads', async (req, reply) => {
     const { name } = parse(z.object({ name: z.string().min(1).max(500) }), req.body);
-    const link = createUploadLink(deps, req.identity!.tokenId, name);
-    return reply.code(201).send({
-      file_id: link.fileId,
-      url: link.url,
-      expires_at: link.expiresAt.toISOString(),
-      curl: `curl -fsS -X PUT -H "Content-Type: application/octet-stream" --data-binary @<path> "${link.url}"`,
-    });
+    return reply.code(201).send(uploadLinkView(createUploadLink(deps, req.identity!.tokenId, name)));
   });
 
   const submitSchema = z.strictObject({
@@ -62,7 +56,7 @@ export const clientRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps) => 
   app.get('/jobs', async (req) => {
     const q = parse(
       z.object({
-        state: z.enum(['queued', 'running', 'succeeded', 'failed', 'canceled']).optional(),
+        state: z.enum(JOB_STATES).optional(),
         group: z.string().regex(GROUP).optional(),
         limit: z.coerce.number().int().min(1).max(200).default(50),
       }),

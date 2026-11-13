@@ -12,7 +12,7 @@
   },
   "exports": {
     "./testing": {
-      "source": "./src/testing.ts",
+      "fornax-source": "./src/testing.ts",
       "default": "./dist/src/testing.js"
     }
   },
@@ -25,6 +25,8 @@
   },
   "dependencies": {
     "@fornax/protocol": "workspace:*",
+    "@modelcontextprotocol/node": "^2.1.2",
+    "@modelcontextprotocol/server": "^2.4.0",
     "drizzle-orm": "^0.45.4",
     "fastify": "^5.12.8",
     "sharp": "^0.35.5",
@@ -33,6 +35,7 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "^2.4.0",
     "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^26.6.6",
     "drizzle-kit": "^0.31.11",

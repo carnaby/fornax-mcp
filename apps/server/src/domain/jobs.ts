@@ -13,6 +13,7 @@ import { jobSignal } from './signal.js';
 export type JobRow = typeof jobs.$inferSelect;
 export const PRIORITIES = ['low', 'normal', 'high'] as const;
 export type Priority = (typeof PRIORITIES)[number];
+export const JOB_STATES = ['queued', 'running', 'succeeded', 'failed', 'canceled'] as const;
 export const GROUP = /^[A-Za-z0-9._-]{1,100}$/;
 
 export type SubmitInput = {

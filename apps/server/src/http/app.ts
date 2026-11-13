@@ -4,6 +4,7 @@ import type { Config } from '../config.js';
 import type { Db } from '../db/client.js';
 import { DomainError } from '../domain/errors.js';
 import { FileStore } from '../files/store.js';
+import { mcpRoutes } from '../mcp/routes.js';
 import { clientRoutes } from './client-api.js';
 import { downloadRoutes } from './downloads.js';
 import type { RouteDeps } from './deps.js';
@@ -74,5 +75,6 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   await app.register(uploadLinkRoutes, routeDeps);
   await app.register(downloadRoutes, { prefix: '/api', ...routeDeps });
   await app.register(clientRoutes, { prefix: '/api', ...routeDeps });
+  await app.register(mcpRoutes, routeDeps);
   return app;
 }
