@@ -1,3 +1,5 @@
+import sharp from 'sharp';
+
 export const renderContract = {
   name: 'render',
   version: 1,
@@ -17,3 +19,7 @@ export const transcribeContract = {
   params: { type: 'object', additionalProperties: false, properties: { diarize: { type: 'boolean', default: false } } },
   max_runtime_s: 3600,
 };
+
+/** Real (tiny) images, for outputs whose content does not matter: the server decodes them for previews without a warning. */
+export const TINY_PNG = await sharp({ create: { width: 4, height: 4, channels: 3, background: { r: 0, g: 128, b: 255 } } }).png().toBuffer();
+export const TINY_JPEG = await sharp({ create: { width: 4, height: 4, channels: 3, background: { r: 255, g: 128, b: 0 } } }).jpeg().toBuffer();

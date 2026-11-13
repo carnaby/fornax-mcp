@@ -97,17 +97,24 @@ describe('server previews', () => {
 
   test('an image that cannot be decoded gets no preview; the upload still succeeds', async () => {
     const r = await running();
+    t.quietLogs();
     expect((await r.put('broken.png', 'not a png')).statusCode).toBe(201);
     expect(previewRow('broken.png')).toBeUndefined();
+    const output = t.db.select().from(files).all().find((f) => f.name === 'broken.png')!;
+    expect(t.logs.map((l) => JSON.parse(l)).filter((l) => l.level === 40)).toEqual([
+      expect.objectContaining({ file: output.id, msg: 'no preview: the image could not be decoded' }),
+    ]);
     await r.complete({});
     expect((await r.get(`/api/jobs/${r.id}`)).json().outputs).toEqual([expect.objectContaining({ name: 'broken.png', preview: null })]);
   });
 
   test('an SVG named .png gets none', async () => {
     const r = await running();
+    t.quietLogs();
     const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="red"/></svg>';
     expect((await r.put('drawing.png', svg)).statusCode).toBe(201);
     expect(previewRow('drawing.png')).toBeUndefined();
+    expect(t.logs.join('')).toContain('no preview: the image could not be decoded');
   });
 
   test('other formats get none', async () => {
@@ -125,6 +132,7 @@ describe('server previews', () => {
     const second = previewRow('frame.png')!;
     expect(second.id).not.toBe(first.id);
     expect(existsSync(join(t.config.filesDir, first.id))).toBe(false);
+    t.quietLogs();
     await r.put('frame.png', 'not an image any more');
     expect(previewRow('frame.png')).toBeUndefined();
     expect(existsSync(join(t.config.filesDir, second.id))).toBe(false);

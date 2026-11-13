@@ -3,7 +3,7 @@ import { files, jobs } from '../src/db/schema.js';
 import { releaseJob } from '../src/domain/queue.js';
 import { FileStore } from '../src/files/store.js';
 import { buildApp } from '../src/http/app.js';
-import { renderContract } from './fixtures.js';
+import { renderContract, TINY_JPEG, TINY_PNG } from './fixtures.js';
 import { announce, issueToken, uploadFile, useTestApp } from './helpers.js';
 
 const t = useTestApp();
@@ -29,8 +29,8 @@ async function running() {
 describe('outputs', () => {
   test('upload, complete, manifest, download', async () => {
     const r = await running();
-    expect((await r.put('frame_0001.png', 'PNG1')).statusCode).toBe(201);
-    expect((await r.put('previews/frame_0001.jpg', 'JPG1')).statusCode).toBe(201);
+    expect((await r.put('frame_0001.png', TINY_PNG)).statusCode).toBe(201);
+    expect((await r.put('previews/frame_0001.jpg', TINY_JPEG)).statusCode).toBe(201);
     expect((await r.put('log.txt', 'line 1', 'log')).statusCode).toBe(201);
     const done = await r.complete({ 'frame_0001.png': { meta: { width: 2 }, preview: 'previews/frame_0001.jpg' } });
     expect(done.statusCode).toBe(200);
@@ -38,14 +38,14 @@ describe('outputs', () => {
     const job = (await t.app.inject({ method: 'GET', url: `/api/jobs/${r.id}`, headers: { authorization: `Bearer ${r.alice}` } })).json();
     expect(job).toMatchObject({ state: 'succeeded', progress: 1, log: 'log.txt' });
     expect(job.outputs).toEqual([
-      { name: 'frame_0001.png', mime: 'image/png', size: 4, sha256: expect.any(String), meta: { width: 2 }, preview: 'previews/frame_0001.jpg' },
+      { name: 'frame_0001.png', mime: 'image/png', size: TINY_PNG.length, sha256: expect.any(String), meta: { width: 2 }, preview: 'previews/frame_0001.jpg' },
     ]);
 
     const png = await t.app.inject({ method: 'GET', url: `/api/jobs/${r.id}/outputs/frame_0001.png`, headers: { authorization: `Bearer ${r.alice}` } });
-    expect(png.body).toBe('PNG1');
+    expect(png.rawPayload.equals(TINY_PNG)).toBe(true);
     expect(png.headers['content-type']).toBe('image/png');
     expect(png.headers['x-content-type-options']).toBe('nosniff');
-    expect((await t.app.inject({ method: 'GET', url: `/api/jobs/${r.id}/outputs/previews/frame_0001.jpg`, headers: { authorization: `Bearer ${r.alice}` } })).body).toBe('JPG1');
+    expect((await t.app.inject({ method: 'GET', url: `/api/jobs/${r.id}/outputs/previews/frame_0001.jpg`, headers: { authorization: `Bearer ${r.alice}` } })).rawPayload.equals(TINY_JPEG)).toBe(true);
     expect((await t.app.inject({ method: 'GET', url: `/api/jobs/${r.id}/outputs/frame_0001.png`, headers: { authorization: `Bearer ${r.eve}` } })).statusCode).toBe(404);
   });
 
@@ -83,14 +83,14 @@ describe('outputs', () => {
 
   test('complete refuses names that were not uploaded', async () => {
     const r = await running();
-    await r.put('a.png', 'x');
+    await r.put('a.png', TINY_PNG);
     expect((await r.complete({ 'b.png': {} })).statusCode).toBe(400);
     expect((await r.complete({ 'a.png': { preview: 'p.jpg' } })).statusCode).toBe(400);
   });
 
   test('a retried attempt starts clean; a final failure keeps the log', async () => {
     const r = await running();
-    await r.put('a.png', 'x');
+    await r.put('a.png', TINY_PNG);
     await r.put('log.txt', 'try 1', 'log');
     await t.app.inject({ method: 'POST', url: `/api/worker/jobs/${r.id}/fail`, headers: { authorization: `Bearer ${r.worker}` }, payload: { lease: r.lease, error: 'boom' } });
     expect(t.db.select().from(files).all().filter((f) => f.jobId === r.id && f.kind === 'output')).toEqual([]);
@@ -105,12 +105,12 @@ describe('outputs', () => {
 
   test('a claim after a lease expired starts without the stale outputs', async () => {
     const r = await running();
-    await r.put('stale.png', 'old');
+    await r.put('stale.png', TINY_PNG);
     const claim = () => t.app.inject({ method: 'POST', url: '/api/worker/jobs/claim', headers: { authorization: `Bearer ${r.worker}` }, payload: { wait: 0 } });
     t.clock.advance(600_001);
     const again = (await claim()).json(); // the expired lease is released and the job claimed again at once
     expect(again.attempt).toBe(2);
-    await r.put('fresh.png', 'new', 'output', again.lease);
+    await r.put('fresh.png', TINY_PNG, 'output', again.lease);
     expect((await r.complete({}, again.lease)).statusCode).toBe(200);
     const job = (await t.app.inject({ method: 'GET', url: `/api/jobs/${r.id}`, headers: { authorization: `Bearer ${r.alice}` } })).json();
     expect(job.outputs.map((o: { name: string }) => o.name)).toEqual(['fresh.png']);
@@ -119,7 +119,7 @@ describe('outputs', () => {
 
   test('stale outputs are discarded on any claim, also when attempts went back to 0', async () => {
     const r = await running();
-    await r.put('stale.png', 'old');
+    await r.put('stale.png', TINY_PNG);
     releaseJob(t.db, r.id, t.db.select().from(jobs).get()!.leaseId!, t.clock.now);
     expect(t.db.select().from(jobs).get()).toMatchObject({ state: 'queued', attempts: 0 });
     const res = await t.app.inject({ method: 'POST', url: '/api/worker/jobs/claim', headers: { authorization: `Bearer ${r.worker}` }, payload: { wait: 0 } });
@@ -129,17 +129,19 @@ describe('outputs', () => {
 
   test('a failing discard releases the claimed job: back to queued, attempts unchanged', async () => {
     const r = await running();
-    await r.put('stale.png', 'old');
+    await r.put('stale.png', TINY_PNG);
     t.clock.advance(600_001);
     class BrokenStore extends FileStore {
       override async remove(): Promise<void> {
         throw new Error('disk error');
       }
     }
-    const broken = await buildApp({ config: t.config, db: t.db, store: new BrokenStore(t.config.filesDir), clock: () => t.clock.now });
+    const lines: string[] = [];
+    const broken = await buildApp({ config: t.config, db: t.db, store: new BrokenStore(t.config.filesDir), clock: () => t.clock.now, logStream: { write: (m) => void lines.push(m) } });
     try {
       const res = await broken.inject({ method: 'POST', url: '/api/worker/jobs/claim', headers: { authorization: `Bearer ${r.worker}` }, payload: { wait: 0 } });
       expect(res.statusCode).toBe(500);
+      expect(lines.join('')).toContain('request failed');
     } finally {
       await broken.close();
     }

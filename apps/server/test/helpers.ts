@@ -67,9 +67,20 @@ export function issueToken(db: Db, name: string, role: TokenRole = 'client', now
   return raw;
 }
 
-/** A test database plus an app over it, with a clock the test moves by hand. */
+/**
+ * A test database plus an app over it, with a clock the test moves by hand. Its log lines are kept in `logs`; they also
+ * go to stdout unless the test calls `quietLogs()` (for warnings it provokes on purpose and checks itself).
+ */
 export function useTestApp(overrides: Partial<Config> = {}) {
   const t = useTestDb(overrides);
+  const logs: string[] = [];
+  let quiet = false;
+  const logStream = {
+    write(line: string) {
+      logs.push(line);
+      if (!quiet) process.stdout.write(line);
+    },
+  };
   const clock = {
     now: new Date('2026-11-13T10:00:00Z'),
     advance(ms: number) {
@@ -79,13 +90,19 @@ export function useTestApp(overrides: Partial<Config> = {}) {
   let app: FastifyInstance | undefined;
   beforeEach(async () => {
     clock.now = new Date('2026-11-13T10:00:00Z');
-    app = await buildApp({ config: t.config, db: t.db, clock: () => clock.now });
+    logs.splice(0);
+    quiet = false;
+    app = await buildApp({ config: t.config, db: t.db, clock: () => clock.now, logStream });
   });
   afterEach(async () => {
     await app?.close();
   });
   return {
     clock,
+    logs,
+    quietLogs() {
+      quiet = true;
+    },
     get app() {
       return app!;
     },

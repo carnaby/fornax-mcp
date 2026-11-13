@@ -7,7 +7,7 @@ import { cancelJob } from '../src/domain/jobs.js';
 import { runMaintenance, TYPE_UNAVAILABLE } from '../src/domain/maintenance.js';
 import { ABANDONED, abandonRunning, claimJob, confirmJob, expireLeases, LEASE_EXPIRED, LEASE_MS } from '../src/domain/queue.js';
 import { FileStore } from '../src/files/store.js';
-import { renderContract, transcribeContract } from './fixtures.js';
+import { renderContract, TINY_JPEG, TINY_PNG, transcribeContract } from './fixtures.js';
 import { announce, issueToken, tokenIdOf, uploadFile, useTestApp } from './helpers.js';
 
 const t = useTestApp();
@@ -29,7 +29,7 @@ async function queued() {
 async function claimed() {
   const q = await queued();
   const lease = (await t.app.inject({ method: 'POST', url: '/api/worker/jobs/claim', headers: bearer(q.worker), payload: { wait: 0 } })).json().lease as string;
-  const put = (name: string, body: string, kind = 'output') =>
+  const put = (name: string, body: string | Buffer, kind = 'output') =>
     t.app.inject({
       method: 'PUT', url: `/api/worker/jobs/${q.id}/outputs/${name}?kind=${kind}`,
       headers: { ...bearer(q.worker), 'content-type': 'application/octet-stream', 'x-fornax-lease': lease }, payload: body,
@@ -92,13 +92,13 @@ describe('every final state has a manifest of the same shape', () => {
 describe('downloads are limited to the manifest', () => {
   test('nothing can be downloaded before the job has finished', async () => {
     const r = await claimed();
-    expect((await r.put('a.png', 'PNG')).statusCode).toBe(201);
+    expect((await r.put('a.png', TINY_PNG)).statusCode).toBe(201);
     expect((await r.download('a.png')).statusCode).toBe(404);
   });
 
   test('outputs uploaded before a cancel are not served', async () => {
     const r = await claimed();
-    await r.put('a.png', 'PNG');
+    await r.put('a.png', TINY_PNG);
     await t.app.inject({ method: 'POST', url: `/api/jobs/${r.id}/cancel`, headers: bearer(r.alice) });
     expect((await r.download('a.png')).statusCode).toBe(404);
   });
@@ -106,7 +106,7 @@ describe('downloads are limited to the manifest', () => {
   test('a succeeded job serves its outputs, their previews and the log; inputs never', async () => {
     const r = await claimed();
     await r.put('a.txt', 'A');
-    await r.put('previews/a.jpg', 'J');
+    await r.put('previews/a.jpg', TINY_JPEG);
     await r.put('log.txt', 'L', 'log');
     const done = await t.app.inject({
       method: 'POST', url: `/api/worker/jobs/${r.id}/complete`, headers: bearer(r.worker),
@@ -114,7 +114,7 @@ describe('downloads are limited to the manifest', () => {
     });
     expect(done.statusCode).toBe(200);
     expect((await r.download('a.txt')).body).toBe('A');
-    expect((await r.download('previews/a.jpg')).body).toBe('J');
+    expect((await r.download('previews/a.jpg')).rawPayload.equals(TINY_JPEG)).toBe(true);
     expect((await r.download('log.txt')).body).toBe('L');
     expect((await r.download('scene.blend')).statusCode).toBe(404);
   });

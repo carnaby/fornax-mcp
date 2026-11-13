@@ -133,6 +133,7 @@ describe('get_output', () => {
 
   test('the image block carries the type its bytes have; bytes that are no browser image, or text with NUL, become a link', async () => {
     const jpeg = await sharp({ create: { width: 64, height: 64, channels: 3, background: { r: 1, g: 2, b: 3 } } }).jpeg().toBuffer();
+    t.quietLogs(); // fake.png gets no server preview, on purpose
     const job = await jobWith([['photo.png', jpeg], ['fake.png', 'not an image'], ['bin.txt', Buffer.from('a\0b')]]);
     await job.complete();
     const client = await mcp.connect('/mcp', bearerHeader(job.alice));
@@ -181,11 +182,13 @@ describe('get_output', () => {
   test('a PNG of over 100 megapixels is never inlined, however few bytes it has', async () => {
     const huge = pngHeaderOnly(12_000, 12_000);
     expect(huge.length).toBeLessThan(100);
+    t.quietLogs(); // the server refuses to make a preview of it, on purpose
     const job = await jobWith([['huge.png', huge]]);
     await job.complete();
     const r = await job.get('huge.png');
     expect(r.blocks).toHaveLength(1);
     expect(JSON.parse(r.text)).toMatchObject({ name: 'huge.png', note: expect.stringContaining('link') });
+    expect(t.logs.join('')).toContain('no preview: the image could not be decoded');
   });
 
   test('an image of more than 2000 px per side is never inlined raw', async () => {
