@@ -1,0 +1,115 @@
+import { realpathSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { describe, expect, test } from 'vitest';
+import { childEnv, LOG_LIMIT, LogBuffer, logTail, parseProgress, type RunOptions, runProcess } from '../src/process.js';
+import { FAKE_TOOL, isAlive, readPids, useTempDir, waitFor } from './helpers.js';
+
+const tmp = useTempDir();
+const tool = (...args: string[]) => [process.execPath, FAKE_TOOL, ...args];
+const run = (argv: string[], extra: Partial<RunOptions> = {}) => runProcess({ argv, cwd: tmp(), env: childEnv(process.env, {}), ...extra });
+
+describe('runProcess', () => {
+  test('progress lines go to onProgress, everything else to the log; the exit code comes back', async () => {
+    const seen: unknown[] = [];
+    const r = await run(tool('talk', '1'), { onProgress: (p) => seen.push(p) });
+    expect(seen).toEqual([{ progress: 0.5, message: 'half' }, { progress: 1, message: null }]);
+    expect(r).toMatchObject({ code: 1, signal: null, timedOut: false, canceled: false, spawnError: null });
+    expect(r.log).toContain('starting\n');
+    expect(r.log).toContain('{"progress": 2}');
+    expect(r.log).toContain('a warning');
+    expect(r.log).not.toContain('half');
+  });
+
+  test('arguments arrive exactly as given: no shell, no splitting, no expansion', async () => {
+    const args = ['a b', '"quoted"', 'x;y', '$HOME', '%PATH%', 'back\\slash\\', '', 'é ü'];
+    const r = await run(tool('argv', ...args));
+    expect(JSON.parse(r.log.trim())).toEqual(args);
+  });
+
+  test('the tool never sees FORNAX_* variables except the three it is given', async () => {
+    const env = childEnv({ ...process.env, FORNAX_TOKEN: 'secret', fornax_other: 'x' }, { FORNAX_JOB_ID: 'J1', FORNAX_OUT: 'o', FORNAX_WORK: 'w' });
+    const r = await runProcess({ argv: tool('env'), cwd: tmp(), env });
+    expect(JSON.parse(r.log.trim())).toEqual(['FORNAX_JOB_ID', 'FORNAX_OUT', 'FORNAX_WORK']);
+  });
+
+  test('runs in the given working directory', async () => {
+    const cwd = tmp();
+    const r = await runProcess({ argv: tool('cwd'), cwd, env: childEnv(process.env, {}) });
+    expect(realpathSync(r.log.trim())).toBe(realpathSync(cwd));
+  });
+
+  test('a program that does not exist is reported, not thrown', async () => {
+    const r = await run(['fornax-test-no-such-program']);
+    expect(r.spawnError).toMatch(/ENOENT/);
+    expect(r.code).toBeNull();
+  });
+
+  test('a spawn that throws synchronously is reported, not thrown', async () => {
+    // A NUL byte in the program path makes spawn throw on every platform.
+    const nul = await run([`fornax-test\0program`]);
+    expect(nul.spawnError).toEqual(expect.any(String));
+    expect(nul).toMatchObject({ code: null, timedOut: false, canceled: false });
+    if (process.platform === 'win32') {
+      // Windows refuses a .cmd/.bat without a shell (EINVAL) with a synchronous throw.
+      const script = join(tmp(), 'tool.cmd');
+      writeFileSync(script, '@echo off\r\n');
+      const cmd = await run([script]);
+      expect(cmd.spawnError).toMatch(/EINVAL/);
+      expect(cmd.code).toBeNull();
+    }
+  });
+
+  test('max runtime: the process is stopped and timedOut is set', async () => {
+    const started = Date.now();
+    const r = await run(tool('sleep'), { timeoutMs: 300, killGraceMs: 500 });
+    expect(r.timedOut).toBe(true);
+    expect(Date.now() - started).toBeLessThan(5000);
+  });
+
+  test('cancel kills the whole tree, grandchild included (Windows: taskkill /T; Linux: the process group)', async () => {
+    const pidFile = join(tmp(), 'pids.json');
+    const stop = new AbortController();
+    const running = run(tool('tree', pidFile), { signal: stop.signal, killGraceMs: 500 });
+    const pids = await waitFor(() => readPids(pidFile), 10_000, 'the tool to write its pids');
+    expect(isAlive(pids.parent) && isAlive(pids.child)).toBe(true);
+    stop.abort();
+    const r = await running;
+    expect(r.canceled).toBe(true);
+    await waitFor(() => !isAlive(pids.parent) && !isAlive(pids.child), 5000, 'the tree to die');
+  });
+
+  test('an already aborted signal starts nothing', async () => {
+    const stop = new AbortController();
+    stop.abort();
+    expect(await run(tool('sleep'), { signal: stop.signal })).toMatchObject({ canceled: true, code: null, log: '' });
+  });
+});
+
+describe('log', () => {
+  test('keeps the last 1 MiB without splitting a character', () => {
+    const log = new LogBuffer();
+    for (let i = 0; i < 6000; i++) log.push(`${'é'.repeat(100)}\n`);
+    log.push('END');
+    const text = log.toString();
+    expect(Buffer.byteLength(text)).toBeLessThanOrEqual(LOG_LIMIT);
+    expect(Buffer.byteLength(text)).toBeGreaterThan(LOG_LIMIT - 4);
+    expect(text.endsWith('END')).toBe(true);
+    expect(text.includes('�')).toBe(false);
+  });
+
+  test('logTail is the last non-empty line', () => {
+    expect(logTail('a\nlast one\n\n')).toBe('last one');
+    expect(logTail('')).toBe('');
+  });
+});
+
+describe('parseProgress', () => {
+  test('only the exact shape counts', () => {
+    expect(parseProgress('{"progress": 0.4, "message": "frame 3/10"}')).toEqual({ progress: 0.4, message: 'frame 3/10' });
+    expect(parseProgress('  {"progress": 0}  ')).toEqual({ progress: 0, message: null });
+    for (const no of ['{"progress": 1.5}', '{"progress": "0.4"}', '{"progress": 0.4, "x": 1}', '{"progress": 0.4, "message": 3}', 'progress 0.4', '{oops}', '[0.4]']) {
+      expect(parseProgress(no), no).toBeNull();
+    }
+    expect(parseProgress(JSON.stringify({ progress: 0.1, message: 'x'.repeat(300) }))?.message).toHaveLength(200);
+  });
+});

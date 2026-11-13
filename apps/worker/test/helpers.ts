@@ -1,6 +1,7 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach } from 'vitest';
 import { stringify as toYaml } from 'yaml';
 import { type Paths, resolvePaths } from '../src/paths.js';
@@ -26,4 +27,36 @@ export const testPaths = (root: string): Paths =>
 export function writeTypeYaml(packDir: string, doc: Record<string, unknown>): void {
   mkdirSync(packDir, { recursive: true });
   writeFileSync(join(packDir, 'type.yaml'), toYaml(doc));
+}
+
+export const FAKE_TOOL = fileURLToPath(new URL('./fixtures/fake-tool.mjs', import.meta.url));
+
+/** Whether a process with this pid still exists. */
+export function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+/** Poll until `fn` gives a truthy value; fail after `ms`. */
+export async function waitFor<T>(fn: () => T | Promise<T>, ms = 10_000, what = 'a condition'): Promise<NonNullable<T>> {
+  const until = Date.now() + ms;
+  for (;;) {
+    const v = await fn();
+    if (v) return v as NonNullable<T>;
+    if (Date.now() > until) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
+
+/** The pids a "tree" or "hang" tool wrote, once the file is complete. */
+export function readPids(file: string): { parent: number; child: number } | null {
+  try {
+    return JSON.parse(readFileSync(file, 'utf8')) as { parent: number; child: number };
+  } catch {
+    return null;
+  }
 }
