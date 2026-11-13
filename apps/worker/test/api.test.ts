@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { generateToken, jobTypeContract } from '@fornax/protocol';
 import { startTestServer, type TestServer } from '@fornax/server/testing';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
-import { ApiError, InputMismatchError, LeaseLostError, NetworkError, WorkerApi } from '../src/api.js';
+import { ApiError, InputMismatchError, LeaseLostError, NetworkError, UploadFileError, WorkerApi } from '../src/api.js';
 import { WORKER_VERSION } from '../src/version.js';
 import { clientOf, useTempDir } from './helpers.js';
 
@@ -101,6 +101,34 @@ describe('WorkerApi', () => {
     const api = new WorkerApi({ server: s.url, token: s.issueToken('pc', 'worker') });
     expect(await api.claim(0)).toBeNull();
     expect(await api.queue()).toEqual({ queued: 0, running: 0, unavailable: [] });
+  });
+
+  test('an upload sends exactly the expected size; a file that grew or shrank is an UploadFileError, not a network error', async () => {
+    const received: number[] = [];
+    const fake = createServer((req, res) => {
+      let n = 0;
+      req.on('data', (c: Buffer) => (n += c.length));
+      req.on('error', () => {});
+      req.on('end', () => {
+        received.push(n);
+        res.writeHead(201, { 'content-type': 'application/json' }).end('{}');
+      });
+    });
+    await new Promise<void>((r) => fake.listen(0, '127.0.0.1', r));
+    const { port } = fake.address() as { port: number };
+    try {
+      const api = new WorkerApi({ server: `http://127.0.0.1:${port}`, token: generateToken('pc') });
+      const file = join(tmp(), 'result.txt');
+      writeFileSync(file, Buffer.alloc(200_000, 7));
+      await expect(api.uploadOutput('J1', 'L1', 'result.txt', 'output', file, undefined, 100_000)).rejects.toBeInstanceOf(UploadFileError);
+      await expect(api.uploadOutput('J1', 'L1', 'result.txt', 'output', file, undefined, 300_000)).rejects.toBeInstanceOf(UploadFileError);
+      await api.uploadOutput('J1', 'L1', 'result.txt', 'output', file, undefined, 200_000);
+      // Only the upload whose size matched reached its end.
+      expect(received).toEqual([200_000]);
+    } finally {
+      fake.closeAllConnections();
+      await new Promise((r) => fake.close(r));
+    }
   });
 
   test('a server that cannot be reached is a NetworkError', async () => {

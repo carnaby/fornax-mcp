@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { createReadStream, createWriteStream } from 'node:fs';
-import { rm, stat } from 'node:fs/promises';
+import { constants, createWriteStream } from 'node:fs';
+import { open, rm, stat } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -24,6 +24,8 @@ export class LeaseLostError extends ApiError {}
 export class NetworkError extends Error {}
 /** A downloaded input does not match the size and SHA-256 the claim promised. */
 export class InputMismatchError extends Error {}
+/** A file to upload could not be read as it was when checked (it changed size, became a link or cannot be read). */
+export class UploadFileError extends Error {}
 
 /** Worth trying again a little later. */
 export const isTransient = (e: unknown): boolean =>
@@ -144,15 +146,48 @@ export class WorkerApi {
     }
   }
 
-  /** Streamed PUT of one file with its content-length; `name` may contain "/". */
-  async uploadOutput(id: string, lease: string, name: string, kind: 'output' | 'log', file: string, signal?: AbortSignal): Promise<void> {
-    const { size } = await stat(file);
+  /**
+   * Streamed PUT of one file with its content-length; `name` may contain "/". With `expectedSize` exactly that many
+   * bytes are sent: a file that grew or shrank meanwhile (or, on Linux, became a link) is an UploadFileError.
+   */
+  async uploadOutput(
+    id: string, lease: string, name: string, kind: 'output' | 'log', file: string, signal?: AbortSignal, expectedSize?: number,
+  ): Promise<void> {
+    const size = expectedSize ?? (await stat(file)).size;
     const path = `/jobs/${enc(id)}/outputs/${name.split('/').map(enc).join('/')}${kind === 'log' ? '?kind=log' : ''}`;
-    const body = Readable.toWeb(createReadStream(file)) as unknown as ReadableStream<Uint8Array>;
-    await this.send('PUT', path, {
-      body,
-      headers: { [WORKER_HEADERS.lease]: lease, 'content-type': 'application/octet-stream', 'content-length': String(size) },
-      signal,
-    });
+    let local: UploadFileError | null = null;
+    async function* exactly(): AsyncGenerator<Buffer> {
+      let sent = 0;
+      try {
+        // O_NOFOLLOW exists on Linux only; there a file swapped for a link is refused instead of followed.
+        // The stream closes the handle when it ends, fails or is destroyed (an aborted upload).
+        const handle = await open(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+        for await (const chunk of handle.createReadStream()) {
+          sent += (chunk as Buffer).length;
+          if (sent > size) throw new UploadFileError(`the file grew past the ${size} bytes it had`);
+          yield chunk as Buffer;
+        }
+      } catch (e) {
+        // The code, not the message: the message holds this PC's absolute path.
+        local = e instanceof UploadFileError ? e : new UploadFileError(`the file could not be read (${(e as NodeJS.ErrnoException).code ?? 'read error'})`, { cause: e });
+        throw local;
+      }
+      if (sent !== size) {
+        local = new UploadFileError(`the file shrank to ${sent} of the ${size} bytes it had`);
+        throw local;
+      }
+    }
+    const body = Readable.toWeb(Readable.from(exactly())) as unknown as ReadableStream<Uint8Array>;
+    try {
+      await this.send('PUT', path, {
+        body,
+        headers: { [WORKER_HEADERS.lease]: lease, 'content-type': 'application/octet-stream', 'content-length': String(size) },
+        signal,
+      });
+    } catch (e) {
+      // A broken body surfaces from fetch as a network error; the real cause is the local file.
+      if (local) throw local;
+      throw e;
+    }
   }
 }

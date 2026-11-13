@@ -1,11 +1,13 @@
+import type { ClaimedJob } from '@fornax/protocol';
 import type { TestServer } from '@fornax/server/testing';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach } from 'vitest';
 import { stringify as toYaml } from 'yaml';
 import { type Paths, resolvePaths } from '../src/paths.js';
+import type { JobApi } from '../src/run-job.js';
 
 /** Fresh temp directories, removed after each test (with retries: Windows may hold a file for a moment). */
 export function useTempDir(): () => string {
@@ -99,4 +101,79 @@ export function clientOf(s: TestServer, token: string) {
       return res.text();
     },
   };
+}
+
+export const JOB_TOOL = fileURLToPath(new URL('./fixtures/job-tool.mjs', import.meta.url));
+/** worker.yaml tools for the echo pack: Node itself. */
+export const NODE_TOOLS: Record<string, string> = { node: process.execPath };
+
+/** The test type pack "echo" (or another name) in `typesDir`; its tool is fixtures/job-tool.mjs run by Node. */
+export function writeEchoPack(typesDir: string, opts: { name?: string; maxRuntime?: string; check?: string[]; setup?: string[] } = {}): string {
+  const name = opts.name ?? 'echo';
+  const dir = join(typesDir, name);
+  mkdirSync(join(dir, 'scripts'), { recursive: true });
+  copyFileSync(JOB_TOOL, join(dir, 'scripts', 'tool.mjs'));
+  writeTypeYaml(dir, {
+    name,
+    version: 1,
+    description: 'Test pack whose tool is a Node script.',
+    inputs: { source: { extensions: ['.txt'], max_mb: 1, required: false } },
+    params: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        mode: { enum: ['ok', 'slow', 'exit', 'hang', 'env', 'json-dir'], default: 'ok' },
+        code: { type: 'integer', minimum: 0, maximum: 255, default: 0 },
+        ms: { type: 'integer', minimum: 0, maximum: 60_000, default: 0 },
+        pid_file: { type: 'string', maxLength: 1000 },
+      },
+    },
+    max_runtime: opts.maxRuntime ?? '10m',
+    tools: ['node'],
+    ...(opts.setup ? { setup: opts.setup } : {}),
+    check: opts.check ?? ['{tool.node}', '-e', 'process.exit(0)'],
+    run: ['{tool.node}', '{pack}/scripts/tool.mjs', '--params', '{params_json}', '--out', '{out}', '--input', '{input.source}'],
+  });
+  return dir;
+}
+
+export function fakeClaim(overrides: Partial<ClaimedJob> = {}): ClaimedJob {
+  return {
+    id: '01JTESTJOB0000000000000000',
+    lease: 'lease-1',
+    lease_until: new Date(Date.now() + 600_000).toISOString(),
+    attempt: 1,
+    type: 'echo',
+    contract_hash: '',
+    params: {},
+    inputs: [],
+    ...overrides,
+  };
+}
+
+type Call = { method: keyof JobApi; args: unknown[] };
+
+/** A recording stand-in for the server. Any method can be replaced; uploaded file contents land in `uploads`. */
+export function fakeApi(overrides: Partial<JobApi> = {}) {
+  const calls: Call[] = [];
+  const uploads = new Map<string, string>();
+  const defaults: JobApi = {
+    heartbeat: async () => ({ cancel: false }),
+    fail: async (_id, _lease, _error, permanent) => (permanent ? 'failed' : 'queued'),
+    release: async () => {},
+    downloadInput: async (_id, _lease, _input, dest) => writeFileSync(dest, 'hello'),
+    uploadOutput: async (_id, _lease, name, _kind, file) => {
+      uploads.set(name, readFileSync(file, 'utf8'));
+    },
+    complete: async () => {},
+  };
+  const api = {} as Record<keyof JobApi, (...args: unknown[]) => Promise<unknown>>;
+  for (const method of Object.keys(defaults) as (keyof JobApi)[]) {
+    const impl = (overrides[method] ?? defaults[method]) as (...args: unknown[]) => Promise<unknown>;
+    api[method] = (...args) => {
+      calls.push({ method, args });
+      return impl(...args);
+    };
+  }
+  return { api: api as unknown as JobApi, calls, uploads, called: (m: keyof JobApi) => calls.filter((c) => c.method === m) };
 }
