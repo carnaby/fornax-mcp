@@ -14,7 +14,7 @@ const t = useTestApp();
 const deps = () => ({ config: t.config, db: t.db, store: new FileStore(t.config.filesDir), clock: () => t.clock.now });
 const bearer = (token: string) => ({ authorization: `Bearer ${token}` });
 const open = (id: string) => t.app.inject({ method: 'GET', url: resultPath(deps(), t.db.select().from(jobs).where(eq(jobs.id, id)).get()!) });
-const CSP = "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'";
+const CSP = "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'none'";
 
 /** Alice and the worker; start() submits one render job and claims it, with helpers for what the worker does next. */
 async function actors() {
@@ -73,7 +73,7 @@ describe('the result page', () => {
     await job.put('log.txt', 'all good', 'log');
     await job.complete({ 'frame.png': { meta: { width: 2048 } } });
     const body = (await open(job.id)).body;
-    const img = /<img src="([^"]+)" alt="frame.png">/.exec(body)?.[1]?.replaceAll('&amp;', '&');
+    const img = /<img src="([^"]+)" alt="frame.png" loading="lazy">/.exec(body)?.[1]?.replaceAll('&amp;', '&');
     expect(img).toMatch(new RegExp(`^/api/jobs/${job.id}/outputs/\\.fornax/previews/frame\\.png\\.jpg\\?sig=`));
     expect((await t.app.inject({ method: 'GET', url: img! })).headers['content-type']).toBe('image/jpeg');
     expect(body).toMatch(/<audio controls preload="none" src="\/api\/jobs\/[^"]+\/outputs\/talk\.wav\?sig=[^"]+"><\/audio>/);

@@ -38,7 +38,7 @@ describe('the pairing page', () => {
     expect(a.statusCode).toBe(200);
     const m = scriptOf(a.body)!;
     expect(a.headers).toMatchObject({
-      'content-security-policy': `script-src 'nonce-${m[1]}'; default-src 'none'; style-src 'unsafe-inline'; connect-src 'none'; img-src 'none'; base-uri 'none'; form-action 'none'`,
+      'content-security-policy': `script-src 'nonce-${m[1]}'; default-src 'none'; style-src 'unsafe-inline'; connect-src 'none'; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
       'referrer-policy': 'no-referrer', 'cache-control': 'no-store', 'x-robots-tag': 'noindex', 'x-content-type-options': 'nosniff',
       'content-type': 'text/html; charset=utf-8',
     });
@@ -75,7 +75,7 @@ describe('the pairing page', () => {
     expect(node('fingerprint').textContent).toBe(fingerprint(token));
     expect(node('ready').hidden).toBe(false);
     // The first use of the token registers it, waiting for the admin, with the fingerprint the page showed.
-    expect(resolveToken(t.db, token, t.clock.now)).toEqual({ kind: 'pending', fingerprint: node('fingerprint').textContent });
+    expect(resolveToken(t.db, token, t.clock.now)).toEqual({ kind: 'pending', fingerprint: node('fingerprint').textContent, role: 'client' });
   });
 
   test('without a secure context the page says so and makes no token', async () => {

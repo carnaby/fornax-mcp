@@ -126,7 +126,7 @@ test('an agent uploads and submits over MCP, a worker runs the job, the agent se
   // The user opens the result page from get_job.
   const page = await fetch(done.result_url);
   expect(page.status).toBe(200);
-  expect(page.headers.get('content-security-policy')).toBe("default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'");
+  expect(page.headers.get('content-security-policy')).toBe("default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'none'");
   const body = await page.text();
   expect(body).toContain('alt="frame_0001.png"');
   expect(body).not.toContain('http-equiv="refresh"');

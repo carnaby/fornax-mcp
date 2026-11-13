@@ -7,7 +7,7 @@ import { Html, html, page, pageHeaders } from './html.js';
 import { PAIR_CRYPTO_JS, PAIR_PAGE_JS } from './pair-script.js';
 
 export const pairCsp = (nonce: string): string =>
-  `script-src 'nonce-${nonce}'; default-src 'none'; style-src 'unsafe-inline'; connect-src 'none'; img-src 'none'; base-uri 'none'; form-action 'none'`;
+  `script-src 'nonce-${nonce}'; default-src 'none'; style-src 'unsafe-inline'; connect-src 'none'; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`;
 
 /** JSON inside a script element: "<" escaped, so no value can end the element. */
 const scriptJson = (v: unknown): string => JSON.stringify(v).replace(/</g, '\\u003c');

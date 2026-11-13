@@ -8,7 +8,7 @@ import type { RouteDeps } from '../deps.js';
 import { downloadPath, jobOfResultLink } from '../links.js';
 import { type Html, html, page, pageHeaders } from './html.js';
 
-export const RESULT_CSP = "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'";
+export const RESULT_CSP = "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'none'";
 export const LOG_TAIL_BYTES = 100_000;
 const REFRESH_S = 5;
 
@@ -52,9 +52,9 @@ async function outputSection(deps: RouteDeps, job: JobRow, o: ManifestOutput): P
   const preview = o.preview ? downloadableFile(deps.db, job, o.preview) : null;
   let body: Html | null = null;
   if (preview && INLINE_IMAGE_MIMES.has(preview.mime)) {
-    body = html`<a href="${href}"><img src="${downloadPath(deps, job, preview).path}" alt="${o.name}"></a>`;
+    body = html`<a href="${href}"><img src="${downloadPath(deps, job, preview).path}" alt="${o.name}" loading="lazy"></a>`;
   } else if (INLINE_IMAGE_MIMES.has(o.mime) && o.size <= INLINE_IMAGE_BYTES) {
-    body = html`<img src="${href}" alt="${o.name}">`;
+    body = html`<img src="${href}" alt="${o.name}" loading="lazy">`;
   } else if (o.mime.startsWith('audio/')) {
     body = html`<audio controls preload="none" src="${href}"></audio>`;
   } else if (o.mime.startsWith('video/')) {
