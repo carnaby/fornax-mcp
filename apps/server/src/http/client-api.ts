@@ -1,6 +1,8 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { createUploadLink, fileView, getOwnFile, saveFile } from '../domain/files.js';
+import { offeredTypes, typeView } from '../domain/job-types.js';
+import { workerOnline } from '../domain/worker-state.js';
 import { requireRole } from './auth.js';
 import type { RouteDeps } from './deps.js';
 import { parse } from './parse.js';
@@ -11,6 +13,8 @@ export const clientRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps) => 
   app.addHook('onRequest', requireRole(deps, 'client'));
 
   app.get('/whoami', async (req) => ({ name: req.identity!.name, role: req.identity!.role }));
+
+  app.get('/types', async () => ({ types: offeredTypes(deps.db).map(typeView), worker: workerOnline(deps.db, deps.clock()) }));
 
   // Raw uploads live in a child plugin so JSON parsing stays on for the other routes.
   await app.register(async (raw) => {
