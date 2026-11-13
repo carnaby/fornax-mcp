@@ -106,8 +106,12 @@ export function failJob(
     const row = ownedJob(db, id, lease, ['running']);
     const final = input.permanent || row.attempts >= MAX_ATTEMPTS;
     const retryAt = final ? null : new Date(now.getTime() + retryDelayMs(row.attempts));
+    const log = final
+      ? db.select({ name: files.name }).from(files).where(and(eq(files.jobId, id), eq(files.kind, 'log'))).get()?.name ?? null
+      : null;
     db.update(jobs)
       .set({
+        ...(final ? { manifest: { outputs: [], log } } : {}),
         state: final ? 'failed' : 'queued', error: cleanError(input.error), leaseId: null, leaseExpiresAt: null,
         runAfter: retryAt ?? now, finishedAt: final ? now : null, updatedAt: now,
       })

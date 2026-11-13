@@ -24,7 +24,8 @@ export async function saveFile(
   input: { owner: string; id?: string; name: string; kind: FileKind; jobId?: string | null; source: Readable; maxBytes: number },
 ): Promise<FileRow> {
   const id = input.id ?? ulid(deps.clock().getTime());
-  const name = cleanFileName(input.name);
+  // Inputs carry a client's file name; output names are already checked by cleanOutputName and may contain "/".
+  const name = input.kind === 'input' ? cleanFileName(input.name) : input.name;
   const { size, sha256 } = await deps.store.write(id, input.source, input.maxBytes);
   const row: FileRow = {
     id, ownerTokenId: input.owner, kind: input.kind, jobId: input.jobId ?? null, name, size, sha256, mime: mimeOf(name), meta: null, createdAt: deps.clock(),

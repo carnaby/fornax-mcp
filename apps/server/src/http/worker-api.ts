@@ -1,4 +1,4 @@
-import { announceBody, claimBody, failBody, heartbeatBody, releaseBody, WORKER_HEADERS } from '@fornax/protocol';
+import { announceBody, claimBody, completeBody, failBody, heartbeatBody, releaseBody, WORKER_HEADERS } from '@fornax/protocol';
 import { eq } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
@@ -6,11 +6,13 @@ import { files } from '../db/schema.js';
 import { notFound } from '../domain/errors.js';
 import { announceTypes } from '../domain/job-types.js';
 import { claimJob, claimView, failJob, heartbeatJob, ownedJob, releaseJob } from '../domain/queue.js';
+import { completeJob, discardOutputs, outputBudget, storeOutput } from '../domain/outputs.js';
 import { jobSignal } from '../domain/signal.js';
 import { touchWorker } from '../domain/worker-state.js';
 import { requireRole } from './auth.js';
 import type { RouteDeps } from './deps.js';
 import { parse } from './parse.js';
+import { rawBody, refuseOversized } from './uploads.js';
 
 declare module 'fastify' {
   interface FastifyContextConfig {
@@ -92,13 +94,31 @@ export const workerRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps) => 
   app.post<{ Params: { id: string } }>('/jobs/:id/fail', async (req) => {
     const b = parse(failBody, req.body);
     const r = failJob(deps.db, req.params.id, b.lease, { error: b.error, permanent: b.permanent }, deps.clock());
+    await discardOutputs(deps, req.params.id, { keepLog: r.state === 'failed' });
     return { state: r.state, retry_at: r.retryAt?.toISOString() ?? null };
   });
 
   app.post<{ Params: { id: string } }>('/jobs/:id/release', async (req, reply) => {
     const b = parse(releaseBody, req.body);
     releaseJob(deps.db, req.params.id, b.lease, deps.clock());
+    await discardOutputs(deps, req.params.id, { keepLog: false });
     return reply.code(204).send();
+  });
+
+  await app.register(async (raw) => {
+    rawBody(raw);
+    raw.put<{ Params: { id: string; '*': string }; Querystring: { kind?: string } }>('/jobs/:id/outputs/*', async (req, reply) => {
+      const lease = parse(z.string().min(1), req.headers[WORKER_HEADERS.lease]);
+      const kind = parse(z.enum(['output', 'log']).default('output'), req.query.kind);
+      refuseOversized(req, outputBudget(deps, req.params.id, lease, req.params['*']));
+      const row = await storeOutput(deps, { jobId: req.params.id, lease, name: req.params['*'], kind, source: req.raw });
+      return reply.code(201).send({ name: row.name, size: row.size, sha256: row.sha256 });
+    });
+  });
+
+  app.post<{ Params: { id: string } }>('/jobs/:id/complete', async (req) => {
+    const b = parse(completeBody, req.body);
+    return completeJob(deps.db, req.params.id, b.lease, b, deps.clock());
   });
 
   app.get<{ Params: { id: string; name: string } }>('/jobs/:id/inputs/:name', async (req, reply) => {
