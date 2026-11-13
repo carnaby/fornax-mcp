@@ -3,6 +3,7 @@ import type { Db } from '../db/client.js';
 import { files, invites, jobs, jobTypes, tokens, uploads } from '../db/schema.js';
 import type { RouteDeps } from '../http/deps.js';
 import { deleteFiles } from './files.js';
+import { finishJob } from './finish.js';
 import { expireLeases } from './queue.js';
 import { workerOnline } from './worker-state.js';
 
@@ -38,14 +39,11 @@ export async function runMaintenance(deps: RouteDeps) {
   const typeGone = [stale.length ? inArray(jobs.type, stale) : undefined, known.length ? notInArray(jobs.type, known) : undefined].filter(
     (c) => c !== undefined,
   );
-  const unavailable = typeGone.length === 0
-    ? 0
-    : db
-        .update(jobs)
-        .set({ state: 'failed', error: TYPE_UNAVAILABLE, finishedAt: now, updatedAt: now })
-        .where(and(eq(jobs.state, 'queued'), lt(jobs.createdAt, ago(now, r.unavailableTypeMs)), or(...typeGone)))
-        .returning({ id: jobs.id })
-        .all().length;
+  const gone = typeGone.length === 0
+    ? []
+    : db.select().from(jobs).where(and(eq(jobs.state, 'queued'), lt(jobs.createdAt, ago(now, r.unavailableTypeMs)), or(...typeGone))).all();
+  let unavailable = 0;
+  for (const j of gone) if (finishJob(db, j, { state: 'failed', error: TYPE_UNAVAILABLE }, now)) unavailable++;
 
   const old = db
     .select({ id: jobs.id })

@@ -4,6 +4,7 @@ import { and, asc, desc, eq, inArray, isNull, lt, lte } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { files, type JobState, jobs, jobTypes } from '../db/schema.js';
 import { conflict, notFound } from './errors.js';
+import { finishJob } from './finish.js';
 import { isOffered } from './job-types.js';
 import type { JobRow } from './jobs.js';
 import { jobSignal } from './signal.js';
@@ -32,15 +33,14 @@ const cleanError = (raw: string): string => oneLine(raw, 500) ?? 'unknown error'
  */
 export function expireLeases(db: Db, now: Date): number {
   const expired = db.select().from(jobs).where(and(eq(jobs.state, 'running'), lt(jobs.leaseExpiresAt, now))).all();
-  db.transaction((tx) => {
+  db.transaction(() => {
     for (const j of expired) {
-      const last = j.attempts >= MAX_ATTEMPTS;
-      tx.update(jobs)
-        .set(
-          last
-            ? { state: 'failed', error: LEASE_EXPIRED, leaseId: null, leaseExpiresAt: null, finishedAt: now, updatedAt: now }
-            : { state: 'queued', error: LEASE_EXPIRED, leaseExpiresAt: null, runAfter: now, updatedAt: now },
-        )
+      if (j.attempts >= MAX_ATTEMPTS) {
+        finishJob(db, j, { state: 'failed', error: LEASE_EXPIRED }, now);
+        continue;
+      }
+      db.update(jobs)
+        .set({ state: 'queued', error: LEASE_EXPIRED, leaseExpiresAt: null, runAfter: now, updatedAt: now })
         .where(and(eq(jobs.id, j.id), eq(jobs.state, 'running')))
         .run();
     }
@@ -59,15 +59,17 @@ export function abandonRunning(db: Db, now: Date): number {
   expireLeases(db, now);
   const running = db.select().from(jobs).where(eq(jobs.state, 'running')).all();
   if (!running.length) return 0;
-  db.transaction((tx) => {
+  db.transaction(() => {
     for (const j of running) {
       const confirmed = j.confirmedAt !== null;
-      const values = !confirmed
-        ? { state: 'queued' as const, attempts: Math.max(j.attempts - 1, 0), error: null, startedAt: null }
-        : j.attempts >= MAX_ATTEMPTS
-          ? { state: 'failed' as const, error: ABANDONED, finishedAt: now }
-          : { state: 'queued' as const, error: ABANDONED };
-      tx.update(jobs)
+      if (confirmed && j.attempts >= MAX_ATTEMPTS) {
+        finishJob(db, j, { state: 'failed', error: ABANDONED }, now);
+        continue;
+      }
+      const values = confirmed
+        ? { state: 'queued' as const, error: ABANDONED }
+        : { state: 'queued' as const, attempts: Math.max(j.attempts - 1, 0), error: null, startedAt: null };
+      db.update(jobs)
         .set({ ...values, leaseId: null, leaseExpiresAt: null, confirmedAt: null, runAfter: now, updatedAt: now })
         .where(and(eq(jobs.id, j.id), eq(jobs.state, 'running')))
         .run();
@@ -144,20 +146,17 @@ export function failJob(
 ): { state: 'queued' | 'failed'; retryAt: Date | null } {
   const result = db.transaction(() => {
     const row = ownedJob(db, id, lease, ['running']);
-    const final = input.permanent || row.attempts >= MAX_ATTEMPTS;
-    const retryAt = final ? null : new Date(now.getTime() + retryDelayMs(row.attempts));
-    const log = final
-      ? db.select({ name: files.name }).from(files).where(and(eq(files.jobId, id), eq(files.kind, 'log'))).get()?.name ?? null
-      : null;
+    const error = cleanError(input.error);
+    if (input.permanent || row.attempts >= MAX_ATTEMPTS) {
+      finishJob(db, row, { state: 'failed', error }, now);
+      return { state: 'failed' as const, retryAt: null };
+    }
+    const retryAt = new Date(now.getTime() + retryDelayMs(row.attempts));
     db.update(jobs)
-      .set({
-        ...(final ? { manifest: { outputs: [], log } } : {}),
-        state: final ? 'failed' : 'queued', error: cleanError(input.error), leaseId: null, leaseExpiresAt: null,
-        runAfter: retryAt ?? now, finishedAt: final ? now : null, updatedAt: now,
-      })
+      .set({ state: 'queued', error, leaseId: null, leaseExpiresAt: null, runAfter: retryAt, finishedAt: null, updatedAt: now })
       .where(eq(jobs.id, id))
       .run();
-    return { state: final ? ('failed' as const) : ('queued' as const), retryAt };
+    return { state: 'queued' as const, retryAt };
   });
   if (result.state === 'queued') jobSignal.wake();
   return result;

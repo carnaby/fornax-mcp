@@ -6,7 +6,7 @@ import { createUploadLink, fileView, getOwnFile, saveFile } from '../domain/file
 import { cancelJob, getOwnJob, GROUP, jobView, listJobs, PRIORITIES, submitJob } from '../domain/jobs.js';
 import { offeredTypes, typeView } from '../domain/job-types.js';
 import { queueStatus } from '../domain/maintenance.js';
-import { jobFile } from '../domain/outputs.js';
+import { downloadableFile } from '../domain/outputs.js';
 import { workerOnline } from '../domain/worker-state.js';
 import { requireRole } from './auth.js';
 import type { RouteDeps } from './deps.js';
@@ -82,7 +82,7 @@ export const clientRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps) => 
 
   app.get<{ Params: { id: string; '*': string } }>('/jobs/:id/outputs/*', async (req, reply) => {
     const job = getOwnJob(deps.db, req.identity!.tokenId, req.params.id);
-    const file = jobFile(deps.db, job.id, req.params['*']);
+    const file = downloadableFile(deps.db, job, req.params['*']);
     if (!file) throw notFound(`output ${req.params['*']} not found`);
     return reply
       .header('content-type', file.mime)

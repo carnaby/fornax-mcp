@@ -2,16 +2,30 @@ import type { Readable } from 'node:stream';
 import { cleanOutputName, type CompleteBody } from '@fornax/protocol';
 import { and, eq, inArray, ne, sum } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
-import { files, jobs, type Manifest } from '../db/schema.js';
+import { files, type Manifest } from '../db/schema.js';
 import type { RouteDeps } from '../http/deps.js';
 import { badRequest, tooLarge } from './errors.js';
 import { deleteFiles, type FileRow, saveFile } from './files.js';
+import { finishJob } from './finish.js';
+import type { JobRow } from './jobs.js';
 import { ownedJob } from './queue.js';
 
 const PRODUCED = ['output', 'preview', 'log'] as const;
 
 export function jobFile(db: Db, jobId: string, name: string): FileRow | null {
   return db.select().from(files).where(and(eq(files.jobId, jobId), eq(files.name, name), inArray(files.kind, [...PRODUCED]))).get() ?? null;
+}
+
+/** What a client may download: an output listed in the manifest, its preview, or the log; nothing before the job has finished. */
+export function downloadableFile(db: Db, job: JobRow, name: string): FileRow | null {
+  const m = job.manifest;
+  if (!m) return null;
+  const allowed = new Set<string>(m.log ? [m.log] : []);
+  for (const o of m.outputs) {
+    allowed.add(o.name);
+    if (o.preview) allowed.add(o.preview);
+  }
+  return allowed.has(name) ? jobFile(db, job.id, name) : null;
 }
 
 /** Bytes this upload may still use: the job limit minus the other produced files (a same-named file is replaced). */
@@ -84,10 +98,7 @@ export function completeJob(db: Db, id: string, lease: string, body: CompleteBod
         return { name: r.name, file_id: r.id, mime: r.mime, size: r.size, sha256: r.sha256, meta: info?.meta ?? null, preview: info?.preview ?? null };
       });
     const manifest: Manifest = { outputs, log: rows.find((r) => r.kind === 'log')?.name ?? null };
-    db.update(jobs)
-      .set({ state: 'succeeded', progress: 1, manifest, error: null, leaseId: null, leaseExpiresAt: null, finishedAt: now, updatedAt: now })
-      .where(eq(jobs.id, id))
-      .run();
+    finishJob(db, job, { state: 'succeeded', manifest }, now);
     return manifest;
   });
 }

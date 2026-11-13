@@ -6,6 +6,7 @@ import type { Config } from '../config.js';
 import type { Db } from '../db/client.js';
 import { files, type JobState, jobs, jobTypes } from '../db/schema.js';
 import { conflict, notFound, tooMany, unprocessable } from './errors.js';
+import { finishJob } from './finish.js';
 import { getOfferedType, isOffered } from './job-types.js';
 import { jobSignal } from './signal.js';
 
@@ -96,12 +97,9 @@ export function getOwnJob(db: Db, owner: string, id: string): JobRow {
 export function cancelJob(db: Db, owner: string, id: string, now: Date): JobRow {
   const job = getOwnJob(db, owner, id);
   if (job.state !== 'queued' && job.state !== 'running') throw conflict(`the job already ${job.state === 'succeeded' ? 'succeeded' : job.state}`);
-  return db
-    .update(jobs)
-    .set({ state: 'canceled', finishedAt: now, updatedAt: now, leaseExpiresAt: null })
-    .where(and(eq(jobs.id, id), inArray(jobs.state, ['queued', 'running'])))
-    .returning()
-    .get()!;
+  const row = finishJob(db, job, { state: 'canceled' }, now);
+  if (!row) throw conflict('the job changed meanwhile; get its state again');
+  return row;
 }
 
 /** 1-based place in the queue among jobs of offered types; null when not waiting or its type is withdrawn. */
