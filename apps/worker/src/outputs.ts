@@ -1,4 +1,4 @@
-import { lstat, readdir, readFile, realpath } from 'node:fs/promises';
+import { lstat, open, readdir, realpath } from 'node:fs/promises';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { cleanOutputName, type OutputsJson, outputsJson } from '@fornax/protocol';
 import { z } from 'zod';
@@ -7,6 +7,8 @@ export const OUTPUTS_JSON = 'outputs.json';
 /** The job log's name on the server; no output may take it. */
 export const LOG_NAME = 'log.txt';
 export const MAX_OUTPUTS = 1000;
+/** outputs.json is read into memory: at most this many bytes. */
+export const MAX_OUTPUTS_JSON = 1024 * 1024;
 
 export type OutputFile = { name: string; path: string; size: number };
 export type CollectedOutputs = { files: OutputFile[]; info: OutputsJson };
@@ -19,7 +21,21 @@ const outside = (rel: string) => rel === '..' || rel.startsWith(`..${sep}`) || i
 async function readOutputsJson(file: string, names: Set<string>): Promise<OutputsJson> {
   let text: string;
   try {
-    text = await readFile(file, 'utf8');
+    // At most one byte past the limit is read, also when the file grew after it was listed.
+    const handle = await open(file, 'r');
+    try {
+      const buf = Buffer.alloc(MAX_OUTPUTS_JSON + 1);
+      let size = 0;
+      while (size < buf.length) {
+        const { bytesRead } = await handle.read(buf, size, buf.length - size, size);
+        if (bytesRead === 0) break;
+        size += bytesRead;
+      }
+      if (size > MAX_OUTPUTS_JSON) throw new OutputError(`out/${OUTPUTS_JSON} is larger than 1 MiB`);
+      text = buf.subarray(0, size).toString('utf8');
+    } finally {
+      await handle.close();
+    }
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'ENOENT') return {};
     throw e;

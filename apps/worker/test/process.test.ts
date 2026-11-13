@@ -1,7 +1,7 @@
 import { realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
-import { childEnv, LOG_LIMIT, LogBuffer, logTail, parseProgress, type RunOptions, runProcess } from '../src/process.js';
+import { childEnv, hasRunning, killRunning, LOG_LIMIT, LogBuffer, logTail, parseProgress, type RunOptions, runProcess } from '../src/process.js';
 import { FAKE_TOOL, isAlive, readPids, useTempDir, waitFor } from './helpers.js';
 
 const tmp = useTempDir();
@@ -76,6 +76,39 @@ describe('runProcess', () => {
     const r = await running;
     expect(r.canceled).toBe(true);
     await waitFor(() => !isAlive(pids.parent) && !isAlive(pids.child), 5000, 'the tree to die');
+  });
+
+  // Linux only: Windows has no process groups here (no Job Objects in this plan); a leftover there is handled by the job directory check.
+  test.runIf(process.platform !== 'win32')('Linux: a grandchild left behind by a tool that exited 0 is ended with its process group', async () => {
+    const pidFile = join(tmp(), 'pids.json');
+    let pids: { parent: number; child: number } | null = null;
+    try {
+      const r = await run(tool('orphan', pidFile), { killGraceMs: 500 });
+      expect(r.code).toBe(0);
+      pids = readPids(pidFile)!;
+      // Killed (SIGKILL after the grace period); allow its new parent a moment to reap it.
+      await waitFor(() => !isAlive(pids!.child), 3000, 'the grandchild to be gone');
+    } finally {
+      if (pids && isAlive(pids.child)) process.kill(pids.child, 'SIGKILL');
+    }
+  });
+
+  test.runIf(process.platform !== 'win32')('Linux: a group still being ended after the exit stays registered, so a hard quit reaches it', async () => {
+    const pidFile = join(tmp(), 'pids.json');
+    const running = run(tool('orphan', pidFile), { killGraceMs: 20_000 });
+    const pids = await waitFor(() => readPids(pidFile), 10_000, 'the tool to write its pids');
+    try {
+      await waitFor(() => !isAlive(pids.parent), 5000, 'the tool to exit');
+      expect(hasRunning()).toBe(true);
+      const started = Date.now();
+      await killRunning(1000);
+      await running;
+      expect(Date.now() - started).toBeLessThan(10_000);
+      expect(hasRunning()).toBe(false);
+      await waitFor(() => !isAlive(pids.child), 3000, 'the grandchild to be gone');
+    } finally {
+      if (isAlive(pids.child)) process.kill(pids.child, 'SIGKILL');
+    }
   });
 
   test('an already aborted signal starts nothing', async () => {

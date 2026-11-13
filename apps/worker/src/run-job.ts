@@ -13,12 +13,26 @@ import { expandArgv, TemplateError } from './template.js';
 export const HEARTBEAT_MS = 30_000;
 /** One heartbeat may take this long; a half-open connection must not hold the next ones up for minutes. */
 export const HEARTBEAT_TIMEOUT_MS = 20_000;
-/** Job-level server calls wait this long between tries while the network is down (about 3 minutes in all). */
+/**
+ * Job-level server calls wait this long between tries while the network is down (about 3 minutes in all); after that
+ * the last pause repeats while the lease still holds (see LEASE_MS).
+ */
 export const RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 16_000, 32_000, 60_000, 60_000];
+/** The server's lease (plan 01): each heartbeat extends it to this long from then. */
+export const LEASE_MS = 600_000;
+/** Retries end this long before the lease would run out, measured from the last successful heartbeat. */
+export const LEASE_MARGIN_MS = 60_000;
+/** A tool that looks stopped by the same Ctrl+C as the worker: wait this long for the worker's own signal. */
+const INTERRUPT_WAIT_MS = 100;
+/** Windows STATUS_CONTROL_C_EXIT: how a console program ends on Ctrl+C or a closed console. */
+const CONTROL_C_EXIT = 0xc000013a;
 const RELEASE_TIMEOUT_MS = 10_000;
 /** The id becomes a directory name. */
 const JOB_ID = /^[0-9A-Za-z]{1,64}$/;
 const RM_RETRIES = { maxRetries: 10, retryDelay: 200 };
+/** Server answers that come again on every try: the request itself is refused. */
+const REFUSED = new Set([400, 413, 422]);
+const removeDir = (dir: string) => rm(dir, { recursive: true, force: true, ...RM_RETRIES });
 
 export type JobApi = Pick<WorkerApi, 'heartbeat' | 'fail' | 'release' | 'downloadInput' | 'uploadOutput' | 'complete'>;
 
@@ -34,6 +48,11 @@ export type JobDeps = {
   heartbeatTimeoutMs?: number;
   killGraceMs?: number;
   retryDelaysMs?: number[];
+  leaseMs?: number;
+  leaseMarginMs?: number;
+  /** Test seams: how the job directory is removed, and the wait after a tool that looks stopped by Ctrl+C. */
+  removeDir?: (dir: string) => Promise<void>;
+  interruptWaitMs?: number;
 };
 
 export type JobOutcome = 'succeeded' | 'retry' | 'failed' | 'canceled' | 'released' | 'broken' | 'lost';
@@ -45,16 +64,27 @@ export function inputFileName(inputName: string, clientFileName: string): string
   return /^[a-z0-9]{1,10}$/.test(ext) ? `${inputName}.${ext}` : inputName;
 }
 
-async function withRetry<T>(fn: () => Promise<T>, delays: number[], signal?: AbortSignal): Promise<T> {
+/**
+ * Try again after each of `delays` while the error is transient; past them the last pause repeats while
+ * `more(firstFailure)` holds (the lease is still alive), so a server restart does not cost the job.
+ */
+async function withRetry<T>(fn: () => Promise<T>, delays: number[], signal?: AbortSignal, more: (since: number) => boolean = () => false): Promise<T> {
+  let since: number | null = null;
   for (let i = 0; ; i++) {
     try {
       return await fn();
     } catch (e) {
-      if (!isTransient(e) || i >= delays.length || signal?.aborted) throw e;
-      await sleep(delays[i]!, undefined, signal ? { signal } : undefined);
+      if (!isTransient(e) || signal?.aborted) throw e;
+      since ??= Date.now();
+      if (i >= delays.length && !more(since)) throw e;
+      await sleep(delays[Math.min(i, delays.length - 1)] ?? 1000, undefined, signal ? { signal } : undefined);
     }
   }
 }
+
+/** Exit code or signal of a tool ended by Ctrl+C (Windows) or SIGINT/SIGTERM: maybe the worker is being stopped too. */
+const looksInterrupted = (r: { code: number | null; signal: NodeJS.Signals | null }): boolean =>
+  r.code === CONTROL_C_EXIT || r.signal === 'SIGINT' || r.signal === 'SIGTERM';
 
 /**
  * Why collectOutputs threw something other than an OutputError (EISDIR, EACCES), naming the file when the error does.
@@ -133,7 +163,13 @@ export async function runJob(job: ClaimedJob, pack: Pack, deps: JobDeps): Promis
   if (deps.signal?.aborted) end('shutdown');
 
   const delays = deps.retryDelaysMs ?? RETRY_DELAYS_MS;
-  const call = <T>(fn: () => Promise<T>) => withRetry(fn, delays, signal);
+  // The claim just gave a fresh lease; every successful heartbeat renews it.
+  let lastBeat = Date.now();
+  const leaseLeft = (deps.leaseMs ?? LEASE_MS) - (deps.leaseMarginMs ?? LEASE_MARGIN_MS);
+  // Bounded twice: by the lease, and (when heartbeats get through but this call does not) by the same span from its first failure.
+  const leaseHolds = (since: number) => Date.now() - lastBeat < leaseLeft && Date.now() - since < leaseLeft;
+  const call = <T>(fn: () => Promise<T>) => withRetry(fn, delays, signal, leaseHolds);
+  const rmDir = deps.removeDir ?? removeDir;
   const beatSignal = () => AbortSignal.any([signal, AbortSignal.timeout(deps.heartbeatTimeoutMs ?? HEARTBEAT_TIMEOUT_MS)]);
   let beats: ReturnType<typeof startHeartbeat> | null = null;
   /** Stop the heartbeats: none may cross the job's last call. */
@@ -199,19 +235,33 @@ export async function runJob(job: ClaimedJob, pack: Pack, deps: JobDeps): Promis
       await deps.api.uploadOutput(job.id, job.lease, f.name, 'output', f.path, signal, f.size);
     } catch (e) {
       if (e instanceof UploadFileError) throw new OutputError(`out/${f.name} changed after the tool ended: ${e.message}`);
+      // Too large, a name the server will not take: another attempt would get the same answer.
+      if (e instanceof ApiError && REFUSED.has(e.status)) throw new OutputError(`out/${f.name} was refused by the server: ${e.message}`);
       throw e;
     }
   };
 
+  let ownDir = false;
   try {
-    await rm(dirs.root, { recursive: true, force: true, ...RM_RETRIES });
+    try {
+      await rmDir(dirs.root);
+    } catch (e) {
+      // A process left from an earlier run of this job still holds a file (Windows has no Job Objects here):
+      // this PC's problem, not the job's. The type stays offered.
+      return await release('released', `the job directory of an earlier run could not be removed (${describeError(e)})`);
+    }
+    ownDir = true;
     await Promise.all([mkdir(dirs.in, { recursive: true }), mkdir(dirs.out, { recursive: true }), mkdir(dirs.work, { recursive: true })]);
 
     // At once: confirms the claim to the server and learns about a cancel before any work.
-    if ((await call(() => deps.api.heartbeat(job.id, job.lease, 0, null, beatSignal()))).cancel) return { outcome: 'canceled', detail: 'canceled before it started' };
+    const first = await call(() => deps.api.heartbeat(job.id, job.lease, 0, null, beatSignal()));
+    lastBeat = Date.now();
+    if (first.cancel) return { outcome: 'canceled', detail: 'canceled before it started' };
     beats = startHeartbeat(deps.heartbeatMs ?? HEARTBEAT_MS, async (progress, message) => {
       try {
-        if ((await deps.api.heartbeat(job.id, job.lease, progress, message, beatSignal())).cancel) end('cancel');
+        const answer = await deps.api.heartbeat(job.id, job.lease, progress, message, beatSignal());
+        lastBeat = Date.now();
+        if (answer.cancel) end('cancel');
       } catch (e) {
         if (e instanceof LeaseLostError) end('lost');
         else if (!signal.aborted) say(`heartbeat failed (${describeError(e)}); the job goes on and the next heartbeat tries again`);
@@ -255,6 +305,9 @@ export async function runJob(job: ClaimedJob, pack: Pack, deps: JobDeps): Promis
       killGraceMs: deps.killGraceMs ?? KILL_GRACE_MS,
       onProgress: (p) => beats?.report(p.progress, p.message),
     });
+    // A Ctrl+C reaches the tool (same console) and the worker at once, but the tool's exit may be seen first: give the
+    // worker's own signal a moment, or the job would fail instead of being given back.
+    if (!state.stop && looksInterrupted(r)) await sleep(deps.interruptWaitMs ?? INTERRUPT_WAIT_MS);
     // How the run was stopped comes first: on Windows a killed tool exits with taskkill's code 1, never a signal.
     if (state.stop) return await stopped(state.stop);
     if (r.timedOut) {
@@ -285,7 +338,12 @@ export async function runJob(job: ClaimedJob, pack: Pack, deps: JobDeps): Promis
       await uploadLog(r.log);
       const s = await settle();
       if (s) return s;
-      await call(() => deps.api.complete(job.id, job.lease, collected.info));
+      try {
+        await call(() => deps.api.complete(job.id, job.lease, collected.info));
+      } catch (e) {
+        if (e instanceof ApiError && REFUSED.has(e.status)) return await fail(`the server refused the outputs: ${e.message}`, true);
+        throw e;
+      }
       return { outcome: 'succeeded', detail: `${collected.files.length} output(s)` };
     }
     if (r.code === 3) return await giveBack('broken', `the tool reported a broken environment (exit code 3)${why}`);
@@ -309,9 +367,9 @@ export async function runJob(job: ClaimedJob, pack: Pack, deps: JobDeps): Promis
     await quiet();
     deps.signal?.removeEventListener('abort', onShutdown);
     try {
-      await rm(dirs.root, { recursive: true, force: true, ...RM_RETRIES });
+      if (ownDir) await rmDir(dirs.root);
     } catch (e) {
-      // A leftover process may still hold a file; the next run of this id clears the directory first.
+      // A leftover process may still hold a file; the next run of this id, or the next worker start, clears it.
       say(`the job directory could not be removed (${describeError(e)})`);
     }
   }

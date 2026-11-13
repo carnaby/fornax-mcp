@@ -33,6 +33,13 @@ switch (mode) {
     forever();
     break;
   }
+  case 'orphan': {
+    // Leaves a grandchild that ignores SIGTERM behind and exits 0 at once.
+    const child = spawn(process.execPath, ['-e', 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000);'], { stdio: 'ignore' });
+    child.unref();
+    writeFileSync(rest[0], JSON.stringify({ parent: process.pid, child: child.pid }));
+    break;
+  }
   default:
     console.error(`unknown mode ${mode}`);
     process.exitCode = 99;

@@ -11,8 +11,8 @@ afterEach(async () => {
   for (const s of servers.splice(0)) await s.close();
 });
 
-async function setup() {
-  const s = await startTestServer();
+async function setup(overrides: Parameters<typeof startTestServer>[0] = {}) {
+  const s = await startTestServer(overrides);
   servers.push(s);
   const paths = testPaths(tmp());
   writeEchoPack(paths.typesDir);
@@ -110,6 +110,18 @@ describe('runWorker', () => {
     expect(await alice.job(job.id)).toMatchObject({ state: 'queued' });
     expect(out.join('\n')).not.toContain('the file is empty');
     expect(out).toContain(`job ${job.id}: retry`);
+  });
+
+  test('an output larger than the server allows fails the job for good after one attempt, naming it', async () => {
+    // previews/result.jpg (4 bytes) fits, result.txt (8 bytes) does not.
+    const { paths, api, alice, say } = await setup({
+      limits: { maxUploadBytes: 16 * 1024 * 1024, maxOutputBytes: 6, maxQueuedPerToken: 50 },
+    });
+    const worker = runWorker({ api, paths, tools: NODE_TOOLS, out: say, signal: new AbortController().signal, once: true, ...fast });
+    await waitFor(async () => (await alice.offered()).includes('echo'), 10_000, 'echo to be offered');
+    const job = await alice.submit('echo', { mode: 'ok' });
+    expect(await worker).toBe(0);
+    expect(await alice.job(job.id)).toMatchObject({ state: 'failed', attempts: 1, error: expect.stringMatching(/^out\/result\.txt was refused by the server/) });
   });
 
   test('a failing check shows a single short line', async () => {

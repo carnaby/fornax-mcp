@@ -144,7 +144,7 @@ export async function killTree(
   group('SIGKILL');
 }
 
-/** Tool processes alive right now, so a hard quit (second Ctrl+C) can end their trees. */
+/** Tool processes alive right now (Linux: also a group still being ended after the tool's exit), so a hard quit (second Ctrl+C) can end their trees. */
 const live = new Set<{ pid: number; seams: Pick<RunOptions, 'taskkillProgram' | 'signalGroup'> }>();
 export const hasRunning = (): boolean => live.size > 0;
 /** Kill every running tool tree, best effort, waiting at most `waitMs`. Never rejects. */
@@ -193,6 +193,15 @@ export function runProcess(opts: RunOptions): Promise<RunResult> {
     let exit: { code: number | null; signal: NodeJS.Signals | null } = { code: null, signal: null };
     let pipeTimer: NodeJS.Timeout | undefined;
 
+    /** Linux: whether any process of the tool's group still exists. */
+    const groupAlive = (pid: number): boolean => {
+      try {
+        (opts.signalGroup ?? process.kill)(-pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
     const stop = () => {
       if (stopping || child.pid === undefined) return;
       // Windows: after exit the pid may be reused, taskkill must not touch it.
@@ -267,8 +276,15 @@ export function runProcess(opts: RunOptions): Promise<RunResult> {
     child.on('exit', (code, signal) => {
       exit = { code, signal };
       exited = true;
-      // Windows: the pid may be reused from here on.
-      if (entry) live.delete(entry);
+      if (process.platform === 'win32') {
+        // Windows: the pid may be reused from here on.
+        if (entry) live.delete(entry);
+      } else if (!stopping && groupAlive(child.pid!)) {
+        // Linux: the tool ended, but something it started lives on in its group (it would keep the GPU): end the group.
+        // The entry stays registered until finish, so a hard quit also reaches a group still in its grace period.
+        stopping = true;
+        killing = killTree(child.pid!, opts.killGraceMs ?? KILL_GRACE_MS, opts).catch(() => {});
+      }
       pipeTimer = setTimeout(() => {
         child.stdout!.destroy();
         child.stderr!.destroy();

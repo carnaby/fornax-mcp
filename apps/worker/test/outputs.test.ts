@@ -68,4 +68,12 @@ describe('collectOutputs', () => {
     await expect(collectOutputs(outDir({ 'a.png': 'x', 'outputs.json': '{"a.png": {"preview": "a.png"}}' }))).rejects.toThrow(/its own preview/);
     await expect(collectOutputs(outDir({ 'a.png': 'x', 'outputs.json': '{"a.png": {"size": 1}}' }))).rejects.toThrow(/outputs\.json/);
   });
+
+  test('outputs.json may hold at most 1 MiB', async () => {
+    const at = (bytes: number) => `{}${' '.repeat(bytes - 2)}`;
+    expect((await collectOutputs(outDir({ 'a.png': 'x', 'outputs.json': at(1024 * 1024) }))).info).toEqual({});
+    const e = await collectOutputs(outDir({ 'a.png': 'x', 'outputs.json': at(1024 * 1024 + 1) })).catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(OutputError);
+    expect((e as Error).message).toBe('out/outputs.json is larger than 1 MiB');
+  });
 });

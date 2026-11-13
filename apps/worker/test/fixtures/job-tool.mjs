@@ -50,6 +50,13 @@ switch (params.mode) {
   case 'env':
     writeFileSync(join(out, 'env.json'), JSON.stringify(Object.keys(process.env).filter((k) => /^fornax_/i.test(k)).sort()));
     break;
+  case 'interrupted':
+    // Ended by the same Ctrl+C as the worker: Windows STATUS_CONTROL_C_EXIT, elsewhere SIGINT.
+    writeFileSync(params.pid_file, JSON.stringify({ parent: process.pid, child: process.pid }));
+    if (process.platform === 'win32') process.exit(0xc000013a);
+    process.kill(process.pid, 'SIGINT');
+    forever();
+    break;
   case 'json-dir':
     // outputs.json that is a directory: reading it fails with an error that is not an OutputError.
     writeFileSync(join(out, 'result.txt'), 'x');

@@ -2,7 +2,7 @@ import { appendFileSync, existsSync, rmSync, symlinkSync, writeFileSync } from '
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { describe, expect, test } from 'vitest';
-import { LeaseLostError, NetworkError } from '../src/api.js';
+import { ApiError, LeaseLostError, NetworkError } from '../src/api.js';
 import { loadPack } from '../src/pack.js';
 import { inputFileName, type JobDeps, runJob } from '../src/run-job.js';
 import { fakeApi, fakeClaim, isAlive, NODE_TOOLS, readPids, testPaths, useTempDir, waitFor, writeEchoPack } from './helpers.js';
@@ -345,6 +345,123 @@ describe('runJob', () => {
     expect(r.outcome).toBe('succeeded');
     expect(lines.some((l) => l.startsWith('heartbeat failed'))).toBe(true);
     expect(beats).toBeGreaterThanOrEqual(4);
+  });
+
+  test('a job directory that cannot be cleared at the start gives the job back; it never fails it', async () => {
+    const { pack, deps } = setup();
+    const f = fakeApi();
+    const busy = async () => {
+      throw Object.assign(new Error('EBUSY: resource busy or locked, rmdir somewhere'), { code: 'EBUSY' });
+    };
+    const r = await runJob(fakeClaim({ params: { mode: 'ok' } }), pack, deps(f.api, { removeDir: busy }));
+    expect(r).toEqual({ outcome: 'released', detail: 'the job directory of an earlier run could not be removed (EBUSY)' });
+    expect(f.called('release')).toHaveLength(1);
+    expect(f.called('fail')).toHaveLength(0);
+    expect(f.called('complete')).toHaveLength(0);
+  });
+
+  test('an output the server refuses (413) fails the job for good after one try, naming it', async () => {
+    const { pack, deps } = setup();
+    const f = fakeApi({
+      uploadOutput: async (_id, _lease, name) => {
+        if (name === 'result.txt') throw new ApiError(413, 'too_large', 'the outputs of this job exceed the limit');
+      },
+    });
+    const r = await runJob(fakeClaim({ params: { mode: 'ok' } }), pack, deps(f.api));
+    expect(r.outcome).toBe('failed');
+    expect(f.called('fail')[0]!.args.slice(2)).toEqual(['out/result.txt was refused by the server: the outputs of this job exceed the limit', true]);
+    expect(f.called('uploadOutput').filter((c) => c.args[2] === 'result.txt')).toHaveLength(1);
+    expect(f.called('complete')).toHaveLength(0);
+  });
+
+  test('complete refused by the server (400, 422) fails the job for good after one try', async () => {
+    const { pack, deps } = setup();
+    for (const status of [400, 422]) {
+      const f = fakeApi({
+        complete: async () => {
+          throw new ApiError(status, 'invalid', 'outputs.json names an unknown output');
+        },
+      });
+      const r = await runJob(fakeClaim({ params: { mode: 'ok' } }), pack, deps(f.api));
+      expect(r.outcome).toBe('failed');
+      expect(f.called('complete')).toHaveLength(1);
+      expect(f.called('fail')[0]!.args.slice(2)).toEqual(['the server refused the outputs: outputs.json names an unknown output', true]);
+    }
+  });
+
+  test('a server restart longer than the retry delays but shorter than the lease: heartbeats go on and the job completes', async () => {
+    const { pack, deps } = setup();
+    const server = fakeApi();
+    let downUntil = 0;
+    let beatsWhileDown = 0;
+    const down = () => Date.now() < downUntil;
+    const refused = () => new NetworkError('cannot reach the server: ECONNREFUSED');
+    const f = fakeApi({
+      heartbeat: async () => {
+        if (down()) {
+          beatsWhileDown++;
+          throw refused();
+        }
+        return { cancel: false };
+      },
+      uploadOutput: async (...args) => {
+        // The server goes away for 800 ms when the first output is sent, far longer than the retry delays (2 x 10 ms).
+        if (downUntil === 0) downUntil = Date.now() + 800;
+        if (down()) throw refused();
+        return server.api.uploadOutput(...args);
+      },
+    });
+    const r = await runJob(fakeClaim({ params: { mode: 'ok' } }), pack, deps(f.api, { retryDelaysMs: [10, 10], leaseMs: 3000, leaseMarginMs: 500 }));
+    expect(r.outcome).toBe('succeeded');
+    expect(beatsWhileDown).toBeGreaterThanOrEqual(2);
+    expect([...server.uploads.keys()].sort()).toEqual(['log.txt', 'previews/result.jpg', 'result.txt']);
+  });
+
+  test('complete is retried through an outage shorter than the lease', async () => {
+    const { pack, deps } = setup();
+    let downUntil = 0;
+    const f = fakeApi({
+      complete: async () => {
+        if (downUntil === 0) downUntil = Date.now() + 800;
+        if (Date.now() < downUntil) throw new NetworkError('cannot reach the server: ECONNREFUSED');
+      },
+    });
+    const r = await runJob(fakeClaim({ params: { mode: 'ok' } }), pack, deps(f.api, { retryDelaysMs: [10, 10], leaseMs: 3000, leaseMarginMs: 500 }));
+    expect(r.outcome).toBe('succeeded');
+    expect(f.called('complete').length).toBeGreaterThan(3);
+  });
+
+  test('retries end once the lease would have run out', async () => {
+    const { pack, deps } = setup();
+    const f = fakeApi({
+      complete: async () => {
+        throw new NetworkError('cannot reach the server: ECONNREFUSED');
+      },
+      fail: async () => {
+        throw new NetworkError('cannot reach the server: ECONNREFUSED');
+      },
+    });
+    const started = Date.now();
+    const r = await runJob(fakeClaim({ params: { mode: 'ok' } }), pack, deps(f.api, { retryDelaysMs: [10, 10], leaseMs: 600, leaseMarginMs: 100 }));
+    expect(r.outcome).toBe('lost');
+    expect(Date.now() - started).toBeLessThan(5000);
+  });
+
+  test('a tool ended by the same Ctrl+C as the worker: the job is released, not failed', async () => {
+    const { pack, deps } = setup();
+    const pidFile = join(tmp(), 'pid.json');
+    const stop = new AbortController();
+    const f = fakeApi();
+    const running = runJob(fakeClaim({ params: { mode: 'interrupted', pid_file: pidFile } }), pack, deps(f.api, { signal: stop.signal }));
+    // The worker's own signal arrives a moment after the tool is gone.
+    const { parent } = await waitFor(() => readPids(pidFile), 10_000, 'the tool to start');
+    while (isAlive(parent)) await sleep(5);
+    await sleep(20);
+    stop.abort();
+    const r = await running;
+    expect(r.outcome).toBe('released');
+    expect(f.called('fail')).toHaveLength(0);
+    expect(f.called('release')).toHaveLength(1);
   });
 
   test('a local error reaches the server without any path of this PC', async () => {
