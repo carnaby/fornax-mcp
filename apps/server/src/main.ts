@@ -11,22 +11,33 @@ const { db, close } = openDb(config.dbFile);
 const store = new FileStore(config.filesDir);
 const app = await buildApp({ config, db, store });
 
+let inFlight = false;
 const tick = async () => {
+  if (inFlight) return;
+  inFlight = true;
   try {
     const r = await runMaintenance({ config, db, store, clock: () => new Date() });
     if (Object.values(r).some((n) => n > 0)) app.log.info(r, 'maintenance');
   } catch (e) {
     app.log.error({ err: { message: (e as Error).message, stack: (e as Error).stack } }, 'maintenance failed');
+  } finally {
+    inFlight = false;
   }
 };
 const timer = setInterval(tick, 60_000);
 void tick();
 
+let closing = false;
 const shutdown = async () => {
+  if (closing) return;
+  closing = true;
   clearInterval(timer);
-  await app.close();
-  close();
-  process.exit(0);
+  try {
+    await app.close();
+    close();
+  } finally {
+    process.exit(0);
+  }
 };
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);

@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'vitest';
-import { files } from '../src/db/schema.js';
+import { files, jobs } from '../src/db/schema.js';
+import { FileStore } from '../src/files/store.js';
+import { buildApp } from '../src/http/app.js';
 import { renderContract } from './fixtures.js';
 import { announce, issueToken, uploadFile, useTestApp } from './helpers.js';
 
@@ -112,5 +114,24 @@ describe('outputs', () => {
     const job = (await t.app.inject({ method: 'GET', url: `/api/jobs/${r.id}`, headers: { authorization: `Bearer ${r.majo}` } })).json();
     expect(job.outputs.map((o: { name: string }) => o.name)).toEqual(['fresh.png']);
     expect(t.db.select().from(files).all().filter((f) => f.jobId === r.id).map((f) => f.name)).not.toContain('stale.png');
+  });
+
+  test('a failing discard releases the claimed job: back to queued, attempts unchanged', async () => {
+    const r = await running();
+    await r.put('stale.png', 'old');
+    t.clock.advance(600_001);
+    class BrokenStore extends FileStore {
+      override async remove(): Promise<void> {
+        throw new Error('disk error');
+      }
+    }
+    const broken = await buildApp({ config: t.config, db: t.db, store: new BrokenStore(t.config.filesDir), clock: () => t.clock.now });
+    try {
+      const res = await broken.inject({ method: 'POST', url: '/api/worker/jobs/claim', headers: { authorization: `Bearer ${r.worker}` }, payload: { wait: 0 } });
+      expect(res.statusCode).toBe(500);
+    } finally {
+      await broken.close();
+    }
+    expect(t.db.select().from(jobs).get()).toMatchObject({ id: r.id, state: 'queued', attempts: 1, leaseExpiresAt: null });
   });
 });
