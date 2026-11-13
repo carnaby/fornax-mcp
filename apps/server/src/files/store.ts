@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream, mkdirSync, type ReadStream } from 'node:fs';
-import { rename, rm } from 'node:fs/promises';
+import { open, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { PassThrough, type Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -64,5 +64,22 @@ export class FileStore {
 
   openRead(id: string): ReadStream {
     return createReadStream(this.pathOf(id));
+  }
+
+  /** The last `maxBytes` of a file as UTF-8, starting at a character boundary; truncated when anything was left out. */
+  async tail(id: string, maxBytes: number): Promise<{ text: string; truncated: boolean }> {
+    const fh = await open(this.pathOf(id), 'r');
+    try {
+      const { size } = await fh.stat();
+      const start = Math.max(0, size - maxBytes);
+      const buf = Buffer.alloc(size - start);
+      await fh.read(buf, 0, buf.length, start);
+      // Skip UTF-8 continuation bytes (10xxxxxx) of a character cut by the start.
+      let skip = 0;
+      while (start > 0 && skip < 3 && skip < buf.length && ((buf[skip] ?? 0) & 0xc0) === 0x80) skip++;
+      return { text: buf.subarray(skip).toString('utf8'), truncated: start > 0 };
+    } finally {
+      await fh.close();
+    }
   }
 }

@@ -8,6 +8,7 @@ import { mcpRoutes } from '../mcp/routes.js';
 import { clientRoutes } from './client-api.js';
 import { downloadRoutes } from './downloads.js';
 import type { RouteDeps } from './deps.js';
+import { resultPageRoutes } from './pages/result.js';
 import { uploadLinkRoutes } from './uploads.js';
 import { workerRoutes } from './worker-api.js';
 
@@ -76,5 +77,6 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   await app.register(downloadRoutes, { prefix: '/api', ...routeDeps });
   await app.register(clientRoutes, { prefix: '/api', ...routeDeps });
   await app.register(mcpRoutes, routeDeps);
+  await app.register(resultPageRoutes, routeDeps);
   return app;
 }
