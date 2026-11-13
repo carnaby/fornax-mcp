@@ -12,6 +12,7 @@ import type { RouteDeps } from '../http/deps.js';
 import { resultUrl } from '../http/links.js';
 import { outputBlocks } from './output.js';
 import { SERVER_INSTRUCTIONS, TOOL_DESCRIPTIONS as D } from './text.js';
+import type { Block, ToolResult } from './types.js';
 
 export const MCP_SERVER_VERSION = '0.1.0';
 /** Caps the elements one tools/call may carry (GHSA-46jr-4wx8-v453: validating a huge argument list can exhaust memory). */
@@ -19,8 +20,7 @@ const MAX_TOOL_INPUT_ELEMENTS = 10_000;
 
 export type McpCaller = { kind: 'active'; identity: Identity } | { kind: 'pending'; fingerprint: string };
 export type McpContext = { deps: RouteDeps; caller: McpCaller; log: Pick<FastifyBaseLogger, 'error'> };
-export type Block = { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string };
-export type ToolResult = { content: Block[]; isError?: boolean };
+export type { Block, ToolResult };
 
 const text = (t: string): Block => ({ type: 'text', text: t });
 
