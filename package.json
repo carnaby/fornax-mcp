@@ -1,0 +1,14 @@
+{
+  "name": "fornax",
+  "private": true,
+  "type": "module",
+  "description": "A GPU job queue served over MCP: one worker owns the GPU, agents and apps send it jobs.",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "build": "pnpm -r --if-present build",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "pnpm -r --if-present test"
+  },
+  "license": "MIT",
+  "packageManager": "pnpm@10.33.2"
+}

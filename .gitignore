@@ -1,0 +1,11 @@
+node_modules/
+dist/
+coverage/
+*.log
+.env
+.env.*
+!.env.example
+# Specs, plans and handoff state are not in git: Tabula keeps them (see CLAUDE.md).
+docs/
+.superpowers/
+.nx/
