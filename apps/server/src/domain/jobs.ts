@@ -43,6 +43,7 @@ export function submitJob(db: Db, config: Config, owner: string, input: SubmitIn
   if (input.callback_url != null && !callbackAllowed(input.callback_url, config.webhooks.allowedPrefixes)) {
     throw unprocessable('callback_url is not allowed on this server');
   }
+  const callbackHref = input.callback_url == null ? null : new URL(input.callback_url).href;
   const given = input.inputs ?? {};
   for (const name of Object.keys(given)) if (!Object.hasOwn(contract.inputs, name)) throw unprocessable(`unknown input ${name}`);
   if (new Set(Object.values(given)).size !== Object.values(given).length) throw unprocessable('one file cannot be two inputs');
@@ -66,7 +67,7 @@ export function submitJob(db: Db, config: Config, owner: string, input: SubmitIn
     if ((open?.n ?? 0) >= config.limits.maxQueuedPerToken) throw tooMany(`at most ${config.limits.maxQueuedPerToken} jobs may wait or run per token`);
     const row: JobRow = {
       id: ulid(now.getTime()), ownerTokenId: owner, type: contract.name, params: params.value, inputs,
-      priority: PRIORITIES.indexOf(input.priority ?? 'normal'), group: input.group ?? null, callbackUrl: input.callback_url ?? null,
+      priority: PRIORITIES.indexOf(input.priority ?? 'normal'), group: input.group ?? null, callbackUrl: callbackHref,
       state: 'queued', attempts: 0, runAfter: now, leaseId: null, leaseExpiresAt: null, progress: null, progressMessage: null,
       error: null, manifest: null, createdAt: now, startedAt: null, finishedAt: null, updatedAt: now,
     };

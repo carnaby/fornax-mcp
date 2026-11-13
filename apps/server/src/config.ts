@@ -7,6 +7,11 @@ const MB = 1024 * 1024;
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 
+/** A callback prefix: an http(s) URL whose normalized form ends with "/", so "/hooks" cannot match "/hooksevil". */
+const prefixUrl = z
+  .url({ protocol: /^https?$/, error: 'must be an http(s) URL' })
+  .refine((u) => new URL(u).href.endsWith('/'), { error: 'must end with "/"' });
+
 const fileSchema = z.strictObject({
   public_url: z.url().optional(),
   limits: z
@@ -24,7 +29,7 @@ const fileSchema = z.strictObject({
       pending_token_days: z.number().min(0).default(7),
     })
     .prefault({}),
-  webhooks: z.strictObject({ allowed_prefixes: z.array(z.url()).default([]) }).prefault({}),
+  webhooks: z.strictObject({ allowed_prefixes: z.array(prefixUrl).default([]) }).prefault({}),
 });
 
 export type Config = {

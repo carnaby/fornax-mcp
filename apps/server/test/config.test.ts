@@ -41,4 +41,18 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ ...env(), FORNAX_SECRET: 'short' })).toThrow(/FORNAX_SECRET/);
     expect(() => loadConfig(env({ FORNAX_CONFIG: join(dir, 'nope.yaml') }))).toThrow(/nope.yaml/);
   });
+
+  test('webhook prefixes must be http(s) URLs ending with a slash', () => {
+    const write = (prefix: string) => {
+      const e = env();
+      writeFileSync(join(dir, 'fornax.yaml'), `webhooks:
+  allowed_prefixes:
+    - ${prefix}
+`);
+      return e;
+    };
+    expect(() => loadConfig(write('https://app.example.com/hooks'))).toThrow(/end with/);
+    expect(() => loadConfig(write('ftp://app.example.com/hooks/'))).toThrow(/http/);
+    expect(loadConfig(write('https://app.example.com/hooks/')).webhooks.allowedPrefixes).toEqual(['https://app.example.com/hooks/']);
+  });
 });
