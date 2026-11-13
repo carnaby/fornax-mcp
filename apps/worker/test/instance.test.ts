@@ -1,7 +1,8 @@
-import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
+import { uptime } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test } from 'vitest';
 import { lockWorker, sweepJobs } from '../src/instance.js';
 import { testPaths, useTempDir } from './helpers.js';
 
@@ -13,18 +14,59 @@ function deadPid(): number {
   return r.pid!;
 }
 
+const children: ChildProcess[] = [];
+afterEach(() => {
+  for (const c of children.splice(0)) c.kill();
+});
+
+/** The pid of a process that keeps running until the test ends: another worker. */
+function livePid(): number {
+  const c = spawn(process.execPath, ['-e', 'setInterval(() => 0, 1000)'], { stdio: 'ignore', windowsHide: true });
+  children.push(c);
+  return c.pid!;
+}
+
+/** A lock file holding `pid`, written `ageMs` ago. */
+function writeLock(dataDir: string, pid: number, ageMs = 0): string {
+  mkdirSync(dataDir, { recursive: true });
+  const file = join(dataDir, 'worker.lock');
+  writeFileSync(file, String(pid));
+  const at = (Date.now() - ageMs) / 1000;
+  utimesSync(file, at, at);
+  return file;
+}
+
 describe('one worker per PC', () => {
-  test('a second lock attempt is refused while the first holds it; after release it succeeds', () => {
+  test('a fresh lock held by another live process is refused; after that process ends the lock is taken over', () => {
     const paths = testPaths(tmp());
-    const first = lockWorker(paths);
-    expect('release' in first).toBe(true);
-    const second = lockWorker(paths);
-    expect(second).toEqual({ heldBy: process.pid, file: join(paths.dataDir, 'worker.lock') });
-    if ('release' in first) first.release();
-    expect(existsSync(join(paths.dataDir, 'worker.lock'))).toBe(false);
-    const third = lockWorker(paths);
-    expect('release' in third).toBe(true);
-    if ('release' in third) third.release();
+    const other = livePid();
+    const file = writeLock(paths.dataDir, other);
+    expect(lockWorker(paths)).toEqual({ heldBy: other, file });
+    writeLock(paths.dataDir, deadPid());
+    const lock = lockWorker(paths);
+    expect('release' in lock).toBe(true);
+    expect(readFileSync(file, 'utf8')).toBe(String(process.pid));
+    if ('release' in lock) lock.release();
+    expect(existsSync(file)).toBe(false);
+  });
+
+  test('a lock holding this very pid is stale (a reboot handed the old pid to this process) and is taken over', () => {
+    const paths = testPaths(tmp());
+    const file = writeLock(paths.dataDir, process.pid);
+    const lock = lockWorker(paths);
+    expect('release' in lock).toBe(true);
+    expect(readFileSync(file, 'utf8')).toBe(String(process.pid));
+    if ('release' in lock) lock.release();
+  });
+
+  test('a lock written before the system started is stale even when its pid now belongs to a live process', () => {
+    const paths = testPaths(tmp());
+    // An hour before boot: the pid was reused after a reboot.
+    const file = writeLock(paths.dataDir, livePid(), uptime() * 1000 + 3_600_000);
+    const lock = lockWorker(paths);
+    expect('release' in lock).toBe(true);
+    expect(readFileSync(file, 'utf8')).toBe(String(process.pid));
+    if ('release' in lock) lock.release();
   });
 
   test('a lock left by a process that has ended is taken over', () => {

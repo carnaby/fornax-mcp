@@ -1,5 +1,6 @@
 import { closeSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, writeSync } from 'node:fs';
 import { readdir, rm } from 'node:fs/promises';
+import { uptime } from 'node:os';
 import { join } from 'node:path';
 import type { Paths } from './paths.js';
 
@@ -7,6 +8,8 @@ import type { Paths } from './paths.js';
 export const LOCK_NAME = 'worker.lock';
 /** A lock file without a pid younger than this is still being written by its owner. */
 const FRESH_MS = 10_000;
+/** Slack for comparing a lock's mtime with the boot time (whole-second uptime, clock adjustments). */
+const BOOT_MARGIN_MS = 60_000;
 const RM_RETRIES = { maxRetries: 10, retryDelay: 200 };
 
 export type WorkerLock = { file: string; release: () => void };
@@ -32,17 +35,33 @@ function readPid(file: string): number | null | undefined {
   }
 }
 
-function fresh(file: string): boolean {
+/** When the lock file was last written; null when it is gone. */
+function mtime(file: string): number | null {
   try {
-    return Date.now() - statSync(file).mtimeMs < FRESH_MS;
+    return statSync(file).mtimeMs;
   } catch {
-    return false;
+    return null;
   }
 }
 
 /**
+ * Whether the pid in a lock file still names the worker that wrote it. A lock written before this system started
+ * (a reboot) is stale whatever its pid now names: pids are reused, and a worker started at boot often gets the same
+ * one again. A lock holding our own pid is stale too: this process has not written it.
+ */
+function held(file: string, pid: number | null): boolean {
+  const at = mtime(file);
+  if (at === null) return false;
+  if (pid === null) return Date.now() - at < FRESH_MS;
+  if (pid === process.pid) return false;
+  const bootedAt = Date.now() - uptime() * 1000;
+  if (at < bootedAt - BOOT_MARGIN_MS) return false;
+  return alive(pid);
+}
+
+/**
  * Take the PC-wide worker lock (two workers would abandon each other's jobs on every claim and share jobs/<id>).
- * A lock whose process has ended is stale and taken over. Two workers taking over the same stale lock at the very
+ * A lock whose process has ended, written before the last boot, or holding our own pid is stale and taken over. Two workers taking over the same stale lock at the very
  * same moment could both succeed; that window is accepted.
  */
 export function lockWorker(paths: Paths): WorkerLock | LockHeld {
@@ -75,7 +94,7 @@ export function lockWorker(paths: Paths): WorkerLock | LockHeld {
     if (tries >= 3) return { file, heldBy: readPid(file) ?? null };
     const pid = readPid(file);
     if (pid === undefined) continue;
-    if (pid === null ? fresh(file) : alive(pid)) return { file, heldBy: pid };
+    if (held(file, pid)) return { file, heldBy: pid };
     try {
       unlinkSync(file);
     } catch (e) {

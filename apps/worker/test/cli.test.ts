@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -9,7 +10,6 @@ import { makeSignalHandler, runCli, wireSignals } from '../src/cli.js';
 import { hasRunning, killRunning, runProcess } from '../src/process.js';
 import type { Ctx } from '../src/commands/context.js';
 import { readToken, readWorkerConfig, saveToken } from '../src/config.js';
-import { lockWorker } from '../src/instance.js';
 import { testPaths, useTempDir, waitFor, writeEchoPack } from './helpers.js';
 
 const tmp = useTempDir();
@@ -129,11 +129,18 @@ describe('fornax CLI', () => {
     mkdirSync(ctx.paths.configDir, { recursive: true });
     writeFileSync(ctx.paths.configFile, `server: ${s.url}\ntools:\n  node: ${JSON.stringify(process.execPath)}\n`);
     saveToken(ctx.paths, s.issueToken('pc', 'worker'));
-    const held = lockWorker(ctx.paths);
-    const refused = await run('worker', '--once');
-    expect(refused.code).toBe(1);
-    expect(refused.text).toMatch(/another fornax worker runs on this PC \(pid \d+\)/);
-    if ('release' in held) held.release();
+    // Another worker: a live process whose pid is in a fresh lock.
+    const other = spawn(process.execPath, ['-e', 'setInterval(() => 0, 1000)'], { stdio: 'ignore', windowsHide: true });
+    try {
+      mkdirSync(ctx.paths.dataDir, { recursive: true });
+      writeFileSync(join(ctx.paths.dataDir, 'worker.lock'), String(other.pid));
+      const refused = await run('worker', '--once');
+      expect(refused.code).toBe(1);
+      expect(refused.text).toContain(`another fornax worker runs on this PC (pid ${other.pid})`);
+    } finally {
+      other.kill();
+    }
+    await waitFor(() => other.exitCode !== null || other.signalCode !== null, 5000, 'the other worker to end');
     mkdirSync(join(ctx.paths.jobsDir, 'OLDJOB', 'out'), { recursive: true });
     const served = await run('worker', '--once');
     expect(served.code).toBe(0);
