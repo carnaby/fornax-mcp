@@ -99,4 +99,18 @@ describe('outputs', () => {
     expect(job).toMatchObject({ state: 'failed', log: 'log.txt', outputs: [] });
     expect((await t.app.inject({ method: 'GET', url: `/api/jobs/${r.id}/outputs/log.txt`, headers: { authorization: `Bearer ${r.majo}` } })).body).toBe('try 2');
   });
+
+  test('a claim after a lease expired starts without the stale outputs', async () => {
+    const r = await running();
+    await r.put('stale.png', 'old');
+    const claim = () => t.app.inject({ method: 'POST', url: '/api/worker/jobs/claim', headers: { authorization: `Bearer ${r.worker}` }, payload: { wait: 0 } });
+    t.clock.advance(600_001);
+    const again = (await claim()).json(); // the expired lease is released and the job claimed again at once
+    expect(again.attempt).toBe(2);
+    await r.put('fresh.png', 'new', 'output', again.lease);
+    expect((await r.complete({}, again.lease)).statusCode).toBe(200);
+    const job = (await t.app.inject({ method: 'GET', url: `/api/jobs/${r.id}`, headers: { authorization: `Bearer ${r.majo}` } })).json();
+    expect(job.outputs.map((o: { name: string }) => o.name)).toEqual(['fresh.png']);
+    expect(t.db.select().from(files).all().filter((f) => f.jobId === r.id).map((f) => f.name)).not.toContain('stale.png');
+  });
 });
