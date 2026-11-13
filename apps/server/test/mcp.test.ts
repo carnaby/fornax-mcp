@@ -36,6 +36,8 @@ describe('the MCP endpoint', () => {
     expect(ins).toContain('create_upload');
     expect(ins).toContain('<path>');
     expect(ins).toContain('connection reset');
+    expect(ins).toContain('curl.exe');
+    expect(ins).toMatch(/cannot run commands.*give the user the command/s);
     expect(ins).toContain('get_output');
     expect(ins).toContain('result_url');
   });
@@ -100,7 +102,8 @@ describe('the job tools', () => {
     const client = await mcp.connect('/mcp', bearerHeader(issueToken(t.db, 'alice')));
     const link = await callJson(client, 'create_upload', { name: 'scene.blend' });
     expect(link).toEqual({ file_id: expect.any(String), url: expect.any(String), expires_at: '2026-11-13T11:00:00.000Z', curl: expect.any(String) });
-    expect(link.curl).toBe(`curl -fsS -X PUT -H "Content-Type: application/octet-stream" --data-binary @<path> "${link.url}"`);
+    // -T streams the file with PUT (--data-binary would load all of it into memory); the body of a 413 or 404 is shown.
+    expect(link.curl).toBe(`curl --fail-with-body -sS -T "<path>" -H "Content-Type: application/octet-stream" "${link.url}"`);
     const put = await t.app.inject({ method: 'PUT', url: new URL(link.url).pathname, headers: { 'content-type': 'application/octet-stream' }, payload: 'BLEND' });
     expect(put.statusCode).toBe(201);
 

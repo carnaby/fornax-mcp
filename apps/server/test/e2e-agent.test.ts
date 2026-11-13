@@ -1,6 +1,11 @@
+import { exec } from 'node:child_process';
 import { createHmac } from 'node:crypto';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingHttpHeaders } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { webhookKey } from '@fornax/protocol';
 import sharp from 'sharp';
@@ -82,9 +87,14 @@ test('an agent uploads and submits over MCP, a worker runs the job, the agent se
 
   expect((await json('list_job_types')).types.map((x: { name: string }) => x.name)).toEqual(['render']);
   const upload = await json('create_upload', { name: 'scene.blend' });
-  expect(upload.curl).toContain(`--data-binary @<path> "${upload.url}"`);
-  // What the curl command does: one PUT of the raw bytes to the link, no token.
-  expect((await fetch(upload.url, { method: 'PUT', headers: { 'content-type': 'application/octet-stream' }, body: 'BLENDER' })).status).toBe(201);
+  expect(upload.curl).toContain(`-T "<path>"`);
+  // The agent runs the command it got, with its local file in place of <path>: one streamed PUT, no token.
+  const dir = await mkdtemp(join(tmpdir(), 'fornax-e2e-'));
+  cleanup.push(() => rm(dir, { recursive: true, force: true }));
+  const scene = join(dir, 'scene.blend');
+  await writeFile(scene, 'BLENDER');
+  const sent = await promisify(exec)(upload.curl.replace('<path>', scene));
+  expect(JSON.parse(sent.stdout)).toMatchObject({ id: upload.file_id, name: 'scene.blend', size: 7 });
   const { job_id } = await json('submit_job', { type: 'render', params: { frame_start: 1 }, inputs: { scene: upload.file_id }, callback_url: `${hooks.url}/hooks/render` });
 
   // The worker runs it: claim, input, progress, outputs, complete.

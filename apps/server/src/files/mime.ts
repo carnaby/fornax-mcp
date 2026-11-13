@@ -14,8 +14,8 @@ export const mimeOf = (name: string): string => TYPES[extname(name).toLowerCase(
 /** Text a person or an agent can read inline: plain text, JSON, subtitles. */
 export const isTextMime = (mime: string): boolean => mime.startsWith('text/') || mime === 'application/json' || mime === 'application/x-subrip';
 
-/** Text and JSON up to this size are shown inline (MCP get_output, the result page). */
-export const INLINE_TEXT_BYTES = 100_000;
+/** Text and JSON up to this size are shown inline (MCP get_output, the result page); get_output gives a longer log's end. */
+export const INLINE_TEXT_BYTES = 60_000;
 
 /** Image formats browsers and MCP clients show directly. */
 export const INLINE_IMAGE_MIMES: ReadonlySet<string> = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);

@@ -2,27 +2,52 @@ import { readFile } from 'node:fs/promises';
 import { conflict, notFound } from '../domain/errors.js';
 import type { FileRow } from '../domain/files.js';
 import type { JobRow } from '../domain/jobs.js';
-import { downloadableFile } from '../domain/outputs.js';
-import { INLINE_IMAGE_BYTES, INLINE_IMAGE_MIMES, INLINE_TEXT_BYTES, isTextMime } from '../files/mime.js';
+import { downloadableFile, jobFile } from '../domain/outputs.js';
+import { INLINE_IMAGE_BYTES, INLINE_TEXT_BYTES, isTextMime } from '../files/mime.js';
+import { imageInfo, PREVIEW_MAX_SOURCE_BYTES, PREVIEWABLE, renderPreview, serverPreviewName } from '../files/preview.js';
 import type { RouteDeps } from '../http/deps.js';
 import { downloadUrl } from '../http/links.js';
 import type { Block } from './types.js';
 
 const json = (v: unknown): Block => ({ type: 'text', text: JSON.stringify(v) });
-const showable = (f: FileRow | null): f is FileRow => f !== null && INLINE_IMAGE_MIMES.has(f.mime) && f.size <= INLINE_IMAGE_BYTES;
 
-/** The image type the bytes themselves have (never the extension's claim), or null when it is no inline image format. */
-function sniffImage(b: Buffer): string | null {
-  if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg';
-  if (b.length >= 8 && b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
-  if (b.length >= 4 && b.subarray(0, 4).toString('latin1') === 'GIF8') return 'image/gif';
-  if (b.length >= 12 && b.subarray(0, 4).toString('latin1') === 'RIFF' && b.subarray(8, 12).toString('latin1') === 'WEBP') return 'image/webp';
-  return null;
+/** Image blocks larger than this on a side are refused by Claude (8000 px, 2000 px once a conversation holds many images). */
+export const IMAGE_BLOCK_MAX_PX = 2000;
+/** The formats an image block may carry, by what the bytes are (never by the extension). */
+const BLOCK_FORMATS: Record<string, string> = { jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif' };
+
+const readOrNull = (deps: RouteDeps, f: FileRow): Promise<Buffer | null> => readFile(deps.store.pathOf(f.id)).catch(() => null);
+
+/**
+ * An image block of `f`: the server's preview of it when there is one (a JPEG of at most 1024 px); else the file itself
+ * when it is a browser image of at most 2000 px per side and 2 MiB; else a JPEG of it rendered now. Null when it is no
+ * image the server can decode (unknown format, over 100 megapixels, unreadable).
+ */
+async function imageBlock(deps: RouteDeps, job: JobRow, f: FileRow): Promise<Block | null> {
+  const own = f.name.startsWith('.fornax/') ? null : jobFile(deps.db, job.id, serverPreviewName(f.name));
+  if (own && own.size <= INLINE_IMAGE_BYTES) {
+    const data = await readOrNull(deps, own);
+    if (data) return { type: 'image', data: data.toString('base64'), mimeType: 'image/jpeg' };
+  }
+  if (!PREVIEWABLE.has(f.mime) || f.size > PREVIEW_MAX_SOURCE_BYTES) return null;
+  const path = deps.store.pathOf(f.id);
+  try {
+    const info = await imageInfo(path);
+    const mimeType = BLOCK_FORMATS[info.format];
+    if (mimeType && f.size <= INLINE_IMAGE_BYTES && info.width > 0 && info.height > 0 && info.width <= IMAGE_BLOCK_MAX_PX && info.height <= IMAGE_BLOCK_MAX_PX) {
+      const data = await readFile(path);
+      return { type: 'image', data: data.toString('base64'), mimeType };
+    }
+    const jpeg = await renderPreview(path);
+    return jpeg.length <= INLINE_IMAGE_BYTES ? { type: 'image', data: jpeg.toString('base64'), mimeType: 'image/jpeg' } : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
- * get_output: first a JSON block about the file with a signed download link; then its preview (or the file itself)
- * as an image block, or its text when it is short text; otherwise the JSON says to use the link.
+ * get_output: first a JSON block about the file with a signed download link; then an image block of its preview (or of
+ * the file itself), at most 2000 px per side, or its text when it is short text; otherwise the JSON says to use the link.
  */
 export async function outputBlocks(deps: RouteDeps, job: JobRow, name: string): Promise<Block[]> {
   if (!job.manifest) throw conflict(`the job is ${job.state}; its outputs are ready once it has finished`);
@@ -36,10 +61,15 @@ export async function outputBlocks(deps: RouteDeps, job: JobRow, name: string): 
   };
   const preview = entry?.preview ? downloadableFile(deps.db, job, entry.preview) : null;
   for (const candidate of [preview, file]) {
-    if (!showable(candidate)) continue;
-    const data = await readFile(deps.store.pathOf(candidate.id));
-    const mimeType = sniffImage(data);
-    if (mimeType) return [json(candidate === file ? info : { ...info, preview: candidate.name }), { type: 'image', data: data.toString('base64'), mimeType }];
+    if (!candidate) continue;
+    const image = await imageBlock(deps, job, candidate);
+    if (image) return [json(candidate === file ? info : { ...info, preview: candidate.name }), image];
+  }
+  if (file.kind === 'log' && file.size > INLINE_TEXT_BYTES) {
+    // Like the result page: the end of a long log is what tells how the job went.
+    const tail = await deps.store.tail(file.id, INLINE_TEXT_BYTES);
+    if (!tail.text.includes('\u0000')) return [json({ ...info, note: `the last ${INLINE_TEXT_BYTES / 1000} kB of the log; download all of it with the link` }), { type: 'text', text: tail.text }];
+    return [json({ ...info, note: 'not readable text: download it with the link' })];
   }
   if (isTextMime(file.mime) && file.size <= INLINE_TEXT_BYTES) {
     const data = await readFile(deps.store.pathOf(file.id));
