@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { join } from 'node:path';
@@ -103,6 +104,33 @@ describe('WorkerApi', () => {
     expect(err).toBeInstanceOf(LocalFileError);
     expect(isTransient(err)).toBe(false);
     expect((err as Error).message).toBe('input source could not be written here (ENOENT)');
+  });
+
+  test('a download the network breaks off mid-body is a NetworkError (retried), not a local error; the next try succeeds', async () => {
+    const content = Buffer.alloc(100_000, 7);
+    let requests = 0;
+    const fake = createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': String(content.length) });
+      // The first answer stops after 1000 bytes and the connection is reset; the second is whole.
+      if (++requests === 1) res.write(content.subarray(0, 1000), () => setTimeout(() => res.socket?.destroy(), 50));
+      else res.end(content);
+    });
+    await new Promise<void>((r) => fake.listen(0, '127.0.0.1', r));
+    const { port } = fake.address() as { port: number };
+    try {
+      const api = new WorkerApi({ server: `http://127.0.0.1:${port}`, token: generateToken('pc') });
+      const input = { name: 'source', file_name: 'a.txt', size: content.length, sha256: createHash('sha256').update(content).digest('hex') };
+      const dest = join(tmp(), 'source.txt');
+      const err = await api.downloadInput('J1', 'L1', input, dest).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(NetworkError);
+      expect(isTransient(err)).toBe(true);
+      expect(existsSync(dest)).toBe(false);
+      await api.downloadInput('J1', 'L1', input, dest);
+      expect(readFileSync(dest)).toEqual(content);
+    } finally {
+      fake.closeAllConnections();
+      await new Promise((r) => fake.close(r));
+    }
   });
 
   test('a heartbeat past its time limit is a NetworkError (worth another try), not an abort', async () => {

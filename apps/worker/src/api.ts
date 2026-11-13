@@ -39,6 +39,8 @@ export type WorkerQueue = { queued: number; running: number; unavailable: { type
 type RequestOptions = { json?: unknown; body?: ReadableStream<Uint8Array>; headers?: Record<string, string>; signal?: AbortSignal };
 
 const enc = encodeURIComponent;
+/** The calls a write stream makes on its file; an error from one of them is a local problem. */
+const FILE_SYSCALLS = new Set(['open', 'write', 'writev', 'close', 'fsync']);
 
 /** The worker API of spec 8.3 (routes from plan 01), typed. */
 export class WorkerApi {
@@ -137,16 +139,26 @@ export class WorkerApi {
         done(null, chunk);
       },
     });
+    if (!res.body) throw new NetworkError(`the download of input ${input.name} broke off: the answer has no body`);
+    const source = Readable.fromWeb(res.body as unknown as WebReadableStream);
     const file = createWriteStream(dest);
+    // pipeline destroys every stream with the first error, so the write stream also emits a network error.
+    // Only an error of the file itself counts as local: not the body's, and from a file-system call.
+    let sourceError: unknown = null;
+    source.on('error', (e) => {
+      sourceError ??= e;
+    });
     let local: NodeJS.ErrnoException | null = null;
-    file.on('error', (e) => {
-      local = e;
+    file.on('error', (e: NodeJS.ErrnoException) => {
+      if (e !== sourceError && FILE_SYSCALLS.has(e.syscall ?? '')) local ??= e;
     });
     try {
-      if (!res.body) throw new Error('the answer has no body');
       // Aborting `signal` aborts the fetch, which errors this body stream.
-      await pipeline(Readable.fromWeb(res.body as unknown as WebReadableStream), meter, file);
+      await pipeline(source, meter, file);
     } catch (e) {
+      // A write stream destroyed while its file was still opening opens it afterwards: wait until it is closed,
+      // or the removal below could run first and an empty file would be left behind.
+      if (!file.closed) await new Promise((r) => file.once('close', r));
       await rm(dest, { force: true });
       if (signal?.aborted) throw e;
       // Writing here failed (missing directory, no permission, disk full): not worth retrying, and the code
