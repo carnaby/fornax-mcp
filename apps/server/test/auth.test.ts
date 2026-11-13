@@ -46,5 +46,9 @@ describe('maskUrl', () => {
     expect(maskUrl('/api/uploads/abc.123.sig')).toBe('/api/uploads/***');
     expect(maskUrl('/r/abc.123.sig')).toBe('/r/***');
     expect(maskUrl('/api/jobs/1/outputs/a.png?sig=xyz&x=1')).toBe('/api/jobs/1/outputs/a.png?sig=***&x=1');
+    expect(maskUrl('/mcp/tok/extra')).toBe('/mcp/***');
+    expect(maskUrl('/mcp/tok?x=1')).toBe('/mcp/***?x=1');
+    expect(maskUrl('/api/jobs/1?SIG=x')).toBe('/api/jobs/1?SIG=***');
+    expect(maskUrl('//mcp/tok')).toBe('/mcp/***');
   });
 });

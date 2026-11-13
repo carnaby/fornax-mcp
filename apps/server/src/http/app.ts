@@ -20,10 +20,10 @@ export type AppDeps = {
 /** Tokens and signatures in URLs never reach the logs. */
 export function maskUrl(url: string): string {
   return url
-    .replace(/^\/mcp\/[^/?#]+/, '/mcp/***')
-    .replace(/^\/api\/uploads\/[^/?#]+/, '/api/uploads/***')
-    .replace(/^\/r\/[^/?#]+/, '/r/***')
-    .replace(/([?&]sig=)[^&#]*/g, '$1***');
+    .replace(/^\/+mcp\/[^?#]+/, '/mcp/***')
+    .replace(/^\/+api\/uploads\/[^?#]+/, '/api/uploads/***')
+    .replace(/^\/+r\/[^?#]+/, '/r/***')
+    .replace(/([?&]sig=)[^&#]*/gi, '$1***');
 }
 
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
@@ -37,7 +37,8 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     logger: {
       level: process.env.LOG_LEVEL ?? 'info',
       ...(deps.logStream ? { stream: deps.logStream } : {}),
-      serializers: { req: (req) => ({ method: req.method, url: maskUrl(req.url) }) },
+      // Unmatched URLs are not logged at all: any path may carry a secret.
+      serializers: { req: (req) => ({ method: req.method, url: req.is404 ? '(unmatched)' : maskUrl(req.url) }) },
     },
   });
 
