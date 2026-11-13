@@ -1,10 +1,9 @@
-import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { startTestServer, type TestServer } from '@fornax/server/testing';
 import { afterEach, describe, expect, test } from 'vitest';
 import { WorkerApi } from '../src/api.js';
 import { runWorker } from '../src/loop.js';
-import { clientOf, isAlive, NODE_TOOLS, readPids, testPaths, useTempDir, waitFor, writeEchoPack } from './helpers.js';
+import { clientOf, isAlive, jobsLeft, NODE_TOOLS, readPids, testPaths, useTempDir, waitFor, writeEchoPack } from './helpers.js';
 
 const tmp = useTempDir();
 const servers: TestServer[] = [];
@@ -49,7 +48,7 @@ describe('end to end', () => {
     expect(await alice.download(job.id, 'result.txt')).toBe('HELLO');
     expect(await alice.download(job.id, 'previews/result.jpg')).toBe('JPEG');
     expect(await alice.download(job.id, 'log.txt')).toContain('working');
-    expect(existsSync(join(paths.jobsDir, job.id))).toBe(false);
+    expect(jobsLeft(paths)).toEqual([]);
     expect(out.join('\n')).not.toContain('hello');
   });
 

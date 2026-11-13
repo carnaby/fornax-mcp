@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join, posix, win32 } from 'node:path';
 
@@ -42,8 +43,18 @@ export function resolvePaths(env: NodeJS.ProcessEnv = process.env, platform: Nod
   };
 }
 
-/** <data>/jobs/<id>/{in,out,work}. The id must already be checked to be a plain name. */
-export function jobDirs(paths: Paths, id: string): JobDirs {
-  const root = join(paths.jobsDir, id);
+/**
+ * The directory of one claim of a job: `<id>-<12 hex digits of the lease's SHA-256>`. Every claim gets a new lease,
+ * so a directory a leftover process of an earlier claim still holds never blocks a later one (a released claim gets
+ * its attempt back, so the attempt number alone could repeat). The lease itself stays out of paths the tool sees.
+ * The id must already be checked to be a plain name.
+ */
+export function jobDirName(id: string, lease: string): string {
+  return `${id}-${createHash('sha256').update(lease).digest('hex').slice(0, 12)}`;
+}
+
+/** <data>/jobs/<id>-<lease hash>/{in,out,work}: see jobDirName. */
+export function jobDirs(paths: Paths, id: string, lease: string): JobDirs {
+  const root = join(paths.jobsDir, jobDirName(id, lease));
   return { root, in: join(root, 'in'), out: join(root, 'out'), work: join(root, 'work') };
 }

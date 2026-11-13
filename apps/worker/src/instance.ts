@@ -60,7 +60,7 @@ function held(file: string, pid: number | null): boolean {
 }
 
 /**
- * Take the PC-wide worker lock (two workers would abandon each other's jobs on every claim and share jobs/<id>).
+ * Take the PC-wide worker lock (two workers would abandon each other's jobs on every claim, and one's start-time sweep would remove the other's job directories).
  * A lock whose process has ended, written before the last boot, or holding our own pid is stale and taken over. Two workers taking over the same stale lock at the very
  * same moment could both succeed; that window is accepted.
  */

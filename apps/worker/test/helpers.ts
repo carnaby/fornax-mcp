@@ -1,6 +1,6 @@
 import type { ClaimedJob } from '@fornax/protocol';
 import type { TestServer } from '@fornax/server/testing';
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,6 +25,9 @@ export function useTempDir(): () => string {
 /** Worker directories inside a temp root, through the same overrides a user would set. */
 export const testPaths = (root: string): Paths =>
   resolvePaths({ FORNAX_CONFIG_DIR: join(root, 'config'), FORNAX_DATA_DIR: join(root, 'data') });
+
+/** What is left in <data>/jobs: job directories not cleaned up. */
+export const jobsLeft = (paths: Paths): string[] => (existsSync(paths.jobsDir) ? readdirSync(paths.jobsDir) : []);
 
 /** Write <packDir>/type.yaml from a plain object. */
 export function writeTypeYaml(packDir: string, doc: Record<string, unknown>): void {

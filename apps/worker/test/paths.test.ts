@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
-import { jobDirs, resolvePaths } from '../src/paths.js';
+import { jobDirName, jobDirs, resolvePaths } from '../src/paths.js';
 
 describe('resolvePaths', () => {
   test('Windows: config in APPDATA (roaming), data in LOCALAPPDATA', () => {
@@ -36,9 +36,14 @@ describe('resolvePaths', () => {
     expect([p.configDir, p.jobsDir]).toEqual([join(root, 'c'), join(root, 'd', 'jobs')]);
   });
 
-  test('job directories', () => {
+  test('job directories: one per claim, named by the id and a hash of the lease (never the lease itself)', () => {
     const p = resolvePaths({ FORNAX_CONFIG_DIR: join(process.cwd(), 'c'), FORNAX_DATA_DIR: join(process.cwd(), 'd') });
-    const root = join(p.jobsDir, '01JOB');
-    expect(jobDirs(p, '01JOB')).toEqual({ root, in: join(root, 'in'), out: join(root, 'out'), work: join(root, 'work') });
+    const name = jobDirName('01JOB', 'lease-1');
+    expect(name).toMatch(/^01JOB-[0-9a-f]{12}$/);
+    expect(name).not.toContain('lease');
+    expect(jobDirName('01JOB', 'lease-2')).not.toBe(name);
+    expect(jobDirName('01JOB', 'lease-1')).toBe(name);
+    const root = join(p.jobsDir, name);
+    expect(jobDirs(p, '01JOB', 'lease-1')).toEqual({ root, in: join(root, 'in'), out: join(root, 'out'), work: join(root, 'work') });
   });
 });

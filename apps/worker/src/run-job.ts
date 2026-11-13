@@ -145,7 +145,7 @@ type Stop = 'cancel' | 'lost' | 'shutdown';
 export async function runJob(job: ClaimedJob, pack: Pack, deps: JobDeps): Promise<JobResult> {
   if (!JOB_ID.test(job.id)) return { outcome: 'lost', detail: 'the server sent a job id that cannot be a directory name' };
   const say = deps.log ?? (() => {});
-  const dirs = jobDirs(deps.paths, job.id);
+  const dirs = jobDirs(deps.paths, job.id, job.lease);
   const logFile = join(dirs.root, LOG_NAME);
 
   // Aborted on cancel, a lost lease or shutdown; every transfer, retry pause and the tool itself listen to it.
@@ -243,14 +243,16 @@ export async function runJob(job: ClaimedJob, pack: Pack, deps: JobDeps): Promis
   let ownDir = false;
   try {
     try {
-      await rmDir(dirs.root);
+      // A directory of its own for this claim: a leftover of an earlier one (a process still holding a file) is left
+      // for the sweep at the next worker start.
+      await mkdir(deps.paths.jobsDir, { recursive: true });
+      await mkdir(dirs.root);
+      ownDir = true;
+      await Promise.all([mkdir(dirs.in), mkdir(dirs.out), mkdir(dirs.work)]);
     } catch (e) {
-      // A process left from an earlier run of this job still holds a file (Windows has no Job Objects here):
-      // this PC's problem, not the job's. The type stays offered.
-      return await release('released', `the job directory of an earlier run could not be removed (${describeError(e)})`);
+      // This PC's problem (disk full, no permission), not the job's. The type stays offered.
+      return await release('released', `the job directory could not be created (${describeError(e)})`);
     }
-    ownDir = true;
-    await Promise.all([mkdir(dirs.in, { recursive: true }), mkdir(dirs.out, { recursive: true }), mkdir(dirs.work, { recursive: true })]);
 
     // At once: confirms the claim to the server and learns about a cancel before any work.
     const first = await call(() => deps.api.heartbeat(job.id, job.lease, 0, null, beatSignal()));
@@ -368,7 +370,7 @@ export async function runJob(job: ClaimedJob, pack: Pack, deps: JobDeps): Promis
     try {
       if (ownDir) await rmDir(dirs.root);
     } catch (e) {
-      // A leftover process may still hold a file; the next run of this id, or the next worker start, clears it.
+      // A leftover process may still hold a file; the next worker start clears it.
       say(`the job directory could not be removed (${describeError(e)})`);
     }
   }

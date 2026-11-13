@@ -1,11 +1,13 @@
-import { appendFileSync, existsSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { describe, expect, test } from 'vitest';
 import { ApiError, LeaseLostError, NetworkError } from '../src/api.js';
+import { sweepJobs } from '../src/instance.js';
 import { loadPack } from '../src/pack.js';
+import { jobDirs } from '../src/paths.js';
 import { inputFileName, type JobDeps, runJob } from '../src/run-job.js';
-import { fakeApi, fakeClaim, isAlive, NODE_TOOLS, readPids, testPaths, useTempDir, waitFor, writeEchoPack } from './helpers.js';
+import { fakeApi, fakeClaim, isAlive, jobsLeft, NODE_TOOLS, readPids, testPaths, useTempDir, waitFor, writeEchoPack } from './helpers.js';
 
 const tmp = useTempDir();
 
@@ -35,11 +37,11 @@ describe('runJob', () => {
     const r = await runJob(job, pack, deps(f.api));
     expect(r).toEqual({ outcome: 'succeeded', detail: '2 output(s)' });
     expect(f.calls[0]).toEqual({ method: 'heartbeat', args: [job.id, job.lease, 0, null, expect.any(AbortSignal)] });
-    expect(f.called('downloadInput')[0]!.args[3]).toBe(join(paths.jobsDir, job.id, 'in', 'source.txt'));
+    expect(f.called('downloadInput')[0]!.args[3]).toBe(join(jobDirs(paths, job.id, job.lease).in, 'source.txt'));
     expect(Object.fromEntries(f.uploads)).toEqual({ 'result.txt': 'HELLO', 'previews/result.jpg': 'JPEG', 'log.txt': expect.stringContaining('working') });
     expect(f.called('uploadOutput').map((c) => c.args[3])).toEqual(['output', 'output', 'log']);
     expect(f.called('complete')[0]!.args[2]).toEqual({ 'result.txt': { meta: { chars: 5 }, preview: 'previews/result.jpg' } });
-    expect(existsSync(join(paths.jobsDir, job.id))).toBe(false);
+    expect(jobsLeft(paths)).toEqual([]);
   });
 
   test('progress from the tool reaches the heartbeat', async () => {
@@ -102,7 +104,7 @@ describe('runJob', () => {
     const pids = readPids(pidFile)!;
     await waitFor(() => !isAlive(pids.parent) && !isAlive(pids.child), 5000, 'the tree to die');
     expect(f.called('fail')).toHaveLength(0);
-    expect(existsSync(join(paths.jobsDir, job.id))).toBe(false);
+    expect(jobsLeft(paths)).toEqual([]);
   });
 
   test('a lost lease (409) stops the tool and drops the job', async () => {
@@ -119,7 +121,7 @@ describe('runJob', () => {
     expect((await runJob(job, pack, deps(f.api))).outcome).toBe('lost');
     expect(f.called('fail')).toHaveLength(0);
     expect(f.called('complete')).toHaveLength(0);
-    expect(existsSync(join(paths.jobsDir, job.id))).toBe(false);
+    expect(jobsLeft(paths)).toEqual([]);
   });
 
   test('max_runtime: the tool is stopped and the job fails for a retry', async () => {
@@ -179,7 +181,7 @@ describe('runJob', () => {
     const f = fakeApi({
       uploadOutput: async (_id, _lease, name) => {
         // A detached grandchild writes on while the first output (previews/result.jpg) is uploaded.
-        if (name === 'previews/result.jpg') appendFileSync(join(paths.jobsDir, job.id, 'out', 'result.txt'), ' MORE');
+        if (name === 'previews/result.jpg') appendFileSync(join(jobDirs(paths, job.id, job.lease).out, 'result.txt'), ' MORE');
       },
     });
     const r = await runJob(job, pack, deps(f.api));
@@ -200,7 +202,7 @@ describe('runJob', () => {
     const f = fakeApi({
       uploadOutput: async (_id, _lease, name) => {
         if (name !== 'previews/result.jpg') return;
-        const result = join(paths.jobsDir, job.id, 'out', 'result.txt');
+        const result = join(jobDirs(paths, job.id, job.lease).out, 'result.txt');
         rmSync(result);
         try {
           symlinkSync(secret, result, 'file');
@@ -260,7 +262,7 @@ describe('runJob', () => {
     expect(f.called('release')).toHaveLength(1);
     expect(f.called('complete')).toHaveLength(0);
     expect(f.called('fail')).toHaveLength(0);
-    expect(existsSync(join(paths.jobsDir, job.id))).toBe(false);
+    expect(jobsLeft(paths)).toEqual([]);
   });
 
   test('the lease is kept alive while outputs are uploaded: heartbeats go on with progress 1', async () => {
@@ -308,7 +310,7 @@ describe('runJob', () => {
     expect(f.called('complete')).toHaveLength(0);
     expect(f.called('fail')).toHaveLength(0);
     expect(f.called('release')).toHaveLength(0);
-    expect(existsSync(join(paths.jobsDir, job.id))).toBe(false);
+    expect(jobsLeft(paths)).toEqual([]);
   });
 
   test('a lost lease seen during an upload aborts it and drops the job', async () => {
@@ -347,17 +349,26 @@ describe('runJob', () => {
     expect(beats).toBeGreaterThanOrEqual(4);
   });
 
-  test('a job directory that cannot be cleared at the start gives the job back; it never fails it', async () => {
-    const { pack, deps } = setup();
+  test('a leftover directory of an earlier attempt that cannot be removed does not block the next attempt', async () => {
+    const { paths, pack, deps } = setup();
     const f = fakeApi();
-    const busy = async () => {
-      throw Object.assign(new Error('EBUSY: resource busy or locked, rmdir somewhere'), { code: 'EBUSY' });
+    const lines: string[] = [];
+    // A process left from an earlier attempt holds a file (Windows): no existing job directory can be removed.
+    const held = async (dir: string) => {
+      if (existsSync(dir)) throw Object.assign(new Error('EBUSY: resource busy or locked, rmdir somewhere'), { code: 'EBUSY' });
     };
-    const r = await runJob(fakeClaim({ params: { mode: 'ok' } }), pack, deps(f.api, { removeDir: busy }));
-    expect(r).toEqual({ outcome: 'released', detail: 'the job directory of an earlier run could not be removed (EBUSY)' });
-    expect(f.called('release')).toHaveLength(1);
-    expect(f.called('fail')).toHaveLength(0);
-    expect(f.called('complete')).toHaveLength(0);
+    const first = await runJob(fakeClaim({ lease: 'lease-1', attempt: 1, params: { mode: 'exit', code: 1 } }), pack, deps(f.api, { removeDir: held, log: (l) => lines.push(l) }));
+    expect(first.outcome).toBe('retry');
+    expect(lines).toContain('the job directory could not be removed (EBUSY)');
+    expect(readdirSync(paths.jobsDir)).toHaveLength(1);
+    // The next claim of the same job (a new lease), on the same worker: it runs and completes.
+    const second = await runJob(fakeClaim({ lease: 'lease-2', attempt: 2, params: { mode: 'ok' } }), pack, deps(f.api, { removeDir: held }));
+    expect(second).toEqual({ outcome: 'succeeded', detail: '2 output(s)' });
+    expect(f.called('release')).toHaveLength(0);
+    expect(f.called('complete')).toHaveLength(1);
+    // The next worker start sweeps the leftovers.
+    expect(await sweepJobs(paths)).toEqual({ failed: 0, code: null });
+    expect(readdirSync(paths.jobsDir)).toEqual([]);
   });
 
   test('an output the server refuses (413) fails the job for good after one try, naming it', async () => {
