@@ -1,9 +1,11 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { generateToken, type TokenRole } from '@fornax/protocol';
 import { afterEach, beforeEach } from 'vitest';
 import type { Config } from '../src/config.js';
 import { type Db, openDb } from '../src/db/client.js';
+import { approveToken, createInvite, resolveToken } from '../src/domain/tokens.js';
 
 export const TEST_SECRET = 's'.repeat(32);
 
@@ -48,4 +50,13 @@ export function useTestDb() {
       return state!.config;
     },
   };
+}
+
+/** An active token, through the real invite → first use → approve path. */
+export function issueToken(db: Db, name: string, role: TokenRole = 'client', now = new Date()): string {
+  createInvite(db, { name, role }, now);
+  const raw = generateToken(name);
+  resolveToken(db, raw, now);
+  approveToken(db, name, now);
+  return raw;
 }
