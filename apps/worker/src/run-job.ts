@@ -50,9 +50,8 @@ export type JobDeps = {
   retryDelaysMs?: number[];
   leaseMs?: number;
   leaseMarginMs?: number;
-  /** Test seams: how the job directory is removed, and the wait after a tool that looks stopped by Ctrl+C. */
+  /** Test seam: how the job directory is removed. */
   removeDir?: (dir: string) => Promise<void>;
-  interruptWaitMs?: number;
 };
 
 export type JobOutcome = 'succeeded' | 'retry' | 'failed' | 'canceled' | 'released' | 'broken' | 'lost';
@@ -307,7 +306,7 @@ export async function runJob(job: ClaimedJob, pack: Pack, deps: JobDeps): Promis
     });
     // A Ctrl+C reaches the tool (same console) and the worker at once, but the tool's exit may be seen first: give the
     // worker's own signal a moment, or the job would fail instead of being given back.
-    if (!state.stop && looksInterrupted(r)) await sleep(deps.interruptWaitMs ?? INTERRUPT_WAIT_MS);
+    if (!state.stop && looksInterrupted(r)) await sleep(INTERRUPT_WAIT_MS);
     // How the run was stopped comes first: on Windows a killed tool exits with taskkill's code 1, never a signal.
     if (state.stop) return await stopped(state.stop);
     if (r.timedOut) {

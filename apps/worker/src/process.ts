@@ -258,7 +258,6 @@ export function runProcess(opts: RunOptions): Promise<RunResult> {
     const finish = async (spawnError: string | null) => {
       if (settled) return;
       settled = true;
-      if (entry) live.delete(entry);
       clearTimeout(timer);
       clearTimeout(pipeTimer);
       opts.signal?.removeEventListener('abort', onAbort);
@@ -266,6 +265,8 @@ export function runProcess(opts: RunOptions): Promise<RunResult> {
       if (rest) takeLine(rest);
       write(errText.end());
       await killing;
+      // Only now: until the tree is gone, a hard quit (second Ctrl+C) must still reach it.
+      if (entry) live.delete(entry);
       resolve({ ...exit, timedOut, canceled, spawnError, log: log.toString() });
     };
 
