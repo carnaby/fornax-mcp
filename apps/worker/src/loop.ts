@@ -24,7 +24,7 @@ export type LoopOptions = {
   claimWaitS?: number;
   backoffMs?: { baseMs: number; maxMs: number };
   checkTimeoutMs?: number;
-  jobOptions?: Pick<JobDeps, 'heartbeatMs' | 'killGraceMs' | 'retryDelaysMs'>;
+  jobOptions?: Pick<JobDeps, 'heartbeatMs' | 'killGraceMs' | 'retryDelaysMs' | 'leaseMs' | 'leaseMarginMs'>;
 };
 
 /** `fornax worker` (spec 7.4): announce the ready types, claim, run, repeat. Returns the process exit code. */

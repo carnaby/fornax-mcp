@@ -458,6 +458,28 @@ describe('runJob', () => {
     expect(Date.now() - started).toBeLessThan(5000);
   });
 
+  test('no retry pause may run past the lease margin: the bound counts the pause before it starts', async () => {
+    const { pack, deps } = setup();
+    let lastBeat = Date.now();
+    const tries: number[] = [];
+    const f = fakeApi({
+      heartbeat: async () => {
+        lastBeat = Date.now();
+        return { cancel: false };
+      },
+      complete: async () => {
+        tries.push(Date.now() - lastBeat);
+        throw new NetworkError('cannot reach the server: ECONNREFUSED');
+      },
+    });
+    // Usable lease: 1500 ms after the last heartbeat. Pauses of 600 ms: tries at about 0, 600 and 1200 ms; one more
+    // pause would end at 1800 ms, past the bound, so it must not start.
+    const r = await runJob(fakeClaim({ params: { mode: 'ok' } }), pack, deps(f.api, { retryDelaysMs: [600], leaseMs: 2000, leaseMarginMs: 500 }));
+    expect(r.outcome).toBe('retry');
+    expect(tries.length).toBeGreaterThanOrEqual(2);
+    for (const t of tries) expect(t).toBeLessThan(1500);
+  });
+
   test('a tool ended by the same Ctrl+C as the worker: the job is released, not failed', async () => {
     const { pack, deps } = setup();
     const pidFile = join(tmp(), 'pid.json');

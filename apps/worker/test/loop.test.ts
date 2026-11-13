@@ -124,6 +124,32 @@ describe('runWorker', () => {
     expect(await alice.job(job.id)).toMatchObject({ state: 'failed', attempts: 1, error: expect.stringMatching(/^out\/result\.txt was refused by the server/) });
   });
 
+  test('job options shorten the lease: retries of a server call end within the shortened lease', async () => {
+    const { paths, api, alice, out, say } = await setup();
+    // complete never gets through; everything else reaches the real server.
+    const completeDown = new Proxy(api, {
+      get: (target, key) => {
+        if (key === 'complete') return async () => {
+          throw new NetworkError('cannot reach the server: ECONNREFUSED');
+        };
+        const v = Reflect.get(target, key) as unknown;
+        return typeof v === 'function' ? v.bind(target) : v;
+      },
+    });
+    const worker = runWorker({
+      api: completeDown, paths, tools: NODE_TOOLS, out: say, signal: new AbortController().signal, once: true, claimWaitS: fast.claimWaitS,
+      jobOptions: { ...fast.jobOptions, leaseMs: 1500, leaseMarginMs: 500 },
+    });
+    await waitFor(async () => (await alice.offered()).includes('echo'), 10_000, 'echo to be offered');
+    const job = await alice.submit('echo', { mode: 'ok' });
+    const started = Date.now();
+    // With the default lease (10 minutes) the retries would go on far past this test's timeout.
+    expect(await worker).toBe(0);
+    expect(Date.now() - started).toBeLessThan(10_000);
+    expect(out).toContain(`job ${job.id}: retry`);
+    expect(await alice.job(job.id)).toMatchObject({ state: 'queued', attempts: 1 });
+  });
+
   test('a failing check shows a single short line', async () => {
     const { paths, api, out, say } = await setup();
     const script = 'console.log("one\\ntwo " + "z".repeat(400)); process.exitCode = 2';

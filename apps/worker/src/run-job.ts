@@ -65,9 +65,15 @@ export function inputFileName(inputName: string, clientFileName: string): string
 
 /**
  * Try again after each of `delays` while the error is transient; past them the last pause repeats while
- * `more(firstFailure)` holds (the lease is still alive), so a server restart does not cost the job.
+ * `more(firstFailure, pause)` holds (the lease is still alive once the pause is over), so a server restart does not
+ * cost the job.
  */
-async function withRetry<T>(fn: () => Promise<T>, delays: number[], signal?: AbortSignal, more: (since: number) => boolean = () => false): Promise<T> {
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  delays: number[],
+  signal?: AbortSignal,
+  more: (since: number, pause: number) => boolean = () => false,
+): Promise<T> {
   let since: number | null = null;
   for (let i = 0; ; i++) {
     try {
@@ -75,8 +81,9 @@ async function withRetry<T>(fn: () => Promise<T>, delays: number[], signal?: Abo
     } catch (e) {
       if (!isTransient(e) || signal?.aborted) throw e;
       since ??= Date.now();
-      if (i >= delays.length && !more(since)) throw e;
-      await sleep(delays[Math.min(i, delays.length - 1)] ?? 1000, undefined, signal ? { signal } : undefined);
+      const pause = delays[Math.min(i, delays.length - 1)] ?? 1000;
+      if (i >= delays.length && !more(since, pause)) throw e;
+      await sleep(pause, undefined, signal ? { signal } : undefined);
     }
   }
 }
@@ -165,8 +172,12 @@ export async function runJob(job: ClaimedJob, pack: Pack, deps: JobDeps): Promis
   // The claim just gave a fresh lease; every successful heartbeat renews it.
   let lastBeat = Date.now();
   const leaseLeft = (deps.leaseMs ?? LEASE_MS) - (deps.leaseMarginMs ?? LEASE_MARGIN_MS);
-  // Bounded twice: by the lease, and (when heartbeats get through but this call does not) by the same span from its first failure.
-  const leaseHolds = (since: number) => Date.now() - lastBeat < leaseLeft && Date.now() - since < leaseLeft;
+  // Bounded twice: by the lease, and (when heartbeats get through but this call does not) by the same span from its first
+  // failure. The pause counts: the try after it must still fall inside the bound.
+  const leaseHolds = (since: number, pause: number) => {
+    const next = Date.now() + pause;
+    return next - lastBeat < leaseLeft && next - since < leaseLeft;
+  };
   const call = <T>(fn: () => Promise<T>) => withRetry(fn, delays, signal, leaseHolds);
   const rmDir = deps.removeDir ?? removeDir;
   const beatSignal = () => AbortSignal.any([signal, AbortSignal.timeout(deps.heartbeatTimeoutMs ?? HEARTBEAT_TIMEOUT_MS)]);
