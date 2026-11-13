@@ -5,7 +5,7 @@ import { describe, expect, test, vi } from 'vitest';
 import { WorkerApi, workerHostname } from '../src/api.js';
 
 // A computer name a header cannot carry as it is (not Latin-1).
-vi.mock('node:os', async (importOriginal) => ({ ...(await importOriginal<typeof import('node:os')>()), hostname: () => 'Počítač Žofie' }));
+vi.mock('node:os', async (importOriginal) => ({ ...(await importOriginal<typeof import('node:os')>()), hostname: () => 'Počítač Účtárna' }));
 
 describe('the X-Fornax-Worker header', () => {
   test('is cleaned exactly as the server does: a-z, 0-9, ".", "_" and "-", lower case, else "worker"', () => {
