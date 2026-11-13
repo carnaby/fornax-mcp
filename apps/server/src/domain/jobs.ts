@@ -9,6 +9,9 @@ import { conflict, notFound, tooMany, unprocessable } from './errors.js';
 import { finishJob } from './finish.js';
 import { getOfferedType, isOffered } from './job-types.js';
 import { jobSignal } from './signal.js';
+import { callbackAllowed } from './webhooks.js';
+
+export { callbackAllowed };
 
 export type JobRow = typeof jobs.$inferSelect;
 export const PRIORITIES = ['low', 'normal', 'high'] as const;
@@ -24,17 +27,6 @@ export type SubmitInput = {
   group?: string | null;
   callback_url?: string | null;
 };
-
-/** The URL is allowed when its normalized form starts with one of the configured prefixes. */
-export function callbackAllowed(url: string, prefixes: string[]): boolean {
-  let href: string;
-  try {
-    href = new URL(url).href;
-  } catch {
-    return false;
-  }
-  return prefixes.some((p) => href.startsWith(new URL(p).href));
-}
 
 export function submitJob(db: Db, config: Config, owner: string, input: SubmitInput, now: Date): JobRow {
   const contract = getOfferedType(db, input.type);

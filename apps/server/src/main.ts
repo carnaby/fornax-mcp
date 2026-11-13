@@ -2,6 +2,7 @@ import { mkdirSync } from 'node:fs';
 import { loadConfig } from './config.js';
 import { openDb } from './db/client.js';
 import { runMaintenance } from './domain/maintenance.js';
+import { startWebhookLoop } from './domain/webhooks.js';
 import { FileStore } from './files/store.js';
 import { buildApp } from './http/app.js';
 
@@ -28,6 +29,7 @@ const tick = async () => {
   }
 };
 const timer = setInterval(tick, 60_000);
+const webhooks = startWebhookLoop({ config, db, clock: () => new Date() }, app.log);
 void tick();
 
 let closing = false;
@@ -35,6 +37,7 @@ const shutdown = async () => {
   if (closing) return;
   closing = true;
   clearInterval(timer);
+  await webhooks.stop();
   try {
     await app.close();
     close();

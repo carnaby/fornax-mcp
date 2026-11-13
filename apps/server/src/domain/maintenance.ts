@@ -1,6 +1,6 @@
 import { and, count, eq, inArray, isNull, lt, notInArray, or } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
-import { files, invites, jobs, jobTypes, tokens, uploads } from '../db/schema.js';
+import { files, invites, jobs, jobTypes, tokens, uploads, webhookDeliveries } from '../db/schema.js';
 import type { RouteDeps } from '../http/deps.js';
 import { deleteFiles } from './files.js';
 import { finishJob } from './finish.js';
@@ -53,6 +53,7 @@ export async function runMaintenance(deps: RouteDeps) {
     .map((x) => x.id);
   if (old.length) {
     await deleteFiles(deps, db.select().from(files).where(inArray(files.jobId, old)).all());
+    db.delete(webhookDeliveries).where(inArray(webhookDeliveries.jobId, old)).run();
     db.delete(jobs).where(inArray(jobs.id, old)).run();
   }
 

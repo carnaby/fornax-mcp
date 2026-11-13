@@ -15,6 +15,13 @@
       "when": 1794594090965,
       "tag": "0001_natural_black_knight",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1794608532849,
+      "tag": "0002_conscious_senator_kelly",
+      "breakpoints": true
     }
   ]
 }

@@ -110,3 +110,27 @@ export const workerState = sqliteTable('worker', {
   version: text('version'),
   lastSeenAt: ts('last_seen_at').notNull(),
 });
+
+export type DeliveryStatus = 'pending' | 'sent' | 'failed';
+
+/** One webhook per finished job with a callback_url; the delivery loop sends it, at most three times. */
+export const webhookDeliveries = sqliteTable(
+  'webhook_deliveries',
+  {
+    id: text('id').primaryKey(),
+    jobId: text('job_id').notNull(),
+    ownerTokenId: text('owner_token_id').notNull(),
+    url: text('url').notNull(),
+    /** The exact request body: {"job_id","state"}. */
+    payload: text('payload').notNull(),
+    /** Attempts made so far. */
+    attempt: integer('attempt').notNull().default(0),
+    nextAt: ts('next_at').notNull(),
+    status: text('status').$type<DeliveryStatus>().notNull(),
+    /** Short: "HTTP 500", "timeout", "connection failed" or why it was not sent; never the response body. */
+    lastError: text('last_error'),
+    createdAt: ts('created_at').notNull(),
+    updatedAt: ts('updated_at').notNull(),
+  },
+  (t) => [index('webhook_due').on(t.status, t.nextAt), index('webhook_job').on(t.jobId)],
+);

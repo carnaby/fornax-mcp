@@ -6,6 +6,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Config } from './config.js';
 import { type Db, openDb } from './db/client.js';
 import { approveToken, createInvite, resolveToken } from './domain/tokens.js';
+import { startWebhookLoop } from './domain/webhooks.js';
 import { buildApp } from './http/app.js';
 
 /** A real server on a free local port over a fresh temp data directory: for other packages' integration tests. */
@@ -46,6 +47,8 @@ export async function startTestServer(overrides: Partial<Config> = {}): Promise<
   const url = `http://127.0.0.1:${port}`;
   // The app holds this same object: links it makes point at the real port.
   config.publicUrl = url;
+  // Test servers deliver webhooks quickly; with no callback_url nothing is ever sent.
+  const webhooks = startWebhookLoop({ config, db, clock: () => new Date() }, app.log, 100);
   return {
     url,
     app,
@@ -65,6 +68,7 @@ export async function startTestServer(overrides: Partial<Config> = {}): Promise<
       approveToken(db, name, new Date());
     },
     async close() {
+      await webhooks.stop();
       // Keep-alive sockets of the test clients must not hold the close up.
       const closing = app.close();
       app.server.closeAllConnections();
