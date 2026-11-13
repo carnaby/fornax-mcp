@@ -26,6 +26,8 @@ export type RunOptions = {
   onOutput?: (text: string) => void;
   /** Test seam: the program used for taskkill on Windows. */
   taskkillProgram?: string;
+  /** Test seam: replaces process.kill for the Linux process-group signals. */
+  signalGroup?: (pid: number, signal: NodeJS.Signals | 0) => void;
 };
 
 export type RunResult = {
@@ -105,31 +107,29 @@ export function childEnv(base: NodeJS.ProcessEnv, extra: Record<string, string>)
 }
 
 /** Kill a process and everything it started. Windows: taskkill /T /F. Linux: SIGTERM to its group, SIGKILL after the grace period. */
-export async function killTree(pid: number, graceMs: number = KILL_GRACE_MS, taskkillProgram?: string): Promise<void> {
+export async function killTree(
+  pid: number,
+  graceMs: number = KILL_GRACE_MS,
+  seams: Pick<RunOptions, 'taskkillProgram' | 'signalGroup'> = {},
+): Promise<void> {
+  const { taskkillProgram, signalGroup } = seams;
   if (process.platform === 'win32') {
     const taskkill = taskkillProgram ?? join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'taskkill.exe');
-    const ok = await new Promise<boolean>((resolve) => {
+    // Never rejects; a failure is left to the caller's last-resort kill of the tool itself.
+    await new Promise<void>((resolve) => {
       try {
         const k = spawn(taskkill, ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
-        k.on('error', () => resolve(false));
-        k.on('exit', (code) => resolve(code === 0));
+        k.on('error', () => resolve());
+        k.on('exit', () => resolve());
       } catch {
-        resolve(false);
+        resolve();
       }
     });
-    if (!ok) {
-      // taskkill failed (or the process is already gone): at least end the process itself.
-      try {
-        process.kill(pid);
-      } catch {
-        // already gone
-      }
-    }
     return;
   }
   const group = (sig: NodeJS.Signals | 0): boolean => {
     try {
-      process.kill(-pid, sig);
+      (signalGroup ?? process.kill)(-pid, sig);
       return true;
     } catch {
       return false;
@@ -187,7 +187,18 @@ export function runProcess(opts: RunOptions): Promise<RunResult> {
       // Windows: after exit the pid may be reused, taskkill must not touch it.
       if (exited && process.platform === 'win32') return;
       stopping = true;
-      killing = killTree(child.pid, opts.killGraceMs ?? KILL_GRACE_MS, opts.taskkillProgram).catch(() => {});
+      killing = killTree(child.pid, opts.killGraceMs ?? KILL_GRACE_MS, opts)
+        .catch(() => {})
+        .then(() => {
+          // Last resort when the tree kill did not end the tool (taskkill failed, EPERM on the group).
+          // Guarded by `exited`: the pid of a tool that already ended must never be signalled.
+          if (exited) return;
+          try {
+            child.kill('SIGKILL');
+          } catch {
+            // already gone
+          }
+        });
     };
     const timer =
       opts.timeoutMs !== undefined
@@ -234,14 +245,6 @@ export function runProcess(opts: RunOptions): Promise<RunResult> {
       if (rest) takeLine(rest);
       write(errText.end());
       await killing;
-      if (child.exitCode === null && child.signalCode === null) {
-        // The tree kill did not end the tool: last resort.
-        try {
-          child.kill('SIGKILL');
-        } catch {
-          // already gone
-        }
-      }
       resolve({ ...exit, timedOut, canceled, spawnError, log: log.toString() });
     };
 
