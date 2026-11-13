@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { paramSchema, validateParams } from '../src/params-schema.js';
+import { hasControlChars, paramSchema, validateParams } from '../src/params-schema.js';
 
 const schema = paramSchema.parse({
   type: 'object',
@@ -92,5 +92,32 @@ describe('validateParams', () => {
   test('params must be an object', () => {
     expect(validateParams(schema, [1]).ok).toBe(false);
     expect(validateParams(schema, null).ok).toBe(false);
+  });
+});
+
+describe('stricter strings and definitions', () => {
+  const one = (prop: object) => paramSchema.safeParse({ type: 'object', additionalProperties: false, properties: { x: prop } });
+
+  test('C1 control characters and line separators are refused in values', () => {
+    for (const bad of ['a\u0085b', 'a\u009bb', 'a b', 'a b']) {
+      expect(validateParams(schema, { frame_start: 0, title: bad }).ok, JSON.stringify(bad)).toBe(false);
+    }
+    expect(hasControlChars('a\u0085')).toBe(true);
+    expect(hasControlChars('plain é')).toBe(false);
+  });
+
+  test('inconsistent bounds are refused when the pack loads', () => {
+    expect(one({ type: 'integer', minimum: 5, maximum: 1 }).success).toBe(false);
+    expect(one({ type: 'number', minimum: 1.5, maximum: 1 }).success).toBe(false);
+    expect(one({ type: 'string', minLength: 5, maxLength: 2 }).success).toBe(false);
+    expect(one({ type: 'array', items: { type: 'integer', minimum: 3, maximum: 2 }, maxItems: 2 }).success).toBe(false);
+    expect(one({ type: 'integer', minimum: 1, maximum: 1 }).success).toBe(true);
+  });
+
+  test('enum members may not start with "-" or hold control characters', () => {
+    expect(one({ enum: ['ok', '-rf'] }).success).toBe(false);
+    expect(one({ enum: ['a\nb'] }).success).toBe(false);
+    expect(one({ type: 'array', items: { enum: ['--x'] }, maxItems: 1 }).success).toBe(false);
+    expect(one({ enum: ['a-b', -1] }).success).toBe(true);
   });
 });

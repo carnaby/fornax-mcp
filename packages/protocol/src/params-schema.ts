@@ -43,12 +43,40 @@ const arrayProp = z.strictObject({
 export type ScalarProperty = z.infer<typeof scalarProp>;
 export type ParamProperty = ScalarProperty | z.infer<typeof arrayProp>;
 
-const CONTROL = /[\u0000-\u001f\u007f]/;
+/** C0 and C1 control characters, plus the line and paragraph separators some tools treat as line breaks. */
+const CONTROL = /[\p{Cc}\u2028\u2029]/u;
+export const hasControlChars = (s: string): boolean => CONTROL.test(s);
+
+/** Mistakes in one property's definition that its shape alone does not catch. */
+function definitionProblems(p: ParamProperty): string[] {
+  const out: string[] = [];
+  if ('pattern' in p && p.pattern !== undefined) {
+    try {
+      new RegExp(p.pattern, 'u');
+    } catch {
+      out.push('pattern does not compile');
+    }
+  }
+  if ('type' in p && (p.type === 'integer' || p.type === 'number') && p.minimum !== undefined && p.maximum !== undefined && p.minimum > p.maximum) {
+    out.push('minimum is greater than maximum');
+  }
+  if ('type' in p && p.type === 'string' && p.minLength !== undefined && p.maxLength !== undefined && p.minLength > p.maxLength) {
+    out.push('minLength is greater than maxLength');
+  }
+  if (!('type' in p)) {
+    for (const m of p.enum) {
+      if (typeof m === 'string' && (m.startsWith('-') || hasControlChars(m))) {
+        out.push(`enum member ${JSON.stringify(m)} must not start with "-" or contain control characters`);
+      }
+    }
+  }
+  return out;
+}
 
 function checkString(p: z.infer<typeof stringProp>, v: string): string | null {
   // A value starting with "-" could be read as an option by the tool, even as a single argv element.
   if (v.startsWith('-')) return 'must not start with "-"';
-  if (CONTROL.test(v)) return 'must not contain control characters';
+  if (hasControlChars(v)) return 'must not contain control characters';
   const len = [...v].length;
   if (p.minLength !== undefined && len < p.minLength) return `must be at least ${p.minLength} characters`;
   if (p.maxLength !== undefined && len > p.maxLength) return `must be at most ${p.maxLength} characters`;
@@ -64,7 +92,7 @@ function checkRange(p: { minimum?: number; maximum?: number }, v: number): strin
 
 function checkScalar(p: ScalarProperty, v: unknown): string | null {
   if (!('type' in p)) {
-    if (typeof v === 'string' && (v.startsWith('-') || CONTROL.test(v))) return 'is not allowed';
+    if (typeof v === 'string' && (v.startsWith('-') || hasControlChars(v))) return 'is not allowed';
     return p.enum.includes(v as string | number) ? null : `must be one of ${p.enum.join(', ')}`;
   }
   switch (p.type) {
@@ -107,13 +135,7 @@ export const paramSchema = z
     for (const [name, prop] of Object.entries(s.properties)) {
       const parts: ParamProperty[] = [prop, ...('items' in prop ? [prop.items] : [])];
       for (const p of parts) {
-        if ('pattern' in p && p.pattern !== undefined) {
-          try {
-            new RegExp(p.pattern, 'u');
-          } catch {
-            ctx.addIssue({ code: 'custom', message: `${name}: pattern does not compile` });
-          }
-        }
+        for (const problem of definitionProblems(p)) ctx.addIssue({ code: 'custom', message: `${name}: ${problem}` });
       }
       if (prop.default !== undefined) {
         const err = checkValue(prop, prop.default);

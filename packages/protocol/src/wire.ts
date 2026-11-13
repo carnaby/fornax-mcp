@@ -33,9 +33,16 @@ export const failBody = z.strictObject({ lease: z.string().min(1), error: z.stri
 export const releaseBody = z.strictObject({ lease: z.string().min(1) });
 
 const metaValue = z.union([z.string().max(1000), z.number(), z.boolean(), z.null()]);
+
+/** One output's entry in `{out}/outputs.json` and in the complete call; `preview` names another output. */
+export const outputInfo = z.strictObject({ meta: z.record(z.string(), metaValue).optional(), preview: z.string().optional() });
+/** `{out}/outputs.json` (spec 6.4): output name → metadata and preview. */
+export const outputsJson = z.record(z.string(), outputInfo);
+export type OutputsJson = z.infer<typeof outputsJson>;
+
 export const completeBody = z.strictObject({
   lease: z.string().min(1),
   /** Metadata per uploaded output name; `preview` names another uploaded output that becomes its preview. */
-  outputs: z.record(z.string(), z.strictObject({ meta: z.record(z.string(), metaValue).optional(), preview: z.string().optional() })).default({}),
+  outputs: outputsJson.default({}),
 });
 export type CompleteBody = z.infer<typeof completeBody>;
