@@ -99,7 +99,7 @@ describe('stricter strings and definitions', () => {
   const one = (prop: object) => paramSchema.safeParse({ type: 'object', additionalProperties: false, properties: { x: prop } });
 
   test('C1 control characters and line separators are refused in values', () => {
-    for (const bad of ['a\u0085b', 'a\u009bb', 'a b', 'a b']) {
+    for (const bad of ['a\u0085b', 'a\u009bb', 'a\u2028b', 'a\u2029b']) {
       expect(validateParams(schema, { frame_start: 0, title: bad }).ok, JSON.stringify(bad)).toBe(false);
     }
     expect(hasControlChars('a\u0085')).toBe(true);

@@ -119,7 +119,8 @@ describe('check isolation', () => {
       ].join('\n'),
     );
     const pack = loadPack(dir);
-    expect(await checkPack(pack, NODE_TOOLS, { timeoutMs: 1500, killGraceMs: 300 })).toBe('check did not finish within 1.5 s');
+    // Long enough for a busy CI machine to start Node twice and write the pid file before the timeout fires.
+    expect(await checkPack(pack, NODE_TOOLS, { timeoutMs: 4000, killGraceMs: 300 })).toBe('check did not finish within 4 s');
     const pids = await waitFor(() => readPids(pidFile), 5000, 'the check to record its pids');
     await waitFor(() => !isAlive(pids.parent) && !isAlive(pids.child), 5000, 'the check tree to die');
   });
