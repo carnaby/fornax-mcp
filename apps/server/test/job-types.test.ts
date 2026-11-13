@@ -9,7 +9,7 @@ const w = (token: string) => ({ authorization: `Bearer ${token}`, 'x-fornax-work
 describe('announce', () => {
   test('announced types are offered to clients', async () => {
     const worker = issueToken(t.db, 'pc', 'worker');
-    const client = issueToken(t.db, 'majo');
+    const client = issueToken(t.db, 'alice');
     const res = await t.app.inject({ method: 'PUT', url: '/api/worker/types', headers: w(worker), payload: { types: [renderContract, transcribeContract] } });
     expect(res.json()).toEqual({ offered: ['render', 'transcribe'] });
     const types = (await t.app.inject({ method: 'GET', url: '/api/types', headers: { authorization: `Bearer ${client}` } })).json();
@@ -46,7 +46,7 @@ describe('announce', () => {
 
   test('worker presence expires after 90 s', async () => {
     const worker = issueToken(t.db, 'pc', 'worker');
-    const client = issueToken(t.db, 'majo');
+    const client = issueToken(t.db, 'alice');
     await t.app.inject({ method: 'PUT', url: '/api/worker/types', headers: w(worker), payload: { types: [] } });
     t.clock.advance(90_001);
     const types = (await t.app.inject({ method: 'GET', url: '/api/types', headers: { authorization: `Bearer ${client}` } })).json();

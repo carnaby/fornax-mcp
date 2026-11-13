@@ -14,7 +14,7 @@ function admin(...argv: string[]) {
 }
 
 test('client invite prints the pairing link', () => {
-  const r = admin('tokens', 'invite', 'majo');
+  const r = admin('tokens', 'invite', 'alice');
   expect(r.code).toBe(0);
   expect(r.text).toMatch(/https:\/\/fornax\.example\.com\/pair\/[A-Za-z0-9_-]{22}/);
 });
@@ -25,12 +25,12 @@ test('worker invite prints the pair command', () => {
 });
 
 test('pending, approve, list, revoke', () => {
-  admin('tokens', 'invite', 'majo');
-  resolveToken(t.db, generateToken('majo'), now);
-  expect(admin('tokens', 'pending').text).toMatch(/majo · client · [A-Z2-7]{4}-[A-Z2-7]{4}/);
-  expect(admin('tokens', 'approve', 'majo').code).toBe(0);
-  expect(admin('tokens', 'list').text).toMatch(/majo · client · active/);
-  expect(admin('tokens', 'revoke', 'majo').code).toBe(0);
+  admin('tokens', 'invite', 'alice');
+  resolveToken(t.db, generateToken('alice'), now);
+  expect(admin('tokens', 'pending').text).toMatch(/alice · client · [A-Z2-7]{4}-[A-Z2-7]{4}/);
+  expect(admin('tokens', 'approve', 'alice').code).toBe(0);
+  expect(admin('tokens', 'list').text).toMatch(/alice · client · active/);
+  expect(admin('tokens', 'revoke', 'alice').code).toBe(0);
 });
 
 test('errors and usage', () => {

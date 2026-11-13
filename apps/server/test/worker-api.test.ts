@@ -9,15 +9,15 @@ const w = (token: string, extra: Record<string, string> = {}) => ({ authorizatio
 async function setup() {
   announce(t.db, [renderContract], t.clock.now);
   const worker = issueToken(t.db, 'pc', 'worker');
-  const majo = issueToken(t.db, 'majo');
-  const scene = await uploadFile(t.app, majo, 'scene.blend', 'BLENDER');
-  const sub = await t.app.inject({ method: 'POST', url: '/api/jobs', headers: { authorization: `Bearer ${majo}` }, payload: { type: 'render', params: { frame_start: 3 }, inputs: { scene } } });
-  return { worker, majo, scene, jobId: sub.json().id as string };
+  const alice = issueToken(t.db, 'alice');
+  const scene = await uploadFile(t.app, alice, 'scene.blend', 'BLENDER');
+  const sub = await t.app.inject({ method: 'POST', url: '/api/jobs', headers: { authorization: `Bearer ${alice}` }, payload: { type: 'render', params: { frame_start: 3 }, inputs: { scene } } });
+  return { worker, alice, scene, jobId: sub.json().id as string };
 }
 
 describe('worker API', () => {
   test('claim, download input, heartbeat, progress visible to the client', async () => {
-    const { worker, majo, jobId } = await setup();
+    const { worker, alice, jobId } = await setup();
     const claim = await t.app.inject({ method: 'POST', url: '/api/worker/jobs/claim', headers: w(worker), payload: { wait: 0 } });
     expect(claim.statusCode).toBe(200);
     const job = claim.json();
@@ -31,7 +31,7 @@ describe('worker API', () => {
 
     const hb = await t.app.inject({ method: 'POST', url: `/api/worker/jobs/${jobId}/heartbeat`, headers: w(worker), payload: { lease: job.lease, progress: 0.25, message: 'frame 1/4' } });
     expect(hb.json()).toMatchObject({ cancel: false });
-    const seen = (await t.app.inject({ method: 'GET', url: `/api/jobs/${jobId}`, headers: { authorization: `Bearer ${majo}` } })).json();
+    const seen = (await t.app.inject({ method: 'GET', url: `/api/jobs/${jobId}`, headers: { authorization: `Bearer ${alice}` } })).json();
     expect(seen).toMatchObject({ state: 'running', progress: 0.25, progress_message: 'frame 1/4' });
   });
 
@@ -43,11 +43,11 @@ describe('worker API', () => {
   test('a waiting claim is woken by a new job', async () => {
     announce(t.db, [renderContract], t.clock.now);
     const worker = issueToken(t.db, 'pc', 'worker');
-    const majo = issueToken(t.db, 'majo');
-    const scene = await uploadFile(t.app, majo, 'scene.blend', 'B');
+    const alice = issueToken(t.db, 'alice');
+    const scene = await uploadFile(t.app, alice, 'scene.blend', 'B');
     const pending = t.app.inject({ method: 'POST', url: '/api/worker/jobs/claim', headers: w(worker), payload: { wait: 10 } });
     await new Promise((r) => setTimeout(r, 50));
-    const owner = tokenIdOf(t.db, 'majo');
+    const owner = tokenIdOf(t.db, 'alice');
     submitJob(t.db, t.config, owner, { type: 'render', params: { frame_start: 1 }, inputs: { scene } }, t.clock.now);
     const started = Date.now();
     const res = await pending;
@@ -58,8 +58,8 @@ describe('worker API', () => {
   test('a worker that hangs up while waiting does not take the next job', async () => {
     announce(t.db, [renderContract], t.clock.now);
     const worker = issueToken(t.db, 'pc', 'worker');
-    const majo = issueToken(t.db, 'majo');
-    const scene = await uploadFile(t.app, majo, 'scene.blend', 'B');
+    const alice = issueToken(t.db, 'alice');
+    const scene = await uploadFile(t.app, alice, 'scene.blend', 'B');
     await t.app.listen({ port: 0, host: '127.0.0.1' });
     const { port } = t.app.server.address() as { port: number };
     const abort = new AbortController();
@@ -70,10 +70,10 @@ describe('worker API', () => {
     abort.abort();
     await waiting;
     await new Promise((r) => setTimeout(r, 100));
-    const owner = tokenIdOf(t.db, 'majo');
+    const owner = tokenIdOf(t.db, 'alice');
     const job = submitJob(t.db, t.config, owner, { type: 'render', params: { frame_start: 1 }, inputs: { scene } }, t.clock.now);
     await new Promise((r) => setTimeout(r, 200));
-    const row = (await t.app.inject({ method: 'GET', url: `/api/jobs/${job.id}`, headers: { authorization: `Bearer ${majo}` } })).json();
+    const row = (await t.app.inject({ method: 'GET', url: `/api/jobs/${job.id}`, headers: { authorization: `Bearer ${alice}` } })).json();
     expect(row).toMatchObject({ state: 'queued', attempts: 0 });
   });
 

@@ -16,8 +16,8 @@ describe('authentication', () => {
   });
 
   test('a pending token gets 403 with its fingerprint', async () => {
-    createInvite(t.db, { name: 'majo', role: 'client' }, t.clock.now);
-    const raw = generateToken('majo');
+    createInvite(t.db, { name: 'alice', role: 'client' }, t.clock.now);
+    const raw = generateToken('alice');
     const res = await t.app.inject({ method: 'GET', url: '/api/whoami', headers: bearer(raw) });
     expect(res.statusCode).toBe(403);
     expect(res.json()).toEqual({ error: 'pending', message: `this token is waiting for approval; fingerprint ${fingerprint(raw)}` });
@@ -25,9 +25,9 @@ describe('authentication', () => {
   });
 
   test('roles do not cross', async () => {
-    const client = issueToken(t.db, 'majo', 'client', t.clock.now);
+    const client = issueToken(t.db, 'alice', 'client', t.clock.now);
     const worker = issueToken(t.db, 'pc', 'worker', t.clock.now);
-    expect((await t.app.inject({ method: 'GET', url: '/api/whoami', headers: bearer(client) })).json()).toEqual({ name: 'majo', role: 'client' });
+    expect((await t.app.inject({ method: 'GET', url: '/api/whoami', headers: bearer(client) })).json()).toEqual({ name: 'alice', role: 'client' });
     expect((await t.app.inject({ method: 'GET', url: '/api/whoami', headers: bearer(worker) })).statusCode).toBe(401);
     expect((await t.app.inject({ method: 'GET', url: '/api/worker/ping', headers: bearer(worker) })).statusCode).toBe(200);
     expect((await t.app.inject({ method: 'GET', url: '/api/worker/ping', headers: bearer(client) })).statusCode).toBe(401);
@@ -42,7 +42,7 @@ describe('authentication', () => {
 
 describe('maskUrl', () => {
   test('hides tokens in /mcp paths, upload links and signatures', () => {
-    expect(maskUrl('/mcp/fornax-majo-abc')).toBe('/mcp/***');
+    expect(maskUrl('/mcp/fornax-alice-abc')).toBe('/mcp/***');
     expect(maskUrl('/api/uploads/abc.123.sig')).toBe('/api/uploads/***');
     expect(maskUrl('/r/abc.123.sig')).toBe('/r/***');
     expect(maskUrl('/api/jobs/1/outputs/a.png?sig=xyz&x=1')).toBe('/api/jobs/1/outputs/a.png?sig=***&x=1');

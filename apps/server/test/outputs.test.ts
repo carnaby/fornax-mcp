@@ -13,16 +13,16 @@ const w = (token: string, lease?: string) => ({
 async function running() {
   announce(t.db, [renderContract], t.clock.now);
   const worker = issueToken(t.db, 'pc', 'worker');
-  const majo = issueToken(t.db, 'majo');
+  const alice = issueToken(t.db, 'alice');
   const eve = issueToken(t.db, 'eve');
-  const scene = await uploadFile(t.app, majo, 'scene.blend', 'B');
-  const id = (await t.app.inject({ method: 'POST', url: '/api/jobs', headers: { authorization: `Bearer ${majo}` }, payload: { type: 'render', params: { frame_start: 1 }, inputs: { scene } } })).json().id as string;
+  const scene = await uploadFile(t.app, alice, 'scene.blend', 'B');
+  const id = (await t.app.inject({ method: 'POST', url: '/api/jobs', headers: { authorization: `Bearer ${alice}` }, payload: { type: 'render', params: { frame_start: 1 }, inputs: { scene } } })).json().id as string;
   const lease = (await t.app.inject({ method: 'POST', url: '/api/worker/jobs/claim', headers: { authorization: `Bearer ${worker}` }, payload: { wait: 0 } })).json().lease as string;
   const put = (name: string, body: string | Buffer, kind = 'output', l = lease) =>
     t.app.inject({ method: 'PUT', url: `/api/worker/jobs/${id}/outputs/${name}?kind=${kind}`, headers: w(worker, l), payload: body });
   const complete = (outputs: object, l = lease) =>
     t.app.inject({ method: 'POST', url: `/api/worker/jobs/${id}/complete`, headers: { authorization: `Bearer ${worker}` }, payload: { lease: l, outputs } });
-  return { worker, majo, eve, id, lease, put, complete };
+  return { worker, alice, eve, id, lease, put, complete };
 }
 
 describe('outputs', () => {
@@ -34,17 +34,17 @@ describe('outputs', () => {
     const done = await r.complete({ 'frame_0001.png': { meta: { width: 2 }, preview: 'previews/frame_0001.jpg' } });
     expect(done.statusCode).toBe(200);
 
-    const job = (await t.app.inject({ method: 'GET', url: `/api/jobs/${r.id}`, headers: { authorization: `Bearer ${r.majo}` } })).json();
+    const job = (await t.app.inject({ method: 'GET', url: `/api/jobs/${r.id}`, headers: { authorization: `Bearer ${r.alice}` } })).json();
     expect(job).toMatchObject({ state: 'succeeded', progress: 1, log: 'log.txt' });
     expect(job.outputs).toEqual([
       { name: 'frame_0001.png', mime: 'image/png', size: 4, sha256: expect.any(String), meta: { width: 2 }, preview: 'previews/frame_0001.jpg' },
     ]);
 
-    const png = await t.app.inject({ method: 'GET', url: `/api/jobs/${r.id}/outputs/frame_0001.png`, headers: { authorization: `Bearer ${r.majo}` } });
+    const png = await t.app.inject({ method: 'GET', url: `/api/jobs/${r.id}/outputs/frame_0001.png`, headers: { authorization: `Bearer ${r.alice}` } });
     expect(png.body).toBe('PNG1');
     expect(png.headers['content-type']).toBe('image/png');
     expect(png.headers['x-content-type-options']).toBe('nosniff');
-    expect((await t.app.inject({ method: 'GET', url: `/api/jobs/${r.id}/outputs/previews/frame_0001.jpg`, headers: { authorization: `Bearer ${r.majo}` } })).body).toBe('JPG1');
+    expect((await t.app.inject({ method: 'GET', url: `/api/jobs/${r.id}/outputs/previews/frame_0001.jpg`, headers: { authorization: `Bearer ${r.alice}` } })).body).toBe('JPG1');
     expect((await t.app.inject({ method: 'GET', url: `/api/jobs/${r.id}/outputs/frame_0001.png`, headers: { authorization: `Bearer ${r.eve}` } })).statusCode).toBe(404);
   });
 
@@ -52,7 +52,7 @@ describe('outputs', () => {
     const r = await running();
     await r.put('out.txt', 'x');
     await r.complete({});
-    const job = (await t.app.inject({ method: 'GET', url: `/api/jobs/${r.id}`, headers: { authorization: `Bearer ${r.majo}` } })).json();
+    const job = (await t.app.inject({ method: 'GET', url: `/api/jobs/${r.id}`, headers: { authorization: `Bearer ${r.alice}` } })).json();
     expect(job.outputs).toEqual([{ name: 'out.txt', mime: 'text/plain', size: 1, sha256: expect.any(String), meta: null, preview: null }]);
   });
 
@@ -75,7 +75,7 @@ describe('outputs', () => {
 
   test('after cancel, uploads and complete are 409', async () => {
     const r = await running();
-    await t.app.inject({ method: 'POST', url: `/api/jobs/${r.id}/cancel`, headers: { authorization: `Bearer ${r.majo}` } });
+    await t.app.inject({ method: 'POST', url: `/api/jobs/${r.id}/cancel`, headers: { authorization: `Bearer ${r.alice}` } });
     expect((await r.put('a.txt', 'x')).statusCode).toBe(409);
     expect((await r.complete({})).statusCode).toBe(409);
   });
@@ -97,9 +97,9 @@ describe('outputs', () => {
     const again = (await t.app.inject({ method: 'POST', url: '/api/worker/jobs/claim', headers: { authorization: `Bearer ${r.worker}` }, payload: { wait: 0 } })).json();
     await r.put('log.txt', 'try 2', 'log', again.lease);
     await t.app.inject({ method: 'POST', url: `/api/worker/jobs/${r.id}/fail`, headers: { authorization: `Bearer ${r.worker}` }, payload: { lease: again.lease, error: 'bad input', permanent: true } });
-    const job = (await t.app.inject({ method: 'GET', url: `/api/jobs/${r.id}`, headers: { authorization: `Bearer ${r.majo}` } })).json();
+    const job = (await t.app.inject({ method: 'GET', url: `/api/jobs/${r.id}`, headers: { authorization: `Bearer ${r.alice}` } })).json();
     expect(job).toMatchObject({ state: 'failed', log: 'log.txt', outputs: [] });
-    expect((await t.app.inject({ method: 'GET', url: `/api/jobs/${r.id}/outputs/log.txt`, headers: { authorization: `Bearer ${r.majo}` } })).body).toBe('try 2');
+    expect((await t.app.inject({ method: 'GET', url: `/api/jobs/${r.id}/outputs/log.txt`, headers: { authorization: `Bearer ${r.alice}` } })).body).toBe('try 2');
   });
 
   test('a claim after a lease expired starts without the stale outputs', async () => {
@@ -111,7 +111,7 @@ describe('outputs', () => {
     expect(again.attempt).toBe(2);
     await r.put('fresh.png', 'new', 'output', again.lease);
     expect((await r.complete({}, again.lease)).statusCode).toBe(200);
-    const job = (await t.app.inject({ method: 'GET', url: `/api/jobs/${r.id}`, headers: { authorization: `Bearer ${r.majo}` } })).json();
+    const job = (await t.app.inject({ method: 'GET', url: `/api/jobs/${r.id}`, headers: { authorization: `Bearer ${r.alice}` } })).json();
     expect(job.outputs.map((o: { name: string }) => o.name)).toEqual(['fresh.png']);
     expect(t.db.select().from(files).all().filter((f) => f.jobId === r.id).map((f) => f.name)).not.toContain('stale.png');
   });

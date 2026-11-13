@@ -11,8 +11,8 @@ const later = (ms: number) => new Date(now.getTime() + ms);
 
 describe('tokens', () => {
   test('first use of an invite registers a pending token with its fingerprint', () => {
-    createInvite(t.db, { name: 'majo', role: 'client' }, now);
-    const raw = generateToken('majo');
+    createInvite(t.db, { name: 'alice', role: 'client' }, now);
+    const raw = generateToken('alice');
     expect(resolveToken(t.db, raw, now)).toEqual({ kind: 'pending', fingerprint: fingerprint(raw) });
     expect(resolveToken(t.db, raw, now)).toEqual({ kind: 'pending', fingerprint: fingerprint(raw) });
     expect(t.db.select().from(tokens).all()).toHaveLength(1);
@@ -24,36 +24,36 @@ describe('tokens', () => {
   });
 
   test('malformed tokens are refused', () => {
-    createInvite(t.db, { name: 'majo', role: 'client' }, now);
-    expect(resolveToken(t.db, 'fornax-majo-short', now)).toBeNull();
+    createInvite(t.db, { name: 'alice', role: 'client' }, now);
+    expect(resolveToken(t.db, 'fornax-alice-short', now)).toBeNull();
   });
 
   test('an expired invite is refused', () => {
-    createInvite(t.db, { name: 'majo', role: 'client' }, now);
-    expect(resolveToken(t.db, generateToken('majo'), later(86_400_001))).toBeNull();
+    createInvite(t.db, { name: 'alice', role: 'client' }, now);
+    expect(resolveToken(t.db, generateToken('alice'), later(86_400_001))).toBeNull();
   });
 
   test('one invite gives one token', () => {
-    createInvite(t.db, { name: 'majo', role: 'client' }, now);
-    resolveToken(t.db, generateToken('majo'), now);
-    expect(resolveToken(t.db, generateToken('majo'), now)).toBeNull();
+    createInvite(t.db, { name: 'alice', role: 'client' }, now);
+    resolveToken(t.db, generateToken('alice'), now);
+    expect(resolveToken(t.db, generateToken('alice'), now)).toBeNull();
   });
 
   test('a second invite for a name with a pending token is refused', () => {
-    createInvite(t.db, { name: 'majo', role: 'client' }, now);
-    resolveToken(t.db, generateToken('majo'), now);
-    expect(() => createInvite(t.db, { name: 'majo', role: 'client' }, now)).toThrow(/waiting for approval/);
+    createInvite(t.db, { name: 'alice', role: 'client' }, now);
+    resolveToken(t.db, generateToken('alice'), now);
+    expect(() => createInvite(t.db, { name: 'alice', role: 'client' }, now)).toThrow(/waiting for approval/);
   });
 
   test('approve activates; revoke ends it', () => {
-    createInvite(t.db, { name: 'majo', role: 'client' }, now);
-    const raw = generateToken('majo');
+    createInvite(t.db, { name: 'alice', role: 'client' }, now);
+    const raw = generateToken('alice');
     resolveToken(t.db, raw, now);
-    expect(approveToken(t.db, 'majo', now)).toEqual({ name: 'majo', role: 'client', fingerprint: fingerprint(raw) });
+    expect(approveToken(t.db, 'alice', now)).toEqual({ name: 'alice', role: 'client', fingerprint: fingerprint(raw) });
     const r = resolveToken(t.db, raw, later(1000));
     expect(r?.kind).toBe('active');
-    if (r?.kind === 'active') expect(r.identity).toMatchObject({ name: 'majo', role: 'client' });
-    expect(revokeToken(t.db, 'majo')).toBe(1);
+    if (r?.kind === 'active') expect(r.identity).toMatchObject({ name: 'alice', role: 'client' });
+    expect(revokeToken(t.db, 'alice')).toBe(1);
     expect(resolveToken(t.db, raw, later(2000))).toBeNull();
   });
 
@@ -71,10 +71,10 @@ describe('tokens', () => {
   });
 
   test('client tokens store the derived webhook key; worker tokens none', () => {
-    createInvite(t.db, { name: 'majo', role: 'client' }, now);
-    const raw = generateToken('majo');
+    createInvite(t.db, { name: 'alice', role: 'client' }, now);
+    const raw = generateToken('alice');
     resolveToken(t.db, raw, now);
-    const row = t.db.select().from(tokens).where(eq(tokens.name, 'majo')).get();
+    const row = t.db.select().from(tokens).where(eq(tokens.name, 'alice')).get();
     expect(row?.webhookKey).toBe(webhookKey(raw).toString('hex'));
   });
 
@@ -84,10 +84,10 @@ describe('tokens', () => {
   });
 
   test('list shows names, roles, states and fingerprints but no hashes', () => {
-    createInvite(t.db, { name: 'majo', role: 'client' }, now);
-    resolveToken(t.db, generateToken('majo'), now);
+    createInvite(t.db, { name: 'alice', role: 'client' }, now);
+    resolveToken(t.db, generateToken('alice'), now);
     const [row] = listTokens(t.db);
-    expect(row).toMatchObject({ name: 'majo', role: 'client', status: 'pending' });
+    expect(row).toMatchObject({ name: 'alice', role: 'client', status: 'pending' });
     expect(row).not.toHaveProperty('hash');
   });
 });

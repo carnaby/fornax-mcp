@@ -3,9 +3,9 @@ import { fingerprint, generateToken, parseToken, tokenHash, webhookKey } from '.
 
 describe('tokens', () => {
   test('generated token has the documented format and parses back', () => {
-    const t = generateToken('majo');
-    expect(t).toMatch(/^fornax-majo-[A-Za-z0-9_-]{43}$/);
-    expect(parseToken(t)).toEqual({ name: 'majo' });
+    const t = generateToken('alice');
+    expect(t).toMatch(/^fornax-alice-[A-Za-z0-9_-]{43}$/);
+    expect(parseToken(t)).toEqual({ name: 'alice' });
   });
 
   test('two tokens differ', () => {
@@ -13,13 +13,13 @@ describe('tokens', () => {
   });
 
   test('invalid names are refused', () => {
-    for (const bad of ['', 'Majo', 'a-b', 'x'.repeat(25)]) expect(() => generateToken(bad)).toThrow();
+    for (const bad of ['', 'Alice', 'a-b', 'x'.repeat(25)]) expect(() => generateToken(bad)).toThrow();
   });
 
   test('parseToken refuses anything else', () => {
     const body = 'A'.repeat(43);
-    expect(parseToken(`fornax-majo-${body}`)).toEqual({ name: 'majo' });
-    for (const bad of [`fornax-majo-${body}x`, `fornax-majo-${'A'.repeat(42)}`, `tabula-majo-${body}`, `fornax-Majo-${body}`, `fornax--${body}`]) {
+    expect(parseToken(`fornax-alice-${body}`)).toEqual({ name: 'alice' });
+    for (const bad of [`fornax-alice-${body}x`, `fornax-alice-${'A'.repeat(42)}`, `tabula-alice-${body}`, `fornax-Alice-${body}`, `fornax--${body}`]) {
       expect(parseToken(bad)).toBeNull();
     }
   });

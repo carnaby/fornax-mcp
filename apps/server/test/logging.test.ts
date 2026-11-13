@@ -27,9 +27,9 @@ describe('log masking', () => {
   test('secrets in URLs never reach the logs', async () => {
     const lines: string[] = [];
     const a = await build(lines);
-    const client = issueToken(t.db, 'majo', 'client');
+    const client = issueToken(t.db, 'alice', 'client');
     for (const [url, headers] of [
-      [`/mcp/fornax-majo-${SECRET}`, {}],
+      [`/mcp/fornax-alice-${SECRET}`, {}],
       [`/api/whoami?sig=${SECRET}`, {}],
       [`/api/whoami?sig=${SECRET}`, { authorization: `Bearer ${client}` }],
       [`/api/uploads/${SECRET}.1.sig`, {}],

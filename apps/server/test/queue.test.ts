@@ -14,8 +14,8 @@ beforeEach(() => {
 });
 
 async function job(priority: 'low' | 'normal' | 'high' = 'normal') {
-  const majo = issueToken(t.db, `m${++n}`);
-  const scene = await uploadFile(t.app, majo, 'scene.blend', 'B');
+  const alice = issueToken(t.db, `m${++n}`);
+  const scene = await uploadFile(t.app, alice, 'scene.blend', 'B');
   return submitJob(t.db, t.config, tokenIdOf(t.db, `m${n}`), { type: 'render', params: { frame_start: 1 }, inputs: { scene }, priority }, t.clock.now);
 }
 const at = (ms: number) => new Date(t.clock.now.getTime() + ms);
