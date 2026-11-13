@@ -1,0 +1,110 @@
+import type { JobTypeContract, TokenRole } from '@fornax/protocol';
+import { index, integer, real, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+
+const ts = (name: string) => integer(name, { mode: 'timestamp_ms' });
+
+export const tokens = sqliteTable('tokens', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  role: text('role').$type<TokenRole>().notNull(),
+  hash: text('hash').notNull().unique(),
+  fingerprint: text('fingerprint').notNull(),
+  /** Hex HMAC key for webhooks (clients only). */
+  webhookKey: text('webhook_key'),
+  status: text('status', { enum: ['pending', 'active', 'revoked'] }).notNull(),
+  inviteId: text('invite_id'),
+  createdAt: ts('created_at').notNull(),
+  approvedAt: ts('approved_at'),
+  lastSeenAt: ts('last_seen_at'),
+});
+
+export const invites = sqliteTable('invites', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  role: text('role').$type<TokenRole>().notNull(),
+  expiresAt: ts('expires_at').notNull(),
+  tokenId: text('token_id'),
+  createdAt: ts('created_at').notNull(),
+});
+
+export const jobTypes = sqliteTable('job_types', {
+  name: text('name').primaryKey(),
+  contract: text('contract', { mode: 'json' }).$type<JobTypeContract>().notNull(),
+  contractHash: text('contract_hash').notNull(),
+  offered: integer('offered', { mode: 'boolean' }).notNull(),
+  lastOfferedAt: ts('last_offered_at').notNull(),
+});
+
+export type FileKind = 'input' | 'output' | 'log' | 'preview';
+export type Meta = Record<string, string | number | boolean | null>;
+
+export const files = sqliteTable(
+  'files',
+  {
+    id: text('id').primaryKey(),
+    ownerTokenId: text('owner_token_id').notNull(),
+    kind: text('kind').$type<FileKind>().notNull(),
+    jobId: text('job_id'),
+    name: text('name').notNull(),
+    size: integer('size').notNull(),
+    sha256: text('sha256').notNull(),
+    mime: text('mime').notNull(),
+    meta: text('meta', { mode: 'json' }).$type<Meta>(),
+    createdAt: ts('created_at').notNull(),
+  },
+  (t) => [index('files_job').on(t.jobId), index('files_owner').on(t.ownerTokenId)],
+);
+
+/** One-time upload links. The file id is assigned when the link is made, so the client knows it before uploading. */
+export const uploads = sqliteTable('uploads', {
+  id: text('id').primaryKey(),
+  ownerTokenId: text('owner_token_id').notNull(),
+  name: text('name').notNull(),
+  fileId: text('file_id').notNull(),
+  expiresAt: ts('expires_at').notNull(),
+  usedAt: ts('used_at'),
+  createdAt: ts('created_at').notNull(),
+});
+
+export type JobState = 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled';
+export type ManifestOutput = { name: string; file_id: string; mime: string; size: number; sha256: string; meta: Meta | null; preview: string | null };
+export type Manifest = { outputs: ManifestOutput[]; log: string | null };
+
+export const jobs = sqliteTable(
+  'jobs',
+  {
+    id: text('id').primaryKey(),
+    ownerTokenId: text('owner_token_id').notNull(),
+    type: text('type').notNull(),
+    params: text('params', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+    /** Input name → file id. */
+    inputs: text('inputs', { mode: 'json' }).$type<Record<string, string>>().notNull(),
+    /** 0 low, 1 normal, 2 high. */
+    priority: integer('priority').notNull(),
+    group: text('group'),
+    callbackUrl: text('callback_url'),
+    state: text('state').$type<JobState>().notNull(),
+    attempts: integer('attempts').notNull().default(0),
+    runAfter: ts('run_after').notNull(),
+    leaseId: text('lease_id'),
+    leaseExpiresAt: ts('lease_expires_at'),
+    progress: real('progress'),
+    progressMessage: text('progress_message'),
+    error: text('error'),
+    manifest: text('manifest', { mode: 'json' }).$type<Manifest>(),
+    createdAt: ts('created_at').notNull(),
+    startedAt: ts('started_at'),
+    finishedAt: ts('finished_at'),
+    updatedAt: ts('updated_at').notNull(),
+  },
+  (t) => [index('jobs_queue').on(t.state, t.priority, t.createdAt), index('jobs_owner').on(t.ownerTokenId), index('jobs_group').on(t.group)],
+);
+
+/** The one worker: one row with id 1. */
+export const workerState = sqliteTable('worker', {
+  id: integer('id').primaryKey(),
+  tokenId: text('token_id').notNull(),
+  hostname: text('hostname').notNull(),
+  version: text('version'),
+  lastSeenAt: ts('last_seen_at').notNull(),
+});
