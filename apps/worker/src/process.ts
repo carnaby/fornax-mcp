@@ -144,6 +144,15 @@ export async function killTree(
   group('SIGKILL');
 }
 
+/** Tool processes alive right now, so a hard quit (second Ctrl+C) can end their trees. */
+const live = new Set<{ pid: number; seams: Pick<RunOptions, 'taskkillProgram' | 'signalGroup'> }>();
+export const hasRunning = (): boolean => live.size > 0;
+/** Kill every running tool tree, best effort, waiting at most `waitMs`. Never rejects. */
+export async function killRunning(waitMs = 2000): Promise<void> {
+  const all = [...live].map((c) => killTree(c.pid, Math.max(100, waitMs - 500), c.seams).catch(() => {}));
+  await Promise.race([Promise.all(all), new Promise((r) => setTimeout(r, waitMs))]);
+}
+
 /** Run a tool without a shell. Resolves when it ended and, if it was stopped, after its whole tree is gone. */
 export function runProcess(opts: RunOptions): Promise<RunResult> {
   if (opts.signal?.aborted) return Promise.resolve({ code: null, signal: null, timedOut: false, canceled: true, spawnError: null, log: '' });
@@ -173,6 +182,8 @@ export function runProcess(opts: RunOptions): Promise<RunResult> {
       resolve({ code: null, signal: null, timedOut: false, canceled: false, spawnError: (e as Error).message, log: '' });
       return;
     }
+    const entry = child.pid === undefined ? null : { pid: child.pid, seams: { taskkillProgram: opts.taskkillProgram, signalGroup: opts.signalGroup } };
+    if (entry) live.add(entry);
     let timedOut = false;
     let canceled = false;
     let settled = false;
@@ -238,6 +249,7 @@ export function runProcess(opts: RunOptions): Promise<RunResult> {
     const finish = async (spawnError: string | null) => {
       if (settled) return;
       settled = true;
+      if (entry) live.delete(entry);
       clearTimeout(timer);
       clearTimeout(pipeTimer);
       opts.signal?.removeEventListener('abort', onAbort);
@@ -255,6 +267,8 @@ export function runProcess(opts: RunOptions): Promise<RunResult> {
     child.on('exit', (code, signal) => {
       exit = { code, signal };
       exited = true;
+      // Windows: the pid may be reused from here on.
+      if (entry) live.delete(entry);
       pipeTimer = setTimeout(() => {
         child.stdout!.destroy();
         child.stderr!.destroy();

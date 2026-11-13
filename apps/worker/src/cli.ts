@@ -11,6 +11,7 @@ import { queueCommand, workerCommand } from './commands/worker.js';
 import { ConfigError } from './config.js';
 import { PackError } from './pack.js';
 import { resolvePaths } from './paths.js';
+import { hasRunning, killRunning } from './process.js';
 
 export const USAGE = [
   'usage: fornax worker pair --server <url> --name <name> [--force]',
@@ -80,16 +81,50 @@ export async function runCli(argv: string[], ctx: Ctx): Promise<number> {
   return 2;
 }
 
-const isMain = process.argv[1] !== undefined && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
-if (isMain) {
-  const stop = new AbortController();
+type SignalDeps = {
+  abort: () => void;
+  killRunning: () => Promise<void>;
+  hasRunning: () => boolean;
+  exit: (code: number) => void;
+  say: (text: string) => void;
+};
+
+/** First signal: stop gracefully. Second: kill the running tool tree, then exit 130 (a hard quit must not orphan the tool). Later ones are ignored. */
+export function makeSignalHandler(d: SignalDeps): () => void {
   let signals = 0;
-  const onSignal = () => {
-    // The second Ctrl+C does not wait for the job to be given back.
-    if (++signals > 1) process.exit(130);
-    process.stderr.write('stopping: the running job is stopped and given back (Ctrl+C again quits at once)\n');
-    stop.abort();
+  return () => {
+    if (++signals === 1) {
+      d.say(
+        d.hasRunning()
+          ? 'stopping: the running job is stopped and given back (Ctrl+C again quits at once)'
+          : 'stopping (Ctrl+C again quits at once)',
+      );
+      d.abort();
+    } else if (signals === 2) {
+      void d.killRunning().finally(() => d.exit(130));
+    }
   };
+}
+
+/** Both sides resolved the way the OS names the file (drive letter case, links); false when argv[1] is no file. */
+function isMainModule(): boolean {
+  try {
+    return process.argv[1] !== undefined && realpathSync.native(process.argv[1]) === realpathSync.native(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (isMainModule()) {
+  const stop = new AbortController();
+  const onSignal = makeSignalHandler({
+    abort: () => stop.abort(),
+    killRunning: () => killRunning(2000),
+    hasRunning,
+    exit: (c) => process.exit(c),
+    say: (t) => process.stderr.write(`${t}
+`),
+  });
   process.on('SIGINT', onSignal);
   process.on('SIGTERM', onSignal);
   const ctx: Ctx = { paths: resolvePaths(), out: (l) => console.log(l), write: (t) => process.stdout.write(t), signal: stop.signal };

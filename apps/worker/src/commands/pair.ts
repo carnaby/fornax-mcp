@@ -28,8 +28,12 @@ export async function pair(ctx: Ctx, opts: { server: string; name: string; force
   }
   const token = generateToken(opts.name);
   try {
-    await apiFor(ctx, server, token).ping();
+    await apiFor(ctx, server, token).ping(ctx.signal);
   } catch (e) {
+    if (ctx.signal.aborted) {
+      ctx.out('stopped; nothing was saved');
+      return 1;
+    }
     if (e instanceof ApiError && e.status === 401) {
       ctx.out(`the server did not accept the token: there is no open invite for ${opts.name}.`);
       ctx.out(`On the server run: fornax-admin tokens invite ${opts.name} --worker`);
@@ -39,11 +43,16 @@ export async function pair(ctx: Ctx, opts: { server: string; name: string; force
       ctx.out(e.message);
       return 1;
     }
+    if (e instanceof ApiError && e.status === 403 && e.code !== 'pending') {
+      ctx.out(`the server refused the token (${e.message}); nothing was saved`);
+      return 1;
+    }
     // 403 "pending" is the expected answer: the token is registered and waits for approval.
     if (!(e instanceof ApiError && e.status === 403)) throw e;
   }
-  saveToken(ctx.paths, token);
+  // The server first: a failed token write must not leave a replaced token next to the old server.
   saveServer(ctx.paths, server);
+  saveToken(ctx.paths, token);
   ctx.out(`Token saved to ${ctx.paths.tokenFile}.`);
   ctx.out(`Fingerprint: ${fingerprint(token)}`);
   ctx.out(`On the server compare the fingerprint, then run: fornax-admin tokens approve ${opts.name}`);

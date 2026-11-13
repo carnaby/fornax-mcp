@@ -89,8 +89,8 @@ export class WorkerApi {
     await (await this.request(method, path, init)).arrayBuffer();
   }
 
-  async ping(): Promise<void> {
-    await this.send('GET', '/ping');
+  async ping(signal?: AbortSignal): Promise<void> {
+    await this.send('GET', '/ping', { signal });
   }
 
   async announce(types: JobTypeContract[]): Promise<string[]> {

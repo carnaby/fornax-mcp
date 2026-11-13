@@ -3,10 +3,12 @@ import { dirname } from 'node:path';
 import { fingerprint } from '@fornax/protocol';
 import { startTestServer, type TestServer } from '@fornax/server/testing';
 import { afterEach, describe, expect, test } from 'vitest';
-import { runCli } from '../src/cli.js';
+import { ApiError, type WorkerApi } from '../src/api.js';
+import { makeSignalHandler, runCli } from '../src/cli.js';
+import { hasRunning, killRunning, runProcess } from '../src/process.js';
 import type { Ctx } from '../src/commands/context.js';
 import { readToken, readWorkerConfig } from '../src/config.js';
-import { testPaths, useTempDir, writeEchoPack } from './helpers.js';
+import { testPaths, useTempDir, waitFor, writeEchoPack } from './helpers.js';
 
 const tmp = useTempDir();
 const servers: TestServer[] = [];
@@ -122,5 +124,91 @@ describe('fornax CLI', () => {
   test('commands that need pairing say how to pair', async () => {
     const { run } = cli();
     expect(await run('worker', 'queue')).toMatchObject({ code: 1, text: expect.stringContaining('fornax worker pair') });
+  });
+});
+
+describe('pairing answers', () => {
+  const fakeApi = (e: unknown) => ({ ping: async () => { throw e; } }) as unknown as WorkerApi;
+
+  test('only the pending answer counts as registered; any other 403 saves nothing', async () => {
+    const { ctx, run } = cli();
+    ctx.makeApi = () => fakeApi(new ApiError(403, 'forbidden', 'nope'));
+    const r = await run('worker', 'pair', '--server', 'http://127.0.0.1:1', '--name', 'pc');
+    expect(r.code).toBe(1);
+    expect(existsSync(ctx.paths.tokenFile)).toBe(false);
+    expect(existsSync(ctx.paths.configFile)).toBe(false);
+    ctx.makeApi = () => fakeApi(new ApiError(403, 'pending', 'waiting'));
+    expect((await run('worker', 'pair', '--server', 'http://127.0.0.1:1', '--name', 'pc')).code).toBe(0);
+  });
+
+  test('a stop during the ping ends pairing without saving or an error class', async () => {
+    const { ctx, run } = cli();
+    const stop = new AbortController();
+    ctx.signal = stop.signal;
+    ctx.makeApi = () =>
+      ({
+        ping: async (s?: AbortSignal) => {
+          stop.abort();
+          if (s?.aborted) throw new DOMException('aborted', 'AbortError');
+        },
+      }) as unknown as WorkerApi;
+    const r = await run('worker', 'pair', '--server', 'http://127.0.0.1:1', '--name', 'pc');
+    expect(r.code).toBe(1);
+    expect(r.text).not.toContain('unexpected');
+    expect(existsSync(ctx.paths.tokenFile)).toBe(false);
+  });
+
+  test('the server is saved before the token', async () => {
+    const { ctx, run } = cli();
+    mkdirSync(ctx.paths.tokenFile, { recursive: true }); // writing the token file fails
+    ctx.makeApi = () => fakeApi(new ApiError(403, 'pending', 'waiting'));
+    const r = await run('worker', 'pair', '--server', 'http://127.0.0.1:1', '--name', 'pc', '--force');
+    expect(r.code).toBe(1);
+    expect(readWorkerConfig(ctx.paths).server).toBe('http://127.0.0.1:1');
+  });
+});
+
+describe('signal handling', () => {
+  const tick = () => new Promise((r) => setTimeout(r, 10));
+  const wire = (running: boolean) => {
+    const events: string[] = [];
+    const handler = makeSignalHandler({
+      abort: () => events.push('abort'),
+      killRunning: async () => void events.push('kill'),
+      hasRunning: () => running,
+      exit: (c) => events.push(`exit ${c}`),
+      say: (t) => events.push(`say ${t}`),
+    });
+    return { handler, events };
+  };
+
+  test('the first signal stops gracefully, the second kills the tool tree and then exits 130', async () => {
+    const { handler, events } = wire(true);
+    handler();
+    expect(events).toHaveLength(2);
+    expect(events[0]).toContain('job');
+    expect(events[1]).toBe('abort');
+    handler();
+    await tick();
+    expect(events.slice(2)).toEqual(['kill', 'exit 130']);
+    handler();
+    await tick();
+    expect(events.filter((e) => e === 'kill')).toHaveLength(1);
+  });
+
+  test('the first message is neutral when no job runs', () => {
+    const { handler, events } = wire(false);
+    handler();
+    expect(events[0]).toMatch(/^say stopping/);
+    expect(events[0]).not.toContain('job');
+  });
+
+  test('killRunning ends a live tool and returns', async () => {
+    const done = runProcess({ argv: [process.execPath, '-e', 'setTimeout(()=>{},60000)'], cwd: tmp(), env: process.env as Record<string, string> });
+    await waitFor(() => hasRunning(), 5000, 'a running tool');
+    await killRunning(2000);
+    const r = await done;
+    expect(r.code === 0 && r.signal === null).toBe(false);
+    expect(hasRunning()).toBe(false);
   });
 });
