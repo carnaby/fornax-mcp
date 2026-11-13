@@ -3,10 +3,25 @@ import { createServer } from 'node:http';
 import { join } from 'node:path';
 import { generateToken, jobTypeContract } from '@fornax/protocol';
 import { startTestServer, type TestServer } from '@fornax/server/testing';
-import { afterEach, beforeEach, describe, expect, test } from 'vitest';
-import { ApiError, InputMismatchError, LeaseLostError, NetworkError, UploadFileError, WorkerApi } from '../src/api.js';
+import type { FileHandle } from 'node:fs/promises';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { ApiError, InputMismatchError, isTransient, LeaseLostError, LocalFileError, NetworkError, UploadFileError, WorkerApi } from '../src/api.js';
 import { WORKER_VERSION } from '../src/version.js';
-import { clientOf, useTempDir } from './helpers.js';
+import { clientOf, useTempDir, waitFor } from './helpers.js';
+
+// Every FileHandle opened through node:fs/promises, to see whether an upload closes its file.
+const opened = vi.hoisted(() => [] as FileHandle[]);
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...fs,
+    open: async (...args: Parameters<typeof fs.open>) => {
+      const handle = await fs.open(...args);
+      opened.push(handle);
+      return handle;
+    },
+  };
+});
 
 const tmp = useTempDir();
 let s: TestServer;
@@ -79,6 +94,56 @@ describe('WorkerApi', () => {
     const dest = join(tmp(), 'source.txt');
     await expect(api.downloadInput(job.id, job.lease, { ...job.inputs[0]!, sha256: '0'.repeat(64) }, dest)).rejects.toBeInstanceOf(InputMismatchError);
     expect(existsSync(dest)).toBe(false);
+  });
+
+  test('an input that cannot be written here is a LocalFileError without the local path, not a network error', async () => {
+    const { api, job } = await runningJob();
+    const dir = tmp();
+    const err = await api.downloadInput(job.id, job.lease, job.inputs[0]!, join(dir, 'missing', 'source.txt')).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(LocalFileError);
+    expect(isTransient(err)).toBe(false);
+    expect((err as Error).message).toBe('input source could not be written here (ENOENT)');
+  });
+
+  test('a heartbeat past its time limit is a NetworkError (worth another try), not an abort', async () => {
+    // Takes the request and never answers: a half-open connection.
+    const silent = createServer(() => {});
+    await new Promise<void>((r) => silent.listen(0, '127.0.0.1', r));
+    const { port } = silent.address() as { port: number };
+    try {
+      const api = new WorkerApi({ server: `http://127.0.0.1:${port}`, token: generateToken('pc') });
+      const err = await api.heartbeat('J1', 'L1', 0.5, null, AbortSignal.timeout(100)).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(NetworkError);
+      expect(isTransient(err)).toBe(true);
+    } finally {
+      silent.closeAllConnections();
+      await new Promise((r) => silent.close(r));
+    }
+  });
+
+  test('a 409 before the body is read leaves no handle open on the file', async () => {
+    const fake = createServer((req, res) => {
+      // Answer after the first chunk and read no more: the client's body stream stalls with the file open.
+      req.once('data', () => {
+        req.pause();
+        res.writeHead(409, { 'content-type': 'application/json' }).end('{"error":"conflict","message":"not yours"}');
+      });
+    });
+    await new Promise<void>((r) => fake.listen(0, '127.0.0.1', r));
+    const { port } = fake.address() as { port: number };
+    try {
+      const file = join(tmp(), 'big.bin');
+      writeFileSync(file, Buffer.alloc(16 * 1024 * 1024, 7));
+      const api = new WorkerApi({ server: `http://127.0.0.1:${port}`, token: generateToken('pc') });
+      opened.length = 0;
+      await expect(api.uploadOutput('J1', 'L1', 'big.bin', 'output', file, undefined, 16 * 1024 * 1024)).rejects.toBeInstanceOf(LeaseLostError);
+      expect(opened).toHaveLength(1);
+      // A closed FileHandle has fd -1. An open one would keep the job directory from being removed on older Windows.
+      await waitFor(() => opened[0]!.fd === -1, 3000, 'the file handle to close');
+    } finally {
+      fake.closeAllConnections();
+      await new Promise((r) => fake.close(r));
+    }
   });
 
   test('a lease that no longer holds is LeaseLostError (409)', async () => {

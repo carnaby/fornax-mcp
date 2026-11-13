@@ -26,6 +26,8 @@ export class NetworkError extends Error {}
 export class InputMismatchError extends Error {}
 /** A file to upload could not be read as it was when checked (it changed size, became a link or cannot be read). */
 export class UploadFileError extends Error {}
+/** A downloaded input could not be written on this PC (a local file-system error, not the network). No path in the message. */
+export class LocalFileError extends Error {}
 
 /** Worth trying again a little later. */
 export const isTransient = (e: unknown): boolean =>
@@ -59,6 +61,10 @@ export class WorkerApi {
     try {
       res = await fetch(`${this.base}${path}`, { method, headers, body, signal: init.signal, ...(init.body ? { duplex: 'half' as const } : {}) });
     } catch (e) {
+      // A caller's time limit (AbortSignal.timeout) is a server that did not answer: worth another try.
+      if (init.signal?.aborted && (init.signal.reason as Error | undefined)?.name === 'TimeoutError') {
+        throw new NetworkError('the server did not answer in time', { cause: e });
+      }
       if (init.signal?.aborted) throw e;
       const cause = (e as { cause?: { code?: string; message?: string } }).cause;
       throw new NetworkError(`cannot reach the server: ${cause?.code ?? cause?.message ?? (e as Error).message}`, { cause: e });
@@ -97,8 +103,8 @@ export class WorkerApi {
     return claimedJob.parse(await res.json());
   }
 
-  async heartbeat(id: string, lease: string, progress: number | null, message: string | null): Promise<{ cancel: boolean }> {
-    const res = await this.request('POST', `/jobs/${enc(id)}/heartbeat`, { json: { lease, progress, message } });
+  async heartbeat(id: string, lease: string, progress: number | null, message: string | null, signal?: AbortSignal): Promise<{ cancel: boolean }> {
+    const res = await this.request('POST', `/jobs/${enc(id)}/heartbeat`, { json: { lease, progress, message }, signal });
     return { cancel: ((await res.json()) as { cancel?: unknown }).cancel === true };
   }
 
@@ -131,13 +137,21 @@ export class WorkerApi {
         done(null, chunk);
       },
     });
+    const file = createWriteStream(dest);
+    let local: NodeJS.ErrnoException | null = null;
+    file.on('error', (e) => {
+      local = e;
+    });
     try {
       if (!res.body) throw new Error('the answer has no body');
       // Aborting `signal` aborts the fetch, which errors this body stream.
-      await pipeline(Readable.fromWeb(res.body as unknown as WebReadableStream), meter, createWriteStream(dest));
+      await pipeline(Readable.fromWeb(res.body as unknown as WebReadableStream), meter, file);
     } catch (e) {
       await rm(dest, { force: true });
       if (signal?.aborted) throw e;
+      // Writing here failed (missing directory, no permission, disk full): not worth retrying, and the code
+      // stands in for the message, which holds this PC's absolute path.
+      if (local) throw new LocalFileError(`input ${input.name} could not be written here (${(local as NodeJS.ErrnoException).code ?? 'write error'})`, { cause: e });
       throw new NetworkError(`the download of input ${input.name} broke off: ${(e as Error).message}`, { cause: e });
     }
     if (size !== input.size || hash.digest('hex') !== input.sha256) {
@@ -177,7 +191,8 @@ export class WorkerApi {
         throw local;
       }
     }
-    const body = Readable.toWeb(Readable.from(exactly())) as unknown as ReadableStream<Uint8Array>;
+    const source = Readable.from(exactly());
+    const body = Readable.toWeb(source) as unknown as ReadableStream<Uint8Array>;
     try {
       await this.send('PUT', path, {
         body,
@@ -188,6 +203,9 @@ export class WorkerApi {
       // A broken body surfaces from fetch as a network error; the real cause is the local file.
       if (local) throw local;
       throw e;
+    } finally {
+      // An answer (409, 413) can come before the body is read to its end: the stalled body would keep the file open.
+      source.destroy();
     }
   }
 }

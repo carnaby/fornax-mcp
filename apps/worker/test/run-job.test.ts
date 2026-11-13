@@ -1,5 +1,6 @@
 import { appendFileSync, existsSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { describe, expect, test } from 'vitest';
 import { LeaseLostError, NetworkError } from '../src/api.js';
 import { loadPack } from '../src/pack.js';
@@ -33,7 +34,7 @@ describe('runJob', () => {
     const job = fakeClaim({ params: { mode: 'ok' }, inputs: [{ name: 'source', file_name: '../../Evil Name.TXT', size: 5, sha256: 'x' }] });
     const r = await runJob(job, pack, deps(f.api));
     expect(r).toEqual({ outcome: 'succeeded', detail: '2 output(s)' });
-    expect(f.calls[0]).toEqual({ method: 'heartbeat', args: [job.id, job.lease, 0, null] });
+    expect(f.calls[0]).toEqual({ method: 'heartbeat', args: [job.id, job.lease, 0, null, expect.any(AbortSignal)] });
     expect(f.called('downloadInput')[0]!.args[3]).toBe(join(paths.jobsDir, job.id, 'in', 'source.txt'));
     expect(Object.fromEntries(f.uploads)).toEqual({ 'result.txt': 'HELLO', 'previews/result.jpg': 'JPEG', 'log.txt': expect.stringContaining('working') });
     expect(f.called('uploadOutput').map((c) => c.args[3])).toEqual(['output', 'output', 'log']);
@@ -92,18 +93,20 @@ describe('runJob', () => {
   });
 
   test('a cancel seen in a heartbeat stops the whole tree', async () => {
-    const { pack, deps } = setup();
+    const { paths, pack, deps } = setup();
     const pidFile = join(tmp(), 'pids.json');
     let beats = 0;
     const f = fakeApi({ heartbeat: async () => ({ cancel: ++beats > 1 && readPids(pidFile) !== null }) });
-    expect((await runJob(fakeClaim({ params: { mode: 'hang', pid_file: pidFile } }), pack, deps(f.api))).outcome).toBe('canceled');
+    const job = fakeClaim({ params: { mode: 'hang', pid_file: pidFile } });
+    expect((await runJob(job, pack, deps(f.api))).outcome).toBe('canceled');
     const pids = readPids(pidFile)!;
     await waitFor(() => !isAlive(pids.parent) && !isAlive(pids.child), 5000, 'the tree to die');
     expect(f.called('fail')).toHaveLength(0);
+    expect(existsSync(join(paths.jobsDir, job.id))).toBe(false);
   });
 
   test('a lost lease (409) stops the tool and drops the job', async () => {
-    const { pack, deps } = setup();
+    const { paths, pack, deps } = setup();
     const pidFile = join(tmp(), 'pids.json');
     let beats = 0;
     const f = fakeApi({
@@ -112,9 +115,11 @@ describe('runJob', () => {
         return { cancel: false };
       },
     });
-    expect((await runJob(fakeClaim({ params: { mode: 'hang', pid_file: pidFile } }), pack, deps(f.api))).outcome).toBe('lost');
+    const job = fakeClaim({ params: { mode: 'hang', pid_file: pidFile } });
+    expect((await runJob(job, pack, deps(f.api))).outcome).toBe('lost');
     expect(f.called('fail')).toHaveLength(0);
     expect(f.called('complete')).toHaveLength(0);
+    expect(existsSync(join(paths.jobsDir, job.id))).toBe(false);
   });
 
   test('max_runtime: the tool is stopped and the job fails for a retry', async () => {
@@ -239,7 +244,7 @@ describe('runJob', () => {
   });
 
   test('Ctrl+C during an upload: the upload is abandoned and the job released, never completed', async () => {
-    const { pack, deps } = setup();
+    const { paths, pack, deps } = setup();
     const stop = new AbortController();
     const f = fakeApi({
       uploadOutput: (_id, _lease, _name, _kind, _file, signal) =>
@@ -249,10 +254,110 @@ describe('runJob', () => {
           stop.abort();
         }),
     });
-    const r = await runJob(fakeClaim({ params: { mode: 'ok' } }), pack, deps(f.api, { signal: stop.signal }));
+    const job = fakeClaim({ params: { mode: 'ok' } });
+    const r = await runJob(job, pack, deps(f.api, { signal: stop.signal }));
     expect(r.outcome).toBe('released');
     expect(f.called('release')).toHaveLength(1);
     expect(f.called('complete')).toHaveLength(0);
     expect(f.called('fail')).toHaveLength(0);
+    expect(existsSync(join(paths.jobsDir, job.id))).toBe(false);
+  });
+
+  test('the lease is kept alive while outputs are uploaded: heartbeats go on with progress 1', async () => {
+    const { pack, deps } = setup();
+    let uploading = false;
+    const during: unknown[][] = [];
+    const f = fakeApi({
+      heartbeat: async (...args) => {
+        if (uploading) during.push(args);
+        return { cancel: false };
+      },
+      uploadOutput: async (_id, _lease, name) => {
+        if (name !== 'result.txt') return;
+        uploading = true;
+        await sleep(500);
+        uploading = false;
+      },
+    });
+    const r = await runJob(fakeClaim({ params: { mode: 'ok' } }), pack, deps(f.api));
+    expect(r.outcome).toBe('succeeded');
+    expect(during.length).toBeGreaterThanOrEqual(2);
+    expect(during.every((a) => a[2] === 1 && a[3] === 'uploading outputs')).toBe(true);
+    expect(f.called('complete')).toHaveLength(1);
+  });
+
+  test('a cancel seen during an upload aborts it and ends the job as canceled', async () => {
+    const { paths, pack, deps } = setup();
+    let uploading = false;
+    let aborted = false;
+    const f = fakeApi({
+      heartbeat: async () => ({ cancel: uploading }),
+      uploadOutput: (_id, _lease, _name, _kind, _file, signal) =>
+        new Promise<void>((_resolve, reject) => {
+          uploading = true;
+          signal?.addEventListener('abort', () => {
+            aborted = true;
+            reject(new DOMException('the operation was aborted', 'AbortError'));
+          }, { once: true });
+        }),
+    });
+    const job = fakeClaim({ params: { mode: 'ok' } });
+    const r = await runJob(job, pack, deps(f.api));
+    expect(r.outcome).toBe('canceled');
+    expect(aborted).toBe(true);
+    expect(f.called('complete')).toHaveLength(0);
+    expect(f.called('fail')).toHaveLength(0);
+    expect(f.called('release')).toHaveLength(0);
+    expect(existsSync(join(paths.jobsDir, job.id))).toBe(false);
+  });
+
+  test('a lost lease seen during an upload aborts it and drops the job', async () => {
+    const { pack, deps } = setup();
+    let uploading = false;
+    const f = fakeApi({
+      heartbeat: async () => {
+        if (uploading) throw new LeaseLostError(409, 'conflict', 'the job is no longer yours');
+        return { cancel: false };
+      },
+      uploadOutput: (_id, _lease, _name, _kind, _file, signal) =>
+        new Promise<void>((_resolve, reject) => {
+          uploading = true;
+          signal?.addEventListener('abort', () => reject(new DOMException('the operation was aborted', 'AbortError')), { once: true });
+        }),
+    });
+    expect((await runJob(fakeClaim({ params: { mode: 'ok' } }), pack, deps(f.api))).outcome).toBe('lost');
+    expect(f.called('complete')).toHaveLength(0);
+    expect(f.called('fail')).toHaveLength(0);
+  });
+
+  test('a heartbeat that hangs is cut off by its timeout; the next ones go on', async () => {
+    const { pack, deps } = setup();
+    let beats = 0;
+    const f = fakeApi({
+      heartbeat: (_id, _lease, _progress, _message, signal) => {
+        // The second heartbeat never gets an answer (a half-open connection).
+        if (++beats !== 2) return Promise.resolve({ cancel: false });
+        return new Promise((_resolve, reject) => signal?.addEventListener('abort', () => reject(signal.reason), { once: true }));
+      },
+    });
+    const lines: string[] = [];
+    const r = await runJob(fakeClaim({ params: { mode: 'slow', ms: 800 } }), pack, deps(f.api, { heartbeatTimeoutMs: 150, log: (l) => lines.push(l) }));
+    expect(r.outcome).toBe('succeeded');
+    expect(lines.some((l) => l.startsWith('heartbeat failed'))).toBe(true);
+    expect(beats).toBeGreaterThanOrEqual(4);
+  });
+
+  test('a local error reaches the server without any path of this PC', async () => {
+    const { paths, pack, deps } = setup();
+    const f = fakeApi({
+      // A local file-system error whose message names an absolute path.
+      downloadInput: async (_id, _lease, _input, dest) => writeFileSync(join(dest, 'missing', 'x'), 'x'),
+    });
+    const r = await runJob(fakeClaim({ params: { mode: 'ok' }, inputs: [{ name: 'source', file_name: 'a.txt', size: 5, sha256: 'x' }] }), pack, deps(f.api));
+    expect(r.outcome).toBe('retry');
+    const error = f.called('fail')[0]!.args[2] as string;
+    expect(error).toBe('worker error: ENOENT');
+    expect(error).not.toContain(paths.dataDir);
+    expect(error).not.toMatch(/[A-Za-z]:[\\/]|\/tmp\//);
   });
 });
