@@ -3,6 +3,8 @@ import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
 import { files } from '../src/db/schema.js';
+import { MAX_OPEN_UPLOAD_LINKS } from '../src/domain/files.js';
+import { revokeToken } from '../src/domain/tokens.js';
 import { issueToken, useTestApp } from './helpers.js';
 
 const t = useTestApp();
@@ -126,5 +128,30 @@ describe('aborted and oversized uploads', () => {
     expect([413, 'reset']).toContain(outcome);
     expect(t.db.select().from(files).all()).toEqual([]);
     expect(readdirSync(join(t.config.filesDir, 'tmp'))).toEqual([]);
+  });
+});
+
+describe('upload links and their owner', () => {
+  const makeLink = (token: string) =>
+    t.app.inject({ method: 'POST', url: '/api/uploads', headers: { authorization: `Bearer ${token}` }, payload: { name: 'a.bin' } });
+
+  test("a revoked token's open links stop working", async () => {
+    const alice = issueToken(t.db, 'alice');
+    const link = (await makeLink(alice)).json();
+    revokeToken(t.db, 'alice');
+    const put = await t.app.inject({ method: 'PUT', url: new URL(link.url).pathname, headers: { 'content-type': 'application/octet-stream' }, payload: 'x' });
+    expect(put.statusCode).toBe(404);
+    expect(t.db.select().from(files).all()).toEqual([]);
+  });
+
+  test('at most 100 links may be open per token; expired ones do not count', async () => {
+    const alice = issueToken(t.db, 'alice');
+    for (let i = 0; i < MAX_OPEN_UPLOAD_LINKS; i++) expect((await makeLink(alice)).statusCode).toBe(201);
+    const refused = await makeLink(alice);
+    expect(refused.statusCode).toBe(429);
+    expect(refused.json().message).toContain('at most 100 upload links');
+    expect((await makeLink(issueToken(t.db, 'bob'))).statusCode).toBe(201);
+    t.clock.advance(3_600_001);
+    expect((await makeLink(alice)).statusCode).toBe(201);
   });
 });

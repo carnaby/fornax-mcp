@@ -1,7 +1,15 @@
+import type { AddressInfo } from 'node:net';
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
+import { eq } from 'drizzle-orm';
 import { afterEach, describe, expect, test } from 'vitest';
+import { jobs } from '../src/db/schema.js';
+import { jobFile } from '../src/domain/outputs.js';
 import { createInvite } from '../src/domain/tokens.js';
+import { FileStore } from '../src/files/store.js';
 import { buildApp } from '../src/http/app.js';
-import { issueToken, useTestDb } from './helpers.js';
+import { downloadPath, resultPath } from '../src/http/links.js';
+import { renderContract } from './fixtures.js';
+import { announce, issueToken, uploadFile, useTestDb } from './helpers.js';
 
 const t = useTestDb();
 const SECRET = 'SECRETVALUE';
@@ -86,5 +94,52 @@ describe('log masking', () => {
     const res = await a.inject({ method: 'GET', url: '/boom' });
     expect(res.statusCode).toBe(500);
     expect(res.json()).toEqual({ error: 'internal', message: 'internal error' });
+  });
+});
+
+describe('secrets on the agent surface', () => {
+  test('MCP through the path, result pages, signed downloads and pairing pages keep their secrets out of the logs', async () => {
+    const lines: string[] = [];
+    const a = await build(lines);
+    const auth = (token: string) => ({ authorization: `Bearer ${token}` });
+    announce(t.db, [renderContract], new Date());
+    const alice = issueToken(t.db, 'alice');
+    const worker = issueToken(t.db, 'pc', 'worker');
+    const scene = await uploadFile(a, alice, 'scene.blend', 'B');
+    const id = (await a.inject({ method: 'POST', url: '/api/jobs', headers: auth(alice), payload: { type: 'render', params: { frame_start: 1 }, inputs: { scene } } })).json().id as string;
+    const lease = (await a.inject({ method: 'POST', url: '/api/worker/jobs/claim', headers: auth(worker), payload: { wait: 0 } })).json().lease as string;
+    await a.inject({
+      method: 'PUT', url: `/api/worker/jobs/${id}/outputs/a.txt`,
+      headers: { ...auth(worker), 'content-type': 'application/octet-stream', 'x-fornax-lease': lease }, payload: 'A',
+    });
+    await a.inject({ method: 'POST', url: `/api/worker/jobs/${id}/complete`, headers: auth(worker), payload: { lease } });
+
+    const deps = { config: t.config, db: t.db, store: new FileStore(t.config.filesDir), clock: () => new Date() };
+    const job = t.db.select().from(jobs).where(eq(jobs.id, id)).get()!;
+    const result = resultPath(deps, job);
+    const download = downloadPath(deps, job, jobFile(t.db, id, 'a.txt')!).path;
+    const invite = createInvite(t.db, { name: 'bob', role: 'client' }, new Date());
+    expect((await a.inject({ method: 'GET', url: result })).statusCode).toBe(200);
+    expect((await a.inject({ method: 'GET', url: download })).statusCode).toBe(200);
+    expect((await a.inject({ method: 'GET', url: `/pair/${invite.id}` })).statusCode).toBe(200);
+    // Percent-encoded prefixes reach the same routes.
+    const signed = result.slice('/r/'.length);
+    for (const url of [`/%6Dcp/${alice}`, `/%72/${signed}`, `/api/%75ploads/${signed}`, `/%70air/${invite.id}`]) {
+      await a.inject({ method: 'GET', url });
+    }
+
+    await a.listen({ port: 0, host: '127.0.0.1' });
+    const client = new Client({ name: 'log-test', version: '0.0.0' });
+    await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${(a.server.address() as AddressInfo).port}/mcp/${alice}`)));
+    try {
+      expect((await client.callTool({ name: 'list_jobs', arguments: {} })).isError).not.toBe(true);
+    } finally {
+      await client.close();
+    }
+
+    const out = lines.join('');
+    for (const masked of ['/mcp/***', '/r/***', '/pair/***']) expect(out).toContain(masked);
+    const secrets = [alice, alice.slice('fornax-alice-'.length), signed, new URL(download, 'http://x').searchParams.get('sig')!, invite.id];
+    for (const secret of secrets) expect(out).not.toContain(secret);
   });
 });

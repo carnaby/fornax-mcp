@@ -1,15 +1,17 @@
 import { randomBytes } from 'node:crypto';
 import type { Readable } from 'node:stream';
-import { and, eq, gt, isNull } from 'drizzle-orm';
+import { and, count, eq, gt, isNull } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import type { Db } from '../db/client.js';
 import { type FileKind, files, uploads } from '../db/schema.js';
 import { mimeOf } from '../files/mime.js';
 import type { RouteDeps } from '../http/deps.js';
 import { sign } from '../http/signing.js';
-import { notFound } from './errors.js';
+import { notFound, tooMany } from './errors.js';
 
 export const UPLOAD_LINK_TTL_MS = 3_600_000;
+/** Open (unused, unexpired) upload links one token may hold. */
+export const MAX_OPEN_UPLOAD_LINKS = 100;
 export type FileRow = typeof files.$inferSelect;
 
 /** The last path segment, without control characters, at most 200 characters; "file" when nothing is left. */
@@ -36,6 +38,14 @@ export async function saveFile(
 
 export function createUploadLink(deps: RouteDeps, owner: string, name: string): { fileId: string; url: string; expiresAt: Date } {
   const now = deps.clock();
+  const [open] = deps.db
+    .select({ n: count() })
+    .from(uploads)
+    .where(and(eq(uploads.ownerTokenId, owner), isNull(uploads.usedAt), gt(uploads.expiresAt, now)))
+    .all();
+  if ((open?.n ?? 0) >= MAX_OPEN_UPLOAD_LINKS) {
+    throw tooMany(`at most ${MAX_OPEN_UPLOAD_LINKS} upload links may be open per token; use them or let them expire (after 1 hour)`);
+  }
   const id = randomBytes(16).toString('base64url');
   const fileId = ulid(now.getTime());
   const expiresAt = new Date(now.getTime() + UPLOAD_LINK_TTL_MS);

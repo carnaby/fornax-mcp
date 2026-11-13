@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { notFound, tooLarge } from '../domain/errors.js';
 import { fileView, releaseUploadLink, saveFile, takeUploadLink } from '../domain/files.js';
+import { ownerActive } from '../domain/tokens.js';
 import type { RouteDeps } from './deps.js';
 import { verify } from './signing.js';
 
@@ -23,7 +24,8 @@ export const uploadLinkRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps)
     const now = deps.clock();
     const id = verify(deps.config.secret, 'upload', req.params.signed, now);
     const link = id ? takeUploadLink(deps.db, id, now) : null;
-    if (!link) throw notFound('the upload link is unknown, used or expired');
+    // A link acts for its owner: once the token is revoked, its open links stop working.
+    if (!link || !ownerActive(deps.db, link.ownerTokenId)) throw notFound('the upload link is unknown, used or expired');
     try {
       refuseOversized(req, deps.config.limits.maxUploadBytes);
       const row = await saveFile(deps, {
