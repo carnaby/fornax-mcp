@@ -2,10 +2,12 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generateToken, type TokenRole } from '@fornax/protocol';
+import type { FastifyInstance } from 'fastify';
 import { afterEach, beforeEach } from 'vitest';
 import type { Config } from '../src/config.js';
 import { type Db, openDb } from '../src/db/client.js';
 import { approveToken, createInvite, resolveToken } from '../src/domain/tokens.js';
+import { buildApp } from '../src/http/app.js';
 
 export const TEST_SECRET = 's'.repeat(32);
 
@@ -59,4 +61,38 @@ export function issueToken(db: Db, name: string, role: TokenRole = 'client', now
   resolveToken(db, raw, now);
   approveToken(db, name, now);
   return raw;
+}
+
+/** A test database plus an app over it, with a clock the test moves by hand. */
+export function useTestApp() {
+  const t = useTestDb();
+  const clock = {
+    now: new Date('2026-11-13T10:00:00Z'),
+    advance(ms: number) {
+      this.now = new Date(this.now.getTime() + ms);
+    },
+  };
+  let app: FastifyInstance | undefined;
+  beforeEach(async () => {
+    clock.now = new Date('2026-11-13T10:00:00Z');
+    app = await buildApp({ config: t.config, db: t.db, clock: () => clock.now });
+  });
+  afterEach(async () => {
+    await app?.close();
+  });
+  return {
+    clock,
+    get app() {
+      return app!;
+    },
+    get db() {
+      return t.db;
+    },
+    get config() {
+      return t.config;
+    },
+    get dir() {
+      return t.dir;
+    },
+  };
 }
