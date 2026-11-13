@@ -15,6 +15,9 @@ export type TestServer = {
   app: FastifyInstance;
   db: Db;
   config: Config;
+  /** Every log line of the server. Only errors also go to stdout: other packages' fixtures (e.g. a fake JPEG) provoke
+   * expected warnings that would flood the test output. */
+  logs: string[];
   /** An active token, through the real invite → first use → approve path. */
   issueToken(name: string, role?: TokenRole): string;
   /** What `fornax-admin tokens invite <name> [--worker]` does. */
@@ -41,7 +44,14 @@ export async function startTestServer(overrides: Partial<Config> = {}): Promise<
     ...overrides,
   };
   const { db, close } = openDb(config.dbFile);
-  const app = await buildApp({ config, db });
+  const logs: string[] = [];
+  const logStream = {
+    write(line: string) {
+      logs.push(line);
+      if (/"level":(5|6)\d/.test(line)) process.stdout.write(line);
+    },
+  };
+  const app = await buildApp({ config, db, logStream });
   await app.listen({ port: 0, host: '127.0.0.1' });
   const { port } = app.server.address() as { port: number };
   const url = `http://127.0.0.1:${port}`;
@@ -54,6 +64,7 @@ export async function startTestServer(overrides: Partial<Config> = {}): Promise<
     app,
     db,
     config,
+    logs,
     issueToken(name, role = 'client') {
       createInvite(db, { name, role }, new Date());
       const raw = generateToken(name);
