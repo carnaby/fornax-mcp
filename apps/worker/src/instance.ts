@@ -1,4 +1,4 @@
-import { closeSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, writeSync } from 'node:fs';
+import { closeSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, utimesSync, writeSync } from 'node:fs';
 import { readdir, rm } from 'node:fs/promises';
 import { uptime } from 'node:os';
 import { join } from 'node:path';
@@ -10,10 +10,22 @@ export const LOCK_NAME = 'worker.lock';
 const FRESH_MS = 10_000;
 /** Slack for comparing a lock's mtime with the boot time (whole-second uptime, clock adjustments). */
 const BOOT_MARGIN_MS = 60_000;
+/**
+ * A running worker touches its lock this often. The boot rule compares the lock's mtime with the wall clock, which may
+ * jump forward after boot (NTP fixing a hardware clock that runs behind): a lock written once at start would then look
+ * older than boot and be taken over while its worker runs.
+ */
+export const LOCK_REFRESH_MS = 60_000;
 const RM_RETRIES = { maxRetries: 10, retryDelay: 200 };
 
 export type WorkerLock = { file: string; release: () => void };
 export type LockHeld = { file: string; heldBy: number | null };
+export type LockOptions = {
+  refreshMs?: number;
+  /** Test seams: the wall clock and the time since boot. */
+  now?: () => number;
+  uptimeMs?: () => number;
+};
 
 function alive(pid: number): boolean {
   try {
@@ -49,12 +61,12 @@ function mtime(file: string): number | null {
  * (a reboot) is stale whatever its pid now names: pids are reused, and a worker started at boot often gets the same
  * one again. A lock holding our own pid is stale too: this process has not written it.
  */
-function held(file: string, pid: number | null): boolean {
+function held(file: string, pid: number | null, now: number, uptimeMs: number): boolean {
   const at = mtime(file);
   if (at === null) return false;
-  if (pid === null) return Date.now() - at < FRESH_MS;
+  if (pid === null) return now - at < FRESH_MS;
   if (pid === process.pid) return false;
-  const bootedAt = Date.now() - uptime() * 1000;
+  const bootedAt = now - uptimeMs;
   if (at < bootedAt - BOOT_MARGIN_MS) return false;
   return alive(pid);
 }
@@ -62,10 +74,12 @@ function held(file: string, pid: number | null): boolean {
 /**
  * Take the PC-wide worker lock (two workers would abandon each other's jobs on every claim, and one's start-time sweep would remove the other's job directories).
  * A lock whose process has ended, written before the last boot, or holding our own pid is stale and taken over. Two workers taking over the same stale lock at the very
- * same moment could both succeed; that window is accepted.
+ * same moment could both succeed; that window is accepted. While held, the lock's mtime is refreshed every `refreshMs`.
  */
-export function lockWorker(paths: Paths): WorkerLock | LockHeld {
+export function lockWorker(paths: Paths, opts: LockOptions = {}): WorkerLock | LockHeld {
   const file = join(paths.dataDir, LOCK_NAME);
+  const now = opts.now ?? Date.now;
+  const uptimeMs = opts.uptimeMs ?? (() => uptime() * 1000);
   mkdirSync(paths.dataDir, { recursive: true });
   for (let tries = 0; ; tries++) {
     try {
@@ -75,9 +89,21 @@ export function lockWorker(paths: Paths): WorkerLock | LockHeld {
       } finally {
         closeSync(fd);
       }
+      const refresh = setInterval(() => {
+        try {
+          // Only our own lock, as release.
+          if (readPid(file) !== process.pid) return;
+          const t = now() / 1000;
+          utimesSync(file, t, t);
+        } catch {
+          // Gone or busy for a moment; the next round tries again.
+        }
+      }, opts.refreshMs ?? LOCK_REFRESH_MS);
+      refresh.unref();
       return {
         file,
         release: () => {
+          clearInterval(refresh);
           // Only our own lock: a worker that took over a lock it thought stale must keep it.
           if (readPid(file) !== process.pid) return;
           try {
@@ -94,7 +120,7 @@ export function lockWorker(paths: Paths): WorkerLock | LockHeld {
     if (tries >= 3) return { file, heldBy: readPid(file) ?? null };
     const pid = readPid(file);
     if (pid === undefined) continue;
-    if (held(file, pid)) return { file, heldBy: pid };
+    if (held(file, pid, now(), uptimeMs())) return { file, heldBy: pid };
     try {
       unlinkSync(file);
     } catch (e) {

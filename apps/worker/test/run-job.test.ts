@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { describe, expect, test } from 'vitest';
@@ -369,6 +369,21 @@ describe('runJob', () => {
     // The next worker start sweeps the leftovers.
     expect(await sweepJobs(paths)).toEqual({ failed: 0, code: null });
     expect(readdirSync(paths.jobsDir)).toEqual([]);
+  });
+
+  test('a job directory that cannot be created gives the job back; it never fails it', async () => {
+    const { paths, pack, deps } = setup();
+    // A file where <data>/jobs should be: no job directory can be made.
+    mkdirSync(paths.dataDir, { recursive: true });
+    writeFileSync(paths.jobsDir, 'not a directory');
+    const f = fakeApi();
+    const r = await runJob(fakeClaim({ params: { mode: 'ok' } }), pack, deps(f.api));
+    expect(r.outcome).toBe('released');
+    expect(r.detail).toMatch(/^the job directory could not be created \([A-Z]+\)$/);
+    expect(f.called('release')).toHaveLength(1);
+    expect(f.called('fail')).toHaveLength(0);
+    expect(f.called('complete')).toHaveLength(0);
+    expect(readFileSync(paths.jobsDir, 'utf8')).toBe('not a directory');
   });
 
   test('an output the server refuses (413) fails the job for good after one try, naming it', async () => {

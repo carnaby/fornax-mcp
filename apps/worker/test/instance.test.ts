@@ -1,10 +1,10 @@
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { uptime } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, test } from 'vitest';
 import { lockWorker, sweepJobs } from '../src/instance.js';
-import { testPaths, useTempDir } from './helpers.js';
+import { testPaths, useTempDir, waitFor } from './helpers.js';
 
 const tmp = useTempDir();
 
@@ -77,6 +77,45 @@ describe('one worker per PC', () => {
     const lock = lockWorker(paths);
     expect('release' in lock).toBe(true);
     expect(readFileSync(file, 'utf8')).toBe(String(process.pid));
+    if ('release' in lock) lock.release();
+  });
+
+  test('a running worker keeps its lock fresh, so a forward clock jump never makes it look older than boot', async () => {
+    const paths = testPaths(tmp());
+    const lock = lockWorker(paths, { refreshMs: 20 });
+    expect('release' in lock).toBe(true);
+    const file = join(paths.dataDir, 'worker.lock');
+    // The wall clock jumped forward a day after the lock was written: its mtime now looks a day old.
+    const old = (Date.now() - 86_400_000) / 1000;
+    utimesSync(file, old, old);
+    await waitFor(() => Date.now() - statSync(file).mtimeMs < 5000, 5000, 'the lock to be refreshed');
+    if ('release' in lock) lock.release();
+    // Released: no refresh recreates or touches the file.
+    await new Promise((r) => setTimeout(r, 60));
+    expect(existsSync(file)).toBe(false);
+  });
+
+  test('the refresh never touches a lock another process took over meanwhile', async () => {
+    const paths = testPaths(tmp());
+    const lock = lockWorker(paths, { refreshMs: 20 });
+    const file = writeLock(paths.dataDir, livePid(), 3_600_000);
+    const before = statSync(file).mtimeMs;
+    await new Promise((r) => setTimeout(r, 100));
+    expect(statSync(file).mtimeMs).toBe(before);
+    if ('release' in lock) lock.release();
+  });
+
+  test('after a forward clock jump a refreshed lock is still held; one not refreshed since before boot is stale', () => {
+    const paths = testPaths(tmp());
+    const other = livePid();
+    // The clock of this PC jumped a day forward after boot; the uptime did not.
+    const day = 86_400_000;
+    const clock = { now: () => Date.now() + day, uptimeMs: () => 600_000 };
+    const refreshed = writeLock(paths.dataDir, other, -day);
+    expect(lockWorker(paths, clock)).toEqual({ heldBy: other, file: refreshed });
+    writeLock(paths.dataDir, other);
+    const lock = lockWorker(paths, clock);
+    expect('release' in lock).toBe(true);
     if ('release' in lock) lock.release();
   });
 
