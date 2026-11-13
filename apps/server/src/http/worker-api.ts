@@ -6,6 +6,7 @@ import { files } from '../db/schema.js';
 import { notFound } from '../domain/errors.js';
 import { announceTypes } from '../domain/job-types.js';
 import { claimJob, claimView, failJob, heartbeatJob, ownedJob, releaseJob } from '../domain/queue.js';
+import { workerQueue } from '../domain/maintenance.js';
 import { completeJob, discardOutputs, outputBudget, storeOutput } from '../domain/outputs.js';
 import { jobSignal } from '../domain/signal.js';
 import { touchWorker } from '../domain/worker-state.js';
@@ -50,6 +51,8 @@ export const workerRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps) => 
   // On shutdown waiting claims answer at once instead of holding the close up.
   const closing = new AbortController();
   app.addHook('preClose', async () => closing.abort());
+
+  app.get('/queue', { config: { quiet: true } }, async () => workerQueue(deps.db));
 
   app.post('/jobs/claim', async (req, reply) => {
     const { wait } = parse(claimBody, req.body ?? {});

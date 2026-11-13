@@ -5,6 +5,7 @@ import { notFound } from '../domain/errors.js';
 import { createUploadLink, fileView, getOwnFile, saveFile } from '../domain/files.js';
 import { cancelJob, getOwnJob, GROUP, jobView, listJobs, PRIORITIES, submitJob } from '../domain/jobs.js';
 import { offeredTypes, typeView } from '../domain/job-types.js';
+import { queueStatus } from '../domain/maintenance.js';
 import { jobFile } from '../domain/outputs.js';
 import { workerOnline } from '../domain/worker-state.js';
 import { requireRole } from './auth.js';
@@ -19,6 +20,8 @@ export const clientRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps) => 
   app.get('/whoami', async (req) => ({ name: req.identity!.name, role: req.identity!.role }));
 
   app.get('/types', async () => ({ types: offeredTypes(deps.db).map(typeView), worker: workerOnline(deps.db, deps.clock()) }));
+
+  app.get('/queue', async () => queueStatus(deps.db, deps.clock()));
 
   // Raw uploads live in a child plugin so JSON parsing stays on for the other routes.
   await app.register(async (raw) => {
