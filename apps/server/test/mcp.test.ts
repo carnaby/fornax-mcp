@@ -29,7 +29,7 @@ describe('the MCP endpoint', () => {
   test('offers exactly its tools and the instructions', async () => {
     const client = await mcp.connect('/mcp', bearerHeader(issueToken(t.db, 'alice')));
     const { tools } = await client.listTools();
-    expect(tools.map((x) => x.name).sort()).toEqual(['cancel_job', 'create_upload', 'get_job', 'list_job_types', 'list_jobs', 'queue_status', 'submit_job']);
+    expect(tools.map((x) => x.name).sort()).toEqual(['cancel_job', 'create_upload', 'get_job', 'get_output', 'list_job_types', 'list_jobs', 'queue_status', 'submit_job']);
     for (const tool of tools) expect(tool.description, tool.name).toBeTruthy();
     const ins = client.getInstructions() ?? '';
     expect(ins).toMatch(/^Fornax is a job queue for one GPU worker/);

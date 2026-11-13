@@ -10,6 +10,7 @@ import type { Identity } from '../domain/tokens.js';
 import { workerOnline } from '../domain/worker-state.js';
 import type { RouteDeps } from '../http/deps.js';
 import { resultUrl } from '../http/links.js';
+import { outputBlocks } from './output.js';
 import { SERVER_INSTRUCTIONS, TOOL_DESCRIPTIONS as D } from './text.js';
 
 export const MCP_SERVER_VERSION = '0.1.0';
@@ -96,6 +97,18 @@ export function buildMcpServer(ctx: McpContext): McpServer {
       const row = getOwnJob(db, me.tokenId, job_id);
       return { ...jobView(db, row), result_url: resultUrl(deps, row) };
     }),
+  );
+
+  server.registerTool(
+    'get_output',
+    {
+      description: D.get_output,
+      inputSchema: z.object({
+        job_id: jobId,
+        name: z.string().min(1).max(300).describe('An output name as get_job lists it, the preview name of an output, or the log name.'),
+      }),
+    },
+    ({ job_id, name }) => runBlocks(ctx, (me) => outputBlocks(deps, getOwnJob(db, me.tokenId, job_id), name)),
   );
 
   server.registerTool(

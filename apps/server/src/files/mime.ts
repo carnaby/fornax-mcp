@@ -10,3 +10,15 @@ const TYPES: Record<string, string> = {
 };
 
 export const mimeOf = (name: string): string => TYPES[extname(name).toLowerCase()] ?? 'application/octet-stream';
+
+/** Text a person or an agent can read inline: plain text, JSON, subtitles. */
+export const isTextMime = (mime: string): boolean => mime.startsWith('text/') || mime === 'application/json' || mime === 'application/x-subrip';
+
+/** Text and JSON up to this size are shown inline (MCP get_output, the result page). */
+export const INLINE_TEXT_BYTES = 100_000;
+
+/** Image formats browsers and MCP clients show directly. */
+export const INLINE_IMAGE_MIMES: ReadonlySet<string> = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
+
+/** A larger image is offered as a link only (MCP clients limit the size of an image block). */
+export const INLINE_IMAGE_BYTES = 2 * 1024 * 1024;
