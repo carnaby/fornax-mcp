@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { fingerprint } from '@fornax/protocol';
+import { fingerprint, generateToken } from '@fornax/protocol';
 import { startTestServer, type TestServer } from '@fornax/server/testing';
 import { afterEach, describe, expect, test } from 'vitest';
 import { ApiError, type WorkerApi } from '../src/api.js';
@@ -141,6 +141,15 @@ describe('fornax CLI', () => {
     expect(existsSync(join(ctx.paths.dataDir, 'worker.lock'))).toBe(false);
   });
 
+  // POSIX modes only: the token file on Windows relies on the profile's ACL (out of scope).
+  test.runIf(process.platform !== 'win32')('doctor warns when the token file is readable by other users', async () => {
+    const { ctx, run } = cli();
+    saveToken(ctx.paths, generateToken('pc'));
+    expect((await run('doctor')).text).not.toMatch(/WARN/);
+    chmodSync(ctx.paths.tokenFile, 0o644);
+    expect((await run('doctor')).text).toMatch(/^WARN\s+token file .* can be read or changed by other users \(mode 0644\); run chmod 600 /m);
+  });
+
   test('commands that need pairing say how to pair', async () => {
     const { run } = cli();
     expect(await run('worker', 'queue')).toMatchObject({ code: 1, text: expect.stringContaining('fornax worker pair') });
@@ -148,7 +157,7 @@ describe('fornax CLI', () => {
 });
 
 describe('pairing answers', () => {
-  const fakeApi = (e: unknown) => ({ ping: async () => { throw e; } }) as unknown as WorkerApi;
+  const fakeApi = (e: unknown, onPing = () => {}) => ({ ping: async () => { onPing(); throw e; } }) as unknown as WorkerApi;
 
   test('only the pending answer counts as registered; any other 403 saves nothing', async () => {
     const { ctx, run } = cli();
@@ -176,6 +185,68 @@ describe('pairing answers', () => {
     expect(r.code).toBe(1);
     expect(r.text).not.toContain('unexpected');
     expect(existsSync(ctx.paths.tokenFile)).toBe(false);
+  });
+
+  test('a server that lets the new token in at once did not register it: nothing is saved', async () => {
+    const { ctx, run } = cli();
+    ctx.makeApi = () => ({ ping: async () => {} }) as unknown as WorkerApi;
+    const r = await run('worker', 'pair', '--server', 'http://127.0.0.1:1', '--name', 'pc');
+    expect(r).toEqual({ code: 1, text: 'this server did not register the token; is the URL right?' });
+    expect(existsSync(ctx.paths.tokenFile)).toBe(false);
+    expect(existsSync(ctx.paths.configFile)).toBe(false);
+  });
+
+  test('a local problem is found before the ping, so it never uses up the invite', async () => {
+    let pings = 0;
+    const counting = () => ({ ping: async () => void pings++ }) as unknown as WorkerApi;
+
+    const broken = cli();
+    broken.ctx.makeApi = counting;
+    mkdirSync(broken.ctx.paths.configDir, { recursive: true });
+    writeFileSync(broken.ctx.paths.configFile, 'server: [\n');
+    const r1 = await broken.run('worker', 'pair', '--server', 'http://127.0.0.1:1', '--name', 'pc');
+    expect(r1.code).toBe(1);
+    expect(r1.text).toMatch(/is not valid YAML/);
+
+    const unwritable = cli();
+    unwritable.ctx.makeApi = counting;
+    // The configuration directory cannot be created: a file stands in its place.
+    mkdirSync(dirname(unwritable.ctx.paths.configDir), { recursive: true });
+    writeFileSync(unwritable.ctx.paths.configDir, '');
+    const r2 = await unwritable.run('worker', 'pair', '--server', 'http://127.0.0.1:1', '--name', 'pc');
+    expect(r2.code).toBe(1);
+    expect(r2.text).toMatch(/cannot write to/);
+
+    expect(pings).toBe(0);
+  });
+
+  test('pair --server refuses a user name, password, query or fragment; plain http to another host is warned about', async () => {
+    const { ctx, run } = cli();
+    let pings = 0;
+    ctx.makeApi = () => fakeApi(new ApiError(403, 'pending', 'waiting'), () => pings++);
+    for (const bad of ['https://u:p@fornax.example.com', 'https://u@fornax.example.com', 'https://fornax.example.com/?a=1', 'https://fornax.example.com/#x', 'https://fornax.example.com/?']) {
+      const r = await run('worker', 'pair', '--server', bad, '--name', 'pc');
+      expect(r.code, bad).toBe(2);
+      expect(r.text).toMatch(/user name, password, query or fragment/);
+    }
+    expect(pings).toBe(0);
+    const plain = await run('worker', 'pair', '--server', 'http://fornax.example.com', '--name', 'pc');
+    expect(plain.code).toBe(0);
+    expect(plain.text).toMatch(/^warning: .*http:\/\/fornax\.example\.com.* not encrypted/m);
+    const local = await run('worker', 'pair', '--server', 'http://127.0.0.1:1', '--name', 'pc', '--force');
+    expect(local.code).toBe(0);
+    expect(local.text).not.toMatch(/warning/);
+  });
+
+  test('commands that connect warn about plain http to another host', async () => {
+    const { ctx, run } = cli();
+    mkdirSync(ctx.paths.configDir, { recursive: true });
+    writeFileSync(ctx.paths.configFile, 'server: http://fornax.example.com\n');
+    saveToken(ctx.paths, generateToken('pc'));
+    ctx.makeApi = () => ({ queue: async () => ({ queued: 0, running: 0, unavailable: [] }) }) as unknown as WorkerApi;
+    const r = await run('worker', 'queue');
+    expect(r.code).toBe(0);
+    expect(r.text).toMatch(/^warning: .*not encrypted/m);
   });
 
   test('the server is saved before the token', async () => {

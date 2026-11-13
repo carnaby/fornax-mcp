@@ -1,5 +1,5 @@
-import { existsSync, readdirSync, statSync } from 'node:fs';
-import { delimiter, isAbsolute, join } from 'node:path';
+import { accessSync, constants, existsSync, readdirSync, statSync } from 'node:fs';
+import { delimiter, extname, isAbsolute, join } from 'node:path';
 import { loadPacks, missingTools, type Pack } from './pack.js';
 import { childEnv, runProcess } from './process.js';
 import { expandArgv } from './template.js';
@@ -10,6 +10,25 @@ export const CHECK_TIMEOUT_MS = 120_000;
 /** Node cannot spawn a batch file without a shell (EINVAL), and no shell is ever used. */
 export const isBatchFile = (cmd: string, platform: NodeJS.Platform = process.platform): boolean =>
   platform === 'win32' && /\.(cmd|bat)$/i.test(cmd);
+
+/**
+ * Windows, as libuv's spawn searches: the name as given (only when it has an extension), then with .com, then .exe
+ * appended; only a .com or .exe can be started without a shell.
+ */
+const WINDOWS_SUFFIXES = ['', '.com', '.exe'];
+const WINDOWS_RUNNABLE = new Set(['.com', '.exe']);
+
+/** A file the OS can start: on Windows by its extension, elsewhere by its executable bit. */
+const isRunnable = (p: string, platform: NodeJS.Platform): boolean => {
+  try {
+    if (!statSync(p).isFile()) return false;
+    if (platform === 'win32') return WINDOWS_RUNNABLE.has(extname(p).toLowerCase());
+    accessSync(p, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 const isFile = (p: string): boolean => {
   try {
@@ -25,16 +44,18 @@ export function oneLine(text: string, max = 200): string {
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }
 
-/** Where a tool from worker.yaml points, or null when nothing is there. Bare names are looked up on PATH; on Windows only real executables count (no .cmd/.bat). */
+/**
+ * Where a tool from worker.yaml points, or null when nothing startable is there. Bare names are looked up on PATH.
+ * Windows: only what spawn starts without a shell (a .com or .exe, found as spawn finds it; never .cmd/.bat/.py).
+ * Linux: the file must be executable.
+ */
 export function findTool(cmd: string, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string | null {
-  if (isAbsolute(cmd) || cmd.includes('/') || cmd.includes('\\')) return isFile(cmd) ? cmd : null;
-  const pathExt = (env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';').filter((e) => e && !/^\.(cmd|bat)$/i.test(e));
-  const exts = platform === 'win32' ? ['', ...pathExt] : [''];
+  const suffixes = platform === 'win32' ? WINDOWS_SUFFIXES : [''];
+  const first = (base: string) => suffixes.map((s) => base + s).find((p) => isRunnable(p, platform)) ?? null;
+  if (isAbsolute(cmd) || cmd.includes('/') || cmd.includes('\\')) return first(cmd);
   for (const dir of (env.PATH ?? '').split(delimiter).filter(Boolean)) {
-    for (const ext of exts) {
-      const p = join(dir, cmd + ext);
-      if (!isBatchFile(p, platform) && isFile(p)) return p;
-    }
+    const p = first(join(dir, cmd));
+    if (p) return p;
   }
   return null;
 }

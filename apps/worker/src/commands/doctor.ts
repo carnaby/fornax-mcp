@@ -1,6 +1,7 @@
+import { statSync } from 'node:fs';
 import { ApiError, NetworkError } from '../api.js';
 import { checkPack, findTool } from '../checks.js';
-import { ConfigError, readToken, readWorkerConfig, type WorkerConfig } from '../config.js';
+import { ConfigError, readToken, readWorkerConfig, serverWarning, type WorkerConfig } from '../config.js';
 import { loadPacks } from '../pack.js';
 import { apiFor, type Ctx } from './context.js';
 
@@ -11,11 +12,15 @@ export async function doctor(ctx: Ctx, only?: string): Promise<number> {
     if (!good) ok = false;
     ctx.out(`${good ? 'ok  ' : 'FAIL'}  ${text}`);
   };
+  /** Worth fixing, but the worker runs. */
+  const warn = (text: string) => ctx.out(`WARN  ${text}`);
 
   let config: WorkerConfig | null = null;
   try {
     config = readWorkerConfig(ctx.paths);
     line(true, `config ${ctx.paths.configFile}`);
+    const warning = serverWarning(config.server);
+    if (warning) warn(warning.replace(/^warning: /, ''));
   } catch (e) {
     if (!(e instanceof ConfigError)) throw e;
     line(false, e.message);
@@ -24,6 +29,11 @@ export async function doctor(ctx: Ctx, only?: string): Promise<number> {
   try {
     token = readToken(ctx.paths);
     if (!token) line(false, `no worker token in ${ctx.paths.tokenFile}; pair with fornax worker pair`);
+    // Linux: the token file is the worker's password. (Windows relies on the profile's ACL, not checked here.)
+    else if (process.platform !== 'win32') {
+      const mode = statSync(ctx.paths.tokenFile).mode & 0o777;
+      if (mode & 0o077) warn(`token file ${ctx.paths.tokenFile} can be read or changed by other users (mode ${mode.toString(8).padStart(4, '0')}); run chmod 600 ${ctx.paths.tokenFile}`);
+    }
   } catch (e) {
     if (!(e instanceof ConfigError)) throw e;
     line(false, e.message);

@@ -1,5 +1,5 @@
 import { WorkerApi } from '../api.js';
-import { ConfigError, readToken, readWorkerConfig, type WorkerConfig } from '../config.js';
+import { ConfigError, readToken, readWorkerConfig, serverWarning, type WorkerConfig } from '../config.js';
 import type { LoopOptions } from '../loop.js';
 import type { Paths } from '../paths.js';
 
@@ -24,5 +24,7 @@ export function connect(ctx: Ctx): { config: WorkerConfig; api: WorkerApi } {
   const config = readWorkerConfig(ctx.paths);
   const token = readToken(ctx.paths);
   if (!token) throw new ConfigError(`no worker token in ${ctx.paths.tokenFile}; pair this PC first: fornax worker pair --server <url> --name <name>`);
+  const warning = serverWarning(config.server);
+  if (warning) ctx.out(warning);
   return { config, api: apiFor(ctx, config.server, token) };
 }

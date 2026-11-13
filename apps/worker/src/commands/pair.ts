@@ -1,6 +1,6 @@
 import { fingerprint, generateToken, TOKEN_NAME } from '@fornax/protocol';
 import { ApiError, NetworkError } from '../api.js';
-import { readToken, saveServer, saveToken } from '../config.js';
+import { checkWritableConfig, readToken, saveServer, saveToken, serverUrlProblem, serverWarning } from '../config.js';
 import { apiFor, type Ctx } from './context.js';
 
 /**
@@ -8,15 +8,12 @@ import { apiFor, type Ctx } from './context.js';
  * Its first call registers it as pending against the admin's invite; it is saved only then.
  */
 export async function pair(ctx: Ctx, opts: { server: string; name: string; force: boolean }): Promise<number> {
-  let server: string;
-  try {
-    const u = new URL(opts.server);
-    if (u.protocol !== 'https:' && u.protocol !== 'http:') throw new Error('not http(s)');
-    server = u.href.replace(/\/+$/, '');
-  } catch {
-    ctx.out('--server must be an http(s) URL, as printed by fornax-admin tokens invite');
+  const problem = serverUrlProblem(opts.server);
+  if (problem) {
+    ctx.out(`--server: ${problem}; use the URL printed by fornax-admin tokens invite`);
     return 2;
   }
+  const server = new URL(opts.server).href.replace(/\/+$/, '');
   if (!TOKEN_NAME.test(opts.name)) {
     ctx.out('--name must be 1-24 characters a-z or 0-9: the name the admin invited');
     return 2;
@@ -26,9 +23,16 @@ export async function pair(ctx: Ctx, opts: { server: string; name: string; force
     ctx.out(`this PC is already paired (${ctx.paths.tokenFile}); add --force to replace its token`);
     return 1;
   }
+  // Registering uses up the invite: whatever could fail on this PC is checked first.
+  checkWritableConfig(ctx.paths);
+  const warning = serverWarning(server);
+  if (warning) ctx.out(warning);
   const token = generateToken(opts.name);
   try {
     await apiFor(ctx, server, token).ping(ctx.signal);
+    // Let in at once: this is not the server that holds the invite (or it does not check worker tokens).
+    ctx.out('this server did not register the token; is the URL right?');
+    return 1;
   } catch (e) {
     if (ctx.signal.aborted) {
       ctx.out('stopped; nothing was saved');

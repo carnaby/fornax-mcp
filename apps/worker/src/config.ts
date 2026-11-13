@@ -1,7 +1,7 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { parseToken } from '@fornax/protocol';
-import { Document, parse as parseYaml, parseDocument } from 'yaml';
+import { Document, isMap, parse as parseYaml, parseDocument } from 'yaml';
 import { z } from 'zod';
 import type { Paths } from './paths.js';
 
@@ -11,8 +11,33 @@ export const TOOL_NAME = /^[a-z][a-z0-9_]{0,39}$/;
 /** Local configuration is missing or wrong; the message says what to do. */
 export class ConfigError extends Error {}
 
+/** Why a server URL cannot be used (it would carry secrets or parts the API paths are appended after), or null. */
+export function serverUrlProblem(raw: string): string | null {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return 'the server must be an http(s) URL';
+  }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') return 'the server must be an http(s) URL';
+  if (u.username || u.password || /[?#]/.test(raw)) return 'the server URL must not contain a user name, password, query or fragment';
+  return null;
+}
+
+const LOOPBACK = /^(localhost|127(\.\d{1,3}){3}|\[::1\])$/i;
+
+/** A warning for plain http to another computer (the token would cross the network readable), or null. */
+export function serverWarning(server: string): string | null {
+  const u = new URL(server);
+  if (u.protocol !== 'http:' || LOOPBACK.test(u.hostname)) return null;
+  return `warning: ${server} is plain http: the token and the job files cross the network not encrypted; use https unless this network is trusted`;
+}
+
 const workerYaml = z.strictObject({
-  server: z.url({ protocol: /^https?$/, error: 'server must be an http(s) URL' }),
+  server: z.url({ protocol: /^https?$/, error: 'server must be an http(s) URL' }).superRefine((v, ctx) => {
+    const problem = serverUrlProblem(v);
+    if (problem) ctx.addIssue({ code: 'custom', message: problem });
+  }),
   tools: z
     .record(z.string().regex(TOOL_NAME, 'tool names are a-z, 0-9 and "_", starting with a letter'), z.string().min(1))
     .nullish()
@@ -34,6 +59,32 @@ export function readWorkerConfig(paths: Paths): WorkerConfig {
   const r = workerYaml.safeParse(raw);
   if (!r.success) throw new ConfigError(`invalid ${paths.configFile}: ${z.prettifyError(r.error)}`);
   return { server: r.data.server.replace(/\/+$/, ''), tools: r.data.tools };
+}
+
+/**
+ * Before pairing: worker.yaml is absent or parseable, and the configuration directory can be written. Pairing uses up
+ * the invite, so a local problem must show before it.
+ */
+export function checkWritableConfig(paths: Paths): void {
+  if (existsSync(paths.configFile)) {
+    let ok = false;
+    try {
+      // saveServer sets a key in it: it must be a mapping (or empty).
+      const doc = parseDocument(readFileSync(paths.configFile, 'utf8'));
+      ok = doc.errors.length === 0 && (doc.contents === null || isMap(doc.contents));
+    } catch {
+      // Unreadable: reported below.
+    }
+    if (!ok) throw new ConfigError(`${paths.configFile} is not valid YAML; fix or remove it, then pair again`);
+  }
+  const probe = join(paths.configDir, `.write-test-${process.pid}`);
+  try {
+    mkdirSync(paths.configDir, { recursive: true });
+    writeFileSync(probe, '');
+    rmSync(probe, { force: true });
+  } catch (e) {
+    throw new ConfigError(`cannot write to ${paths.configDir} (${(e as NodeJS.ErrnoException).code ?? 'error'}); nothing was sent to the server`);
+  }
 }
 
 /** Set the server URL in worker.yaml, keeping the tools and any comments already there. */

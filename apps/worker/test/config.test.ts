@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { generateToken } from '@fornax/protocol';
 import { describe, expect, test } from 'vitest';
-import { ConfigError, readToken, readWorkerConfig, saveServer, saveToken } from '../src/config.js';
+import { ConfigError, readToken, readWorkerConfig, saveServer, saveToken, serverWarning } from '../src/config.js';
 import { testPaths, useTempDir } from './helpers.js';
 
 const tmp = useTempDir();
@@ -38,6 +38,19 @@ describe('worker.yaml', () => {
     ]) {
       expect(() => readWorkerConfig(paths(bad)), bad).toThrow(ConfigError);
     }
+  });
+
+  test('a server URL with a user name, password, query or fragment is refused', () => {
+    for (const url of ['https://u:p@fornax.example.com', 'https://u@fornax.example.com', 'https://fornax.example.com/?a=1', 'https://fornax.example.com/#x']) {
+      expect(() => readWorkerConfig(paths(`server: ${url}\n`)), url).toThrow(/user name, password, query or fragment/);
+    }
+  });
+
+  test('plain http is warned about unless the server is on this PC', () => {
+    expect(serverWarning('https://fornax.example.com')).toBeNull();
+    expect(serverWarning('http://fornax.example.com')).toMatch(/not encrypted/);
+    expect(serverWarning('http://192.168.1.10:8080')).toMatch(/not encrypted/);
+    for (const local of ['http://localhost:8080', 'http://127.0.0.1:8080', 'http://[::1]:8080']) expect(serverWarning(local), local).toBeNull();
   });
 
   test('saveServer keeps the tools and the comments', () => {

@@ -1,4 +1,4 @@
-import { mkdirSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { describe, expect, test } from 'vitest';
 import { checkPack, findBatchOnly, findTool, isBatchFile, oneLine, packsSignature, preparePacks } from '../src/checks.js';
@@ -27,6 +27,35 @@ describe('findTool', () => {
     expect(findTool('real', env, 'win32')?.toLowerCase()).toBe(join(dir, 'real.exe').toLowerCase());
     expect(isBatchFile('C:\\x\\a.BAT', 'win32')).toBe(true);
     expect(isBatchFile('a.cmd', 'linux')).toBe(false);
+  });
+
+  test('on Windows only what spawn starts without a shell counts: the name as given, or with .com or .exe appended', () => {
+    const dir = tmp();
+    for (const f of ['tool.py', 'tool.ps1', 'other.com', 'plain', 'real.exe']) writeFileSync(join(dir, f), '');
+    const env = { PATH: dir, PATHEXT: '.COM;.EXE;.BAT;.CMD;.PY;.PS1' };
+    // PATHEXT plays no part: spawn tries only .com and .exe.
+    expect(findTool('tool', env, 'win32')).toBeNull();
+    expect(findTool('tool.py', env, 'win32')).toBeNull();
+    expect(findTool(join(dir, 'tool.py'), env, 'win32')).toBeNull();
+    expect(findTool(join(dir, 'tool.ps1'), env, 'win32')).toBeNull();
+    expect(findTool('other', env, 'win32')?.toLowerCase()).toBe(join(dir, 'other.com').toLowerCase());
+    expect(findTool('real.exe', env, 'win32')?.toLowerCase()).toBe(join(dir, 'real.exe').toLowerCase());
+    expect(findTool(join(dir, 'real'), env, 'win32')?.toLowerCase()).toBe(join(dir, 'real.exe').toLowerCase());
+    // A file without an extension is never started as it is.
+    expect(findTool('plain', env, 'win32')).toBeNull();
+    expect(findTool(join(dir, 'plain'), env, 'win32')).toBeNull();
+  });
+
+  test.runIf(process.platform !== 'win32')('on Linux a tool must be executable', () => {
+    const dir = tmp();
+    const file = join(dir, 'tool');
+    writeFileSync(file, '#!/bin/sh\n', { mode: 0o644 });
+    const env = { PATH: dir };
+    expect(findTool(file, env, 'linux')).toBeNull();
+    expect(findTool('tool', env, 'linux')).toBeNull();
+    chmodSync(file, 0o755);
+    expect(findTool(file, env, 'linux')).toBe(file);
+    expect(findTool('tool', env, 'linux')).toBe(file);
   });
 
   test.runIf(process.platform === 'win32')('checkPack reports a configured batch file clearly', async () => {

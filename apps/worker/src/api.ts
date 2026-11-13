@@ -33,6 +33,18 @@ export class LocalFileError extends Error {}
 export const isTransient = (e: unknown): boolean =>
   e instanceof NetworkError || e instanceof InputMismatchError || (e instanceof ApiError && e.status >= 500);
 
+/** The server keeps this shape of a computer name and shows "worker" for anything else. */
+const HOSTNAME = /^[a-z0-9][a-z0-9._-]{0,62}$/;
+
+/**
+ * This PC's name for the X-Fornax-Worker header, cleaned exactly as the server does (its hostnameOf). A header value
+ * outside Latin-1 (a computer name in another script) would make every request throw.
+ */
+export function workerHostname(raw: string = hostname()): string {
+  const v = raw.trim().toLowerCase();
+  return HOSTNAME.test(v) ? v : 'worker';
+}
+
 export type ClaimedInput = ClaimedJob['inputs'][number];
 export type WorkerQueue = { queued: number; running: number; unavailable: { type: string; count: number }[] };
 
@@ -51,7 +63,7 @@ export class WorkerApi {
     this.base = `${opts.server.replace(/\/+$/, '')}/api/worker`;
     this.headers = {
       authorization: `Bearer ${opts.token}`,
-      [WORKER_HEADERS.name]: hostname().toLowerCase(),
+      [WORKER_HEADERS.name]: workerHostname(),
       [WORKER_HEADERS.version]: WORKER_VERSION,
     };
   }
