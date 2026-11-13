@@ -66,6 +66,7 @@ describe('collectOutputs', () => {
     await expect(collectOutputs(outDir({ 'a.png': 'x', 'outputs.json': '{"b.png": {}}' }))).rejects.toThrow(/b\.png, which is not in out/);
     await expect(collectOutputs(outDir({ 'a.png': 'x', 'outputs.json': '{"a.png": {"preview": "p.jpg"}}' }))).rejects.toThrow(/preview p\.jpg/);
     await expect(collectOutputs(outDir({ 'a.png': 'x', 'outputs.json': '{"a.png": {"preview": "a.png"}}' }))).rejects.toThrow(/its own preview/);
+    await expect(collectOutputs(outDir({ 'a.png': 'x', 'b.png': 'y', 'outputs.json': '{"a.png": {"preview": "b.png"}, "b.png": {"meta": {"w": 1}}}' }))).rejects.toThrow(/preview b\.png of a\.png.*separate file/);
     await expect(collectOutputs(outDir({ 'a.png': 'x', 'outputs.json': '{"a.png": {"size": 1}}' }))).rejects.toThrow(/outputs\.json/);
   });
 

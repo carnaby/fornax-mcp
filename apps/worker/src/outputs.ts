@@ -53,6 +53,9 @@ async function readOutputsJson(file: string, names: Set<string>): Promise<Output
     if (info.preview === undefined) continue;
     if (info.preview === name) throw new OutputError(`${OUTPUTS_JSON}: ${name} cannot be its own preview`);
     if (!names.has(info.preview)) throw new OutputError(`${OUTPUTS_JSON}: preview ${info.preview} of ${name} is not in out/`);
+    if (Object.hasOwn(r.data, info.preview)) {
+      throw new OutputError(`${OUTPUTS_JSON}: preview ${info.preview} of ${name} is itself a listed output; a preview must be a separate file`);
+    }
   }
   return r.data;
 }

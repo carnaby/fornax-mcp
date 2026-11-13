@@ -8,6 +8,7 @@ import { announceTypes } from '../domain/job-types.js';
 import { abandonRunning, claimJob, claimView, confirmJob, failJob, heartbeatJob, ownedJob, releaseJob } from '../domain/queue.js';
 import { workerQueue } from '../domain/maintenance.js';
 import { completeJob, discardOutputs, hasProducedFiles, outputBudget, storeOutput } from '../domain/outputs.js';
+import { attachServerPreview } from '../domain/previews.js';
 import { jobSignal } from '../domain/signal.js';
 import { touchWorker } from '../domain/worker-state.js';
 import { requireRole } from './auth.js';
@@ -127,6 +128,8 @@ export const workerRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps) => 
       const kind = parse(z.enum(['output', 'log']).default('output'), req.query.kind);
       refuseOversized(req, outputBudget(deps, req.params.id, lease, req.params['*']));
       const row = await storeOutput(deps, { jobId: req.params.id, lease, name: req.params['*'], kind, source: req.raw });
+      // Before the 201: the worker calls complete only after this answer, so complete always sees the preview.
+      if (row.kind === 'output') await attachServerPreview(deps, row, req.log);
       return reply.code(201).send({ name: row.name, size: row.size, sha256: row.sha256 });
     });
   });
