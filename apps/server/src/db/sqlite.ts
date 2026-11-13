@@ -7,8 +7,17 @@
  * Covered: `prepare` → statement `run` / `get` / `all` / `raw`, `transaction`
  * (with the `deferred` / `immediate` / `exclusive` variants, nested calls use a
  * savepoint), `exec`, `pragma`, `inTransaction`, `close`.
+ *
+ * Known differences from better-sqlite3 (none matter for the current schema):
+ * - BLOB columns come back as `Uint8Array`, not `Buffer`;
+ * - reading an integer above 2^53 throws instead of losing precision;
+ * - SQLite errors have `code: 'ERR_SQLITE_ERROR'` with the numeric `errcode`
+ *   and the text `errstr`, not a `code` such as `SQLITE_CONSTRAINT_UNIQUE`.
  */
 import type { DatabaseSync, SQLInputValue, StatementSync } from 'node:sqlite';
+
+/** Whitespace, `;`, `-- …` line comments and `/* … *\/` comments (SQLite allows an unterminated one at the end). */
+const ONLY_SEPARATORS = /^(?:\s|;|--[^\n]*|\/\*(?:[^*]|\*(?!\/))*(?:\*\/|$))*$/;
 
 export interface SqliteRunResult {
   changes: number | bigint;
@@ -103,8 +112,17 @@ export class SqliteDatabase {
     return this.#db.isTransaction;
   }
 
+  /**
+   * node:sqlite prepares only the first statement of the string and silently
+   * drops the rest; better-sqlite3 throws. Throw too, so a migration chunk with
+   * two statements cannot be applied in part and still be recorded as done.
+   */
   prepare(source: string): SqliteStatement {
-    return new SqliteStatement(this.#db.prepare(source));
+    const stmt = this.#db.prepare(source);
+    // sourceSQL is the prepared first statement, a prefix of `source`.
+    const rest = source.startsWith(stmt.sourceSQL) ? source.slice(stmt.sourceSQL.length) : source;
+    if (!ONLY_SEPARATORS.test(rest)) throw new RangeError('The supplied SQL string contains more than one statement');
+    return new SqliteStatement(stmt);
   }
 
   exec(source: string): this {

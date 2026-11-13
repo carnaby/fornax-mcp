@@ -1,11 +1,12 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { JobTypeContract } from '@fornax/protocol';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
+import { migrateDb } from '../src/db/client.js';
 import { jobTypes, tokens } from '../src/db/schema.js';
 import { SqliteDatabase } from '../src/db/sqlite.js';
 import { useTestDb } from './helpers.js';
@@ -114,6 +115,28 @@ describe('SqliteDatabase (better-sqlite3 subset over node:sqlite)', () => {
     expect(db.pragma('busy_timeout = 5000')).toEqual([{ timeout: 5000 }]);
     expect(db.pragma('busy_timeout', { simple: true })).toBe(5000);
   });
+
+  test('prepare refuses a string with more than one statement, like better-sqlite3', () => {
+    const multi = /more than one statement/;
+    expect(() => db.prepare('select 1; select 2')).toThrow(multi);
+    expect(() => db.prepare("insert into t (v) values ('a');\ninsert into t (v) values ('b')")).toThrow(multi);
+    expect(() => db.prepare('select 1; -- note\n/* c */ select 2')).toThrow(multi);
+    expect(count()).toBe(0);
+  });
+
+  test('prepare accepts one statement followed only by separators and comments', () => {
+    for (const source of [
+      'select 1',
+      'select 1;',
+      '  -- leading\nselect 1 ;\n',
+      'select 1; -- note',
+      'select 1; -- note\n  /* block */ ;  \n',
+      'select 1 /* unterminated',
+      "select ';' as x; ",
+    ]) {
+      expect(() => db.prepare(source).get(), source).not.toThrow();
+    }
+  });
 });
 
 describe('openDb over node:sqlite', () => {
@@ -123,6 +146,31 @@ describe('openDb over node:sqlite', () => {
   test('uses WAL and a 5 s busy timeout', () => {
     expect(t.db.$client.pragma('journal_mode', { simple: true })).toBe('wal');
     expect(t.db.$client.pragma('busy_timeout', { simple: true })).toBe(5000);
+  });
+
+  test('a migration chunk with two statements fails as a whole instead of being applied in part', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'fornax-migrations-'));
+    try {
+      mkdirSync(join(dir, 'meta'));
+      const entry = { idx: 0, version: '6', when: 1_000, tag: '0000_two', breakpoints: true };
+      writeFileSync(join(dir, 'meta', '_journal.json'), JSON.stringify({ version: '7', dialect: 'sqlite', entries: [entry] }));
+      // One chunk (no statement-breakpoint between them) holding two statements.
+      writeFileSync(join(dir, '0000_two.sql'), 'CREATE TABLE `m_one` (`a` integer);\nCREATE TABLE `m_two` (`b` integer);\n');
+      let error: unknown;
+      try {
+        migrateDb(t.db, { migrationsFolder: dir, migrationsTable: '__test_migrations' });
+      } catch (err) {
+        error = err;
+      }
+      // drizzle wraps the driver error in a DrizzleQueryError; the adapter's error is its cause.
+      expect((error as Error | undefined)?.cause).toBeInstanceOf(RangeError);
+      expect(String((error as Error).cause)).toMatch(/more than one statement/);
+      const tables = t.db.$client.prepare("select name from sqlite_master where name in ('m_one', 'm_two')").all();
+      expect(tables).toEqual([]);
+      expect(t.db.$client.prepare('select count(*) as n from __test_migrations').raw().get()).toEqual([0]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test('drizzle transactions commit, roll back on throw, and nest with savepoints', () => {
