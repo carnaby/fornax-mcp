@@ -23,3 +23,15 @@ export const TOOL_DESCRIPTIONS = {
   cancel_job: 'Cancel one of your jobs. A queued job is canceled at once; a running one is stopped by the worker at its next heartbeat (within about 30 seconds).',
   queue_status: 'The whole queue: how many jobs wait and run, whether the worker is online, and the type and progress of the running job.',
 } as const;
+
+/** Short names clients show for the tools. */
+export const TOOL_TITLES = {
+  list_job_types: 'List job types',
+  create_upload: 'Create upload link',
+  submit_job: 'Submit job',
+  get_job: 'Get job',
+  get_output: 'Get output',
+  list_jobs: 'List jobs',
+  cancel_job: 'Cancel job',
+  queue_status: 'Queue status',
+} as const satisfies Record<keyof typeof TOOL_DESCRIPTIONS, string>;

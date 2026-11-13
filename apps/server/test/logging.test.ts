@@ -1,7 +1,8 @@
 import type { AddressInfo } from 'node:net';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { eq } from 'drizzle-orm';
-import { afterEach, describe, expect, test } from 'vitest';
+import { NodeStreamableHTTPServerTransport } from '@modelcontextprotocol/node';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import { jobs } from '../src/db/schema.js';
 import { jobFile } from '../src/domain/outputs.js';
 import { createInvite } from '../src/domain/tokens.js';
@@ -94,6 +95,32 @@ describe('log masking', () => {
     const res = await a.inject({ method: 'GET', url: '/boom' });
     expect(res.statusCode).toBe(500);
     expect(res.json()).toEqual({ error: 'internal', message: 'internal error' });
+  });
+});
+
+describe('MCP transport errors', () => {
+  test('an error inside the MCP transport is answered with a JSON-RPC error and logged as message and stack only', async () => {
+    const lines: string[] = [];
+    const a = await build(lines);
+    const alice = issueToken(t.db, 'alice');
+    const spy = vi.spyOn(NodeStreamableHTTPServerTransport.prototype, 'handleRequest').mockRejectedValueOnce(new Error('transport broke'));
+    try {
+      const res = await a.inject({
+        method: 'POST', url: `/mcp/${alice}`,
+        headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+        payload: { jsonrpc: '2.0', id: 1, method: 'ping', params: { secret: SECRET } },
+      });
+      expect(res.statusCode).toBe(500);
+      expect(res.json()).toEqual({ jsonrpc: '2.0', error: { code: -32603, message: 'Internal error' }, id: null });
+    } finally {
+      spy.mockRestore();
+    }
+    const failed = lines.map((l) => JSON.parse(l)).find((l) => l.msg === 'mcp request failed');
+    expect(failed).toMatchObject({ level: 50, err: { message: 'transport broke', stack: expect.stringContaining('transport broke') } });
+    expect(Object.keys(failed.err).sort()).toEqual(['message', 'stack', 'type']); // type: added by the logger
+    const out = lines.join('');
+    expect(out).not.toContain(SECRET);
+    expect(out).not.toContain(alice);
   });
 });
 

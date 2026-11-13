@@ -13,13 +13,18 @@ declare module 'fastify' {
 
 const METHOD_NOT_ALLOWED = { jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed.' }, id: null };
 
-/** Who a raw token is on MCP: an approved client, a client waiting for approval, or nobody (unknown, revoked, a worker). */
+/**
+ * Who a raw token is on MCP: an approved client, a client waiting for approval, or nobody (unknown, revoked, a worker
+ * token whether approved or pending).
+ */
 function callerOf(deps: RouteDeps, raw: string | null): McpCaller | null {
   const r = raw ? resolveToken(deps.db, raw, deps.clock()) : null;
   if (!r) return null;
-  if (r.kind === 'pending') return r;
+  if (r.kind === 'pending') return r.role === 'client' ? { kind: 'pending', fingerprint: r.fingerprint } : null;
   return r.identity.role === 'client' ? { kind: 'active', identity: r.identity } : null;
 }
+
+const INTERNAL_ERROR = { jsonrpc: '2.0', error: { code: -32603, message: 'Internal error' }, id: null };
 
 /**
  * /mcp (token in the Authorization header) and /mcp/<token> (for clients that cannot send headers, e.g. a claude.ai
@@ -35,7 +40,14 @@ export const mcpRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps) => {
     });
     await server.connect(transport);
     reply.hijack();
-    await transport.handleRequest(req.raw, reply.raw, req.body);
+    try {
+      await transport.handleRequest(req.raw, reply.raw, req.body);
+    } catch (e) {
+      // The reply is hijacked: Fastify's error handler no longer answers. Message and stack only, never the request.
+      req.log.error({ err: { message: (e as Error).message, stack: (e as Error).stack } }, 'mcp request failed');
+      if (!reply.raw.headersSent) reply.raw.writeHead(500, { 'content-type': 'application/json' }).end(JSON.stringify(INTERNAL_ERROR));
+      else reply.raw.end();
+    }
   };
 
   app.post(

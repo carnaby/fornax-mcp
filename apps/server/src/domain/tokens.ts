@@ -8,7 +8,7 @@ import { badRequest, conflict, notFound } from './errors.js';
 export const INVITE_TTL_MS = 86_400_000;
 
 export type Identity = { tokenId: string; name: string; role: TokenRole };
-export type Resolved = { kind: 'active'; identity: Identity } | { kind: 'pending'; fingerprint: string } | null;
+export type Resolved = { kind: 'active'; identity: Identity } | { kind: 'pending'; fingerprint: string; role: TokenRole } | null;
 
 export function createInvite(db: Db, input: { name: string; role: TokenRole }, now: Date): { id: string; expiresAt: Date } {
   if (!TOKEN_NAME.test(input.name)) throw badRequest('the name must be 1-24 characters a-z or 0-9');
@@ -37,7 +37,7 @@ export function resolveToken(db: Db, raw: string, now: Date): Resolved {
         tx.update(tokens).set({ lastSeenAt: now }).where(eq(tokens.id, row.id)).run();
         return { kind: 'active', identity: { tokenId: row.id, name: row.name, role: row.role } };
       }
-      return row.status === 'pending' ? { kind: 'pending', fingerprint: row.fingerprint } : null;
+      return row.status === 'pending' ? { kind: 'pending', fingerprint: row.fingerprint, role: row.role } : null;
     }
     const invite = tx
       .select()
@@ -66,7 +66,7 @@ export function resolveToken(db: Db, raw: string, now: Date): Resolved {
       })
       .run();
     tx.update(invites).set({ tokenId: id }).where(eq(invites.id, invite.id)).run();
-    return { kind: 'pending', fingerprint: fp };
+    return { kind: 'pending', fingerprint: fp, role: invite.role };
   });
 }
 

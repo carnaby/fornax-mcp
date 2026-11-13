@@ -84,6 +84,32 @@ describe('the MCP endpoint', () => {
     expect((await ping('/mcp')).status).toBe(401);
   });
 
+  test('a pending worker token is refused like an unknown one: 401 with the header, 404 in the path', async () => {
+    for (const [name, use] of [['pc1', 'header'], ['pc2', 'path']] as const) {
+      createInvite(t.db, { name, role: 'worker' }, t.clock.now);
+      const raw = generateToken(name);
+      const res = use === 'header' ? await ping('/mcp', bearerHeader(raw)) : await ping(`/mcp/${raw}`);
+      expect(res.status, use).toBe(use === 'header' ? 401 : 404);
+      if (use === 'header') expect(res.headers.get('www-authenticate')).toBe('Bearer');
+      const body = await res.text();
+      expect(body).not.toContain(raw);
+      expect(body).not.toContain(fingerprint(raw));
+    }
+  });
+
+  test('every tool has a title and annotations that tell reading from changing', async () => {
+    const client = await mcp.connect('/mcp', bearerHeader(issueToken(t.db, 'alice')));
+    const { tools } = await client.listTools();
+    const byName = Object.fromEntries(tools.map((x) => [x.name, x]));
+    for (const tool of tools) expect(tool.title, tool.name).toMatch(/^[A-Z][a-z]+( [a-z]+)*$/);
+    for (const name of ['list_job_types', 'get_job', 'get_output', 'list_jobs', 'queue_status']) {
+      expect(byName[name]!.annotations, name).toMatchObject({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
+    }
+    expect(byName.cancel_job!.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false });
+    expect(byName.create_upload!.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false });
+    expect(byName.submit_job!.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false });
+  });
+
   test('GET and DELETE are 405 on both paths', async () => {
     const alice = issueToken(t.db, 'alice');
     for (const method of ['GET', 'DELETE']) {

@@ -11,7 +11,7 @@ import { workerOnline } from '../domain/worker-state.js';
 import type { RouteDeps } from '../http/deps.js';
 import { resultUrl } from '../http/links.js';
 import { outputBlocks } from './output.js';
-import { SERVER_INSTRUCTIONS, TOOL_DESCRIPTIONS as D } from './text.js';
+import { SERVER_INSTRUCTIONS, TOOL_DESCRIPTIONS as D, TOOL_TITLES as T } from './text.js';
 import type { Block, ToolResult } from './types.js';
 
 export const MCP_SERVER_VERSION = '0.1.0';
@@ -23,6 +23,11 @@ export type McpContext = { deps: RouteDeps; caller: McpCaller; log: Pick<Fastify
 export type { Block, ToolResult };
 
 const text = (t: string): Block => ({ type: 'text', text: t });
+
+/** Hints for clients (e.g. whether to ask before a call). Every tool stays inside Fornax: none reaches an open world. */
+const READS = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
+const CREATES = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } as const;
+const CANCELS = { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } as const;
 
 /**
  * One tool call for an approved client. A pending token gets the fingerprint message and nothing else. Domain errors
@@ -53,14 +58,16 @@ export function buildMcpServer(ctx: McpContext): McpServer {
   );
   const jobId = z.string().min(1).max(40).describe('The job_id from submit_job or list_jobs.');
 
-  server.registerTool('list_job_types', { description: D.list_job_types, inputSchema: z.object({}) }, () =>
+  server.registerTool('list_job_types', { title: T.list_job_types, description: D.list_job_types, annotations: READS, inputSchema: z.object({}) }, () =>
     runJson(ctx, () => ({ types: offeredTypes(db).map(typeView), worker: workerOnline(db, deps.clock()) })),
   );
 
   server.registerTool(
     'create_upload',
     {
+      title: T.create_upload,
       description: D.create_upload,
+      annotations: CREATES,
       inputSchema: z.object({
         name: z.string().min(1).max(500).describe('The file name with its extension, e.g. "scene.blend"; the job type decides which extensions an input accepts.'),
       }),
@@ -71,7 +78,9 @@ export function buildMcpServer(ctx: McpContext): McpServer {
   server.registerTool(
     'submit_job',
     {
+      title: T.submit_job,
       description: D.submit_job,
+      annotations: CREATES,
       inputSchema: z.object({
         type: z.string().min(1).max(40).describe('A type name from list_job_types.'),
         params: z.record(z.string(), z.unknown()).default({}).describe("Parameters as the type's schema describes them."),
@@ -92,7 +101,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
       }),
   );
 
-  server.registerTool('get_job', { description: D.get_job, inputSchema: z.object({ job_id: jobId }) }, ({ job_id }) =>
+  server.registerTool('get_job', { title: T.get_job, description: D.get_job, annotations: READS, inputSchema: z.object({ job_id: jobId }) }, ({ job_id }) =>
     runJson(ctx, (me) => {
       const row = getOwnJob(db, me.tokenId, job_id);
       return { ...jobView(db, row), result_url: resultUrl(deps, row) };
@@ -102,7 +111,9 @@ export function buildMcpServer(ctx: McpContext): McpServer {
   server.registerTool(
     'get_output',
     {
+      title: T.get_output,
       description: D.get_output,
+      annotations: READS,
       inputSchema: z.object({
         job_id: jobId,
         name: z.string().min(1).max(300).describe('An output name as get_job lists it, the preview name of an output, or the log name.'),
@@ -114,7 +125,9 @@ export function buildMcpServer(ctx: McpContext): McpServer {
   server.registerTool(
     'list_jobs',
     {
+      title: T.list_jobs,
       description: D.list_jobs,
+      annotations: READS,
       inputSchema: z.object({
         state: z.enum(JOB_STATES).optional(),
         group: z.string().regex(GROUP).optional(),
@@ -124,14 +137,14 @@ export function buildMcpServer(ctx: McpContext): McpServer {
     (a) => runJson(ctx, (me) => ({ jobs: listJobs(db, me.tokenId, a).map((r) => jobView(db, r)) })),
   );
 
-  server.registerTool('cancel_job', { description: D.cancel_job, inputSchema: z.object({ job_id: jobId }) }, ({ job_id }) =>
+  server.registerTool('cancel_job', { title: T.cancel_job, description: D.cancel_job, annotations: CANCELS, inputSchema: z.object({ job_id: jobId }) }, ({ job_id }) =>
     runJson(ctx, (me) => {
       const row = cancelJob(db, me.tokenId, job_id, deps.clock());
       return { job_id: row.id, state: row.state };
     }),
   );
 
-  server.registerTool('queue_status', { description: D.queue_status, inputSchema: z.object({}) }, () =>
+  server.registerTool('queue_status', { title: T.queue_status, description: D.queue_status, annotations: READS, inputSchema: z.object({}) }, () =>
     runJson(ctx, (me) => queueStatus(db, deps.clock(), me.tokenId)),
   );
 

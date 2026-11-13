@@ -13,8 +13,8 @@ describe('tokens', () => {
   test('first use of an invite registers a pending token with its fingerprint', () => {
     createInvite(t.db, { name: 'alice', role: 'client' }, now);
     const raw = generateToken('alice');
-    expect(resolveToken(t.db, raw, now)).toEqual({ kind: 'pending', fingerprint: fingerprint(raw) });
-    expect(resolveToken(t.db, raw, now)).toEqual({ kind: 'pending', fingerprint: fingerprint(raw) });
+    expect(resolveToken(t.db, raw, now)).toEqual({ kind: 'pending', fingerprint: fingerprint(raw), role: 'client' });
+    expect(resolveToken(t.db, raw, now)).toEqual({ kind: 'pending', fingerprint: fingerprint(raw), role: 'client' });
     expect(t.db.select().from(tokens).all()).toHaveLength(1);
   });
 
