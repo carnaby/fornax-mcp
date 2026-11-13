@@ -63,7 +63,7 @@ export function claimJob(db: Db, now: Date): JobRow | null {
       .update(jobs)
       .set({
         state: 'running', attempts: row.attempts + 1, leaseId: randomUUID(), leaseExpiresAt: new Date(now.getTime() + LEASE_MS),
-        startedAt: now, progress: null, progressMessage: null, updatedAt: now,
+        startedAt: now, progress: null, progressMessage: null, error: null, updatedAt: now,
       })
       .where(eq(jobs.id, next.id))
       .returning()

@@ -42,6 +42,22 @@ describe('log masking', () => {
     expect(out).not.toContain(SECRET);
   });
 
+  test('query strings never reach the logs', async () => {
+    const lines: string[] = [];
+    const a = await build(lines);
+    const client = issueToken(t.db, 'alice', 'client');
+    await a.inject({
+      method: 'POST',
+      url: `/api/files?name=${SECRET}.wav&group=${SECRET}`,
+      headers: { authorization: `Bearer ${client}` },
+      payload: 'x',
+    });
+    const out = lines.join('');
+    expect(out).toContain('incoming request');
+    expect(out).toContain('/api/files');
+    expect(out).not.toContain(SECRET);
+  });
+
   test('a failing handler answers 500 without details', async () => {
     const lines: string[] = [];
     const a = await build(lines);

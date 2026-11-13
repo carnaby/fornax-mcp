@@ -114,6 +114,15 @@ describe('lease expiry', () => {
 });
 
 describe('fail and release', () => {
+  test('a retried claim starts without the previous error', async () => {
+    await job();
+    const c = claimJob(t.db, t.clock.now)!;
+    failJob(t.db, c.id, c.leaseId!, { error: 'oom', permanent: false }, t.clock.now);
+    expect(getOwnJob(t.db, c.ownerTokenId, c.id).error).toBe('oom');
+    claimJob(t.db, at(60_000));
+    expect(getOwnJob(t.db, c.ownerTokenId, c.id)).toMatchObject({ state: 'running', error: null });
+  });
+
   test('a failed attempt waits 1 min, then 4 min, then fails for good', async () => {
     await job();
     let c = claimJob(t.db, t.clock.now)!;

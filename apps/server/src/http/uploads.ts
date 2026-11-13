@@ -21,7 +21,7 @@ export const uploadLinkRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps)
   rawBody(app);
   app.put<{ Params: { signed: string } }>('/api/uploads/:signed', async (req, reply) => {
     const now = deps.clock();
-    const id = verify(deps.config.secret, req.params.signed, now);
+    const id = verify(deps.config.secret, 'upload', req.params.signed, now);
     const link = id ? takeUploadLink(deps.db, id, now) : null;
     if (!link) throw notFound('the upload link is unknown, used or expired');
     try {

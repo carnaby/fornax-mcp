@@ -40,7 +40,7 @@ export function createUploadLink(deps: RouteDeps, owner: string, name: string): 
   const fileId = ulid(now.getTime());
   const expiresAt = new Date(now.getTime() + UPLOAD_LINK_TTL_MS);
   deps.db.insert(uploads).values({ id, ownerTokenId: owner, name: cleanFileName(name), fileId, expiresAt, createdAt: now }).run();
-  return { fileId, expiresAt, url: `${deps.config.publicUrl}/api/uploads/${sign(deps.config.secret, id, expiresAt)}` };
+  return { fileId, expiresAt, url: `${deps.config.publicUrl}/api/uploads/${sign(deps.config.secret, 'upload', id, expiresAt)}` };
 }
 
 /** Take an upload link for one upload; null when unknown, used or expired. */

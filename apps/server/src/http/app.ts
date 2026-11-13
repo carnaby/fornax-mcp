@@ -27,6 +27,9 @@ export function maskUrl(url: string): string {
     .replace(/([?&]sig=)[^&#]*/gi, '$1***');
 }
 
+/** Query strings carry client file names and groups; the logs get the path only. */
+const withoutQuery = (url: string): string => url.replace(/[?#].*$/s, '');
+
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const routeDeps: RouteDeps = {
     config: deps.config,
@@ -39,7 +42,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       level: process.env.LOG_LEVEL ?? 'info',
       ...(deps.logStream ? { stream: deps.logStream } : {}),
       // Unmatched URLs are not logged at all: any path may carry a secret.
-      serializers: { req: (req) => ({ method: req.method, url: req.is404 ? '(unmatched)' : maskUrl(req.url) }) },
+      serializers: { req: (req) => ({ method: req.method, url: req.is404 ? '(unmatched)' : maskUrl(withoutQuery(req.url)) }) },
     },
   });
 
