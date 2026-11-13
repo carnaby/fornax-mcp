@@ -72,6 +72,14 @@ describe('loadPack', () => {
     refused({ run: ['{tool.blender}', '--frames={params.frames}'] }, /a list must be a whole argument/);
   });
 
+  test('unbalanced or stray braces are refused in run, check and setup', () => {
+    for (const bad of ['{out', 'out}', '{{out}}', '--x={params.samples']) {
+      refused({ run: ['{tool.blender}', bad] }, /run: unbalanced brace/);
+    }
+    refused({ check: ['{tool.blender}', '{pack'] }, /check: unbalanced brace/);
+    refused({ setup: ['{python}', 'a}'] }, /setup: unbalanced brace/);
+  });
+
   test('setup and check cannot use job symbols', () => {
     refused({ check: ['{tool.blender}', '{out}'] }, /check: \{out\} is only available in run/);
     refused({ setup: ['{python}', '{params_json}'] }, /setup: \{params_json\} is only available in run/);
@@ -94,6 +102,15 @@ describe('loadPack', () => {
 });
 
 describe('loadPacks', () => {
+  test('a type.yaml that cannot be read is reported and the other packs still load', () => {
+    const root = tmp();
+    writeTypeYaml(join(root, 'render'), base);
+    mkdirSync(join(root, 'broken', 'type.yaml'), { recursive: true });
+    const r = loadPacks(root);
+    expect(r.packs.map((p) => p.contract.name)).toEqual(['render']);
+    expect(r.errors).toEqual([expect.stringMatching(/^type pack broken: type.yaml cannot be read/)]);
+  });
+
   test('loads good packs; reports broken ones and a name that differs from its directory', () => {
     const root = tmp();
     writeTypeYaml(join(root, 'render'), base);

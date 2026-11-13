@@ -90,6 +90,7 @@ function elementProblem(element: string, where: Where, impl: PackImpl, contract:
   } catch (e) {
     return (e as Error).message;
   }
+  if (/[{}]/.test(element.replace(/{[^{}]*}/g, ''))) return `unbalanced brace: ${element}`;
   const whole = wholeSymbol(element) !== null;
   for (const s of symbols) {
     const p = symbolProblem(s, whole, where, impl, contract);
@@ -104,9 +105,15 @@ export function loadPack(dir: string): Pack {
   const problem = (msg: string) => new PackError(`type pack ${label}: ${msg}`);
   const file = join(dir, 'type.yaml');
   if (!existsSync(file)) throw problem('type.yaml is missing');
+  let text: string;
   let raw: unknown;
   try {
-    raw = parseYaml(readFileSync(file, 'utf8'));
+    text = readFileSync(file, 'utf8');
+  } catch (e) {
+    throw problem(`type.yaml cannot be read: ${(e as Error).message}`);
+  }
+  try {
+    raw = parseYaml(text);
   } catch (e) {
     throw problem(`type.yaml is not valid YAML: ${(e as Error).message}`);
   }
