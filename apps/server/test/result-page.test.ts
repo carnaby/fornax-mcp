@@ -1,7 +1,8 @@
 import { eq } from 'drizzle-orm';
 import sharp from 'sharp';
 import { describe, expect, test } from 'vitest';
-import { jobs } from '../src/db/schema.js';
+import { rmSync } from 'node:fs';
+import { files as filesTable, jobs } from '../src/db/schema.js';
 import { revokeToken } from '../src/domain/tokens.js';
 import { FileStore } from '../src/files/store.js';
 import { resultPath } from '../src/http/links.js';
@@ -110,23 +111,36 @@ describe('the result page', () => {
   test('hostile strings in every rendered field stay text', async () => {
     const { start } = await actors();
     const job = await start();
-    const hostile = '"><img src=x onerror=alert(5)> javascript:alert(6) ‮evil';
+    const hostile = '"><img src=x onerror=alert(5)> javascript:alert(6) \u202eevil';
     await job.heartbeat(0.5, hostile);
     const running = (await open(job.id)).body;
     expect(running).not.toMatch(/<img|<script/);
     expect(running).toContain('&quot;&gt;&lt;img src=x onerror=alert(5)&gt;');
-    expect(running).not.toContain('‮');
+    expect(running).not.toContain('\u202e');
     expect(running).toContain('U+202E');
     await job.put('notes.txt', hostile);
     await job.put('data.json', JSON.stringify({ k: '</pre><script>alert(7)</script>', '"><svg onload=1>': 1 }));
     await job.complete({ 'notes.txt': { meta: { [hostile]: hostile, n: 1 } }, 'data.json': { meta: { link: 'javascript:alert(8)' } } });
     const body = (await open(job.id)).body;
     expect(body).not.toMatch(/<img|<svg|<script/);
-    expect(body).not.toContain('‮');
+    expect(body).not.toContain('\u202e');
     // Attribute values and every tag on the page come from the template, never from a client.
     const tags = [...body.matchAll(/<([a-z0-9]+)/g)].map((m) => m[1]);
     expect(new Set(tags)).toEqual(new Set(['html', 'head', 'meta', 'title', 'style', 'body', 'h1', 'span', 'p', 'h2', 'section', 'h3', 'a', 'pre']));
     expect(body).not.toMatch(/href="javascript:|src="javascript:/);
+  });
+
+  test('a file gone from disk leaves the page up', async () => {
+    const job = await (await actors()).start();
+    await job.put('notes.txt', 'hello');
+    await job.put('log.txt', 'logged', 'log');
+    await job.put('other.txt', 'kept');
+    await job.complete();
+    const files = t.db.select().from(filesTable).where(eq(filesTable.jobId, job.id)).all();
+    for (const f of files.filter((x) => x.name === 'notes.txt' || x.name === 'log.txt')) rmSync(new FileStore(t.config.filesDir).pathOf(f.id));
+    const page = await open(job.id);
+    expect(page.statusCode).toBe(200);
+    expect(page.body).toContain('other.txt');
   });
 
   test('a long log shows its last 100 kB, cut on a character boundary', async () => {

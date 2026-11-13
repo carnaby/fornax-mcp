@@ -34,11 +34,20 @@ function pretty(mime: string, text: string): string {
   }
 }
 
+/** A file that is gone from disk (a retention race) reads as null. */
+async function readText(deps: RouteDeps, id: string): Promise<string | null> {
+  try {
+    return (await readFile(deps.store.pathOf(id))).toString('utf8');
+  } catch {
+    return null;
+  }
+}
+
 async function outputSection(deps: RouteDeps, job: JobRow, o: ManifestOutput): Promise<Html | null> {
   const file = downloadableFile(deps.db, job, o.name);
   if (!file) return null;
   const href = downloadPath(deps, job, file).path;
-  const meta = o.meta ? Object.entries(o.meta).map(([k, v]) => ` · ${k}: ${String(v)}`).join('') : '';
+  const meta = o.meta ? Object.entries(o.meta).map(([k, v]) => ` · ${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`).join('') : '';
   const head = html`<h3>${o.name}</h3><p class="muted">${o.mime} · ${size(o.size)}${meta} · <a href="${href}">download</a></p>`;
   const preview = o.preview ? downloadableFile(deps.db, job, o.preview) : null;
   let body: Html | null = null;
@@ -51,7 +60,9 @@ async function outputSection(deps: RouteDeps, job: JobRow, o: ManifestOutput): P
   } else if (o.mime.startsWith('video/')) {
     body = html`<video controls preload="metadata" src="${href}"></video>`;
   } else if (isTextMime(o.mime) && o.size <= INLINE_TEXT_BYTES) {
-    body = html`<pre>${pretty(o.mime, (await readFile(deps.store.pathOf(file.id))).toString('utf8'))}</pre>`;
+    const text = await readText(deps, file.id);
+    if (text === null) return null;
+    body = html`<pre>${pretty(o.mime, text)}</pre>`;
   }
   return html`<section>${head}${body}</section>`;
 }
@@ -61,7 +72,7 @@ async function resultPage(deps: RouteDeps, job: JobRow): Promise<string> {
   const active = job.state === 'queued' || job.state === 'running';
   const outputs = await Promise.all((job.manifest?.outputs ?? []).map((o) => outputSection(deps, job, o)));
   const logFile = job.manifest?.log ? downloadableFile(deps.db, job, job.manifest.log) : null;
-  const log = logFile ? await deps.store.tail(logFile.id, LOG_TAIL_BYTES) : null;
+  const log = logFile ? await deps.store.tail(logFile.id, LOG_TAIL_BYTES).catch(() => null) : null;
   const percent = job.progress === null ? null : Math.round(job.progress * 100);
   return page({
     title: `Fornax · ${job.type} · ${job.state}`,

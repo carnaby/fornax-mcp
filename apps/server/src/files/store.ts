@@ -73,11 +73,11 @@ export class FileStore {
       const { size } = await fh.stat();
       const start = Math.max(0, size - maxBytes);
       const buf = Buffer.alloc(size - start);
-      await fh.read(buf, 0, buf.length, start);
+      const { bytesRead } = await fh.read(buf, 0, buf.length, start);
       // Skip UTF-8 continuation bytes (10xxxxxx) of a character cut by the start.
       let skip = 0;
-      while (start > 0 && skip < 3 && skip < buf.length && ((buf[skip] ?? 0) & 0xc0) === 0x80) skip++;
-      return { text: buf.subarray(skip).toString('utf8'), truncated: start > 0 };
+      while (start > 0 && skip < 3 && skip < bytesRead && ((buf[skip] ?? 0) & 0xc0) === 0x80) skip++;
+      return { text: buf.subarray(skip, bytesRead).toString('utf8'), truncated: start > 0 };
     } finally {
       await fh.close();
     }

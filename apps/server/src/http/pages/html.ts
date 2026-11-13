@@ -1,8 +1,8 @@
 import type { FastifyReply } from 'fastify';
 
 const ESCAPES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
-/** Bidirectional controls can make text read differently from what it is: they are shown as visible U+XXXX markers. */
-const BIDI = /[؜‎‏‪-‮⁦-⁩]/g;
+/** Bidirectional overrides and isolates can make text read differently from what it is: they are shown as visible U+XXXX markers. */
+const BIDI = /[\u202a-\u202e\u2066-\u2069]/g;
 export const escapeHtml = (s: string): string =>
   s.replace(/[&<>"']/g, (c) => ESCAPES[c] ?? c).replace(BIDI, (c) => `U+${c.codePointAt(0)!.toString(16).toUpperCase().padStart(4, '0')}`);
 
