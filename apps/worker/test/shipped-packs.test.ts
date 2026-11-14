@@ -42,7 +42,19 @@ describe('built-in type packs', () => {
     ]);
   });
 
-  test('the prompt for a new type gets both packs as examples', () => {
-    expect(shippedExamples().map((e) => e.name)).toEqual(['render', 'transcribe']);
+  test("lease: no tools, no inputs; it runs on the worker's own Node", () => {
+    const pack = loadPack(shippedPack('lease')!);
+    expect(pack.contract).toMatchObject({ name: 'lease', version: 1, max_runtime_s: 725 * 60, inputs: {} });
+    expect(pack.contract.params.required).toEqual(['minutes']);
+    expect(pack.contract.params.properties.minutes).toMatchObject({ type: 'integer', minimum: 1, maximum: 720 });
+    expect(pack.contract.params.properties.label).toMatchObject({ type: 'string', maxLength: 80 });
+    expect(pack.impl.tools).toEqual([]);
+    expect(pack.impl.setup).toBeUndefined();
+    expect(expandArgv(pack.impl.run, { pack: '/p', tools: {}, job, node: '/n', platform: 'linux' })).toEqual(['/n', '/p/scripts/lease.mjs', '--params', '/w/work/params.json']);
+    expect(expandArgv(pack.impl.check!, { pack: '/p', tools: {}, node: '/n', platform: 'linux' })).toEqual(['/n', '/p/scripts/check.mjs']);
+  });
+
+  test('the prompt for a new type gets every built-in pack as an example', () => {
+    expect(shippedExamples().map((e) => e.name)).toEqual(['lease', 'render', 'transcribe']);
   });
 });

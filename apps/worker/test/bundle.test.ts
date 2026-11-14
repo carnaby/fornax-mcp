@@ -48,7 +48,7 @@ beforeAll(() => {
 afterAll(() => rmSync(out, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
 
 describe('the worker bundle', () => {
-  test('the zip holds the CLI, launchers, licence and both packs, and nothing that is not shipped', () => {
+  test('the zip holds the CLI, launchers, licence and the built-in packs, and nothing that is not shipped', () => {
     const zip = join(out, `fornax-worker-${FORNAX_VERSION}.zip`);
     const entries = readZip(readFileSync(zip));
     const names = [...entries.keys()];
@@ -56,6 +56,7 @@ describe('the worker bundle', () => {
       'fornax.mjs', 'fornax.cmd', 'fornax', 'LICENSE', 'types/README.md',
       'types/transcribe/type.yaml', 'types/transcribe/setup.md', 'types/transcribe/scripts/run.py',
       'types/render/type.yaml', 'types/render/scripts/render.py',
+      'types/lease/type.yaml', 'types/lease/setup.md', 'types/lease/scripts/lease.mjs', 'types/lease/scripts/check.mjs',
     ]) {
       expect(names, name).toContain(`fornax-worker/${name}`);
     }

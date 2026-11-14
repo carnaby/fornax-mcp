@@ -12,6 +12,7 @@ describe('resolvePaths', () => {
       tokenFile: 'C:\\Users\\u\\AppData\\Roaming\\fornax\\token',
       typesDir: 'C:\\Users\\u\\AppData\\Local\\fornax\\types',
       jobsDir: 'C:\\Users\\u\\AppData\\Local\\fornax\\jobs',
+      leasesDir: 'C:\\Users\\u\\AppData\\Local\\fornax\\leases',
     });
   });
 

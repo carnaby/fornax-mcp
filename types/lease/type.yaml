@@ -1,0 +1,16 @@
+name: lease
+version: 1
+description: >-
+  Hold the GPU for a program on the worker PC, in queue order. Submitted by `fornax lease` on that PC; it renders
+  nothing. A lease nobody uses ends itself after a minute.
+params:
+  type: object
+  additionalProperties: false
+  required: [minutes]
+  properties:
+    minutes: { type: integer, minimum: 1, maximum: 720, description: The longest time the program may hold the card. }
+    label:   { type: string, maxLength: 80, pattern: "^[A-Za-z0-9 ._:/-]*$", description: "What runs, shown in the queue." }
+max_runtime: 725m
+tools: []
+check: ["{node}", "{pack}/scripts/check.mjs"]
+run: ["{node}", "{pack}/scripts/lease.mjs", "--params", "{params_json}"]

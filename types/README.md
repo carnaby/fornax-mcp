@@ -147,6 +147,8 @@ times and stops the process it started, and a launcher would end at once while t
 |---|---|---|
 | `transcribe` | speech to text with faster-whisper, optional speaker labels with pyannote | NVIDIA GPU, Python 3.10+, ffmpeg |
 | `render` | Blender Cycles frames with JPEG previews | Blender 4.2+, a GPU Cycles supports, a self-contained .blend (packed resources) |
+| `lease` | holds the GPU for a program that `fornax lease` runs on the worker PC (see the README); renders nothing | nothing: it runs on the worker's own Node.js |
 
-Their `setup.md` files say what is installed and how to check it. Both are good examples for a new pack: `transcribe`
-for a Python tool in its own environment, `render` for an installed application.
+Their `setup.md` files say what is installed and how to check it. They are good examples for a new pack: `transcribe`
+for a Python tool in its own environment, `render` for an installed application, `lease` for a pack of Node scripts
+without any tool (`{node}`).

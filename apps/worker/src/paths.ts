@@ -11,6 +11,8 @@ export type Paths = {
   tokenFile: string;
   typesDir: string;
   jobsDir: string;
+  /** Spec 05a 4.2: <data>/leases, where fornax lease and the lease tool talk through files. */
+  leasesDir: string;
 };
 
 export type JobDirs = { root: string; in: string; out: string; work: string };
@@ -40,6 +42,7 @@ export function resolvePaths(env: NodeJS.ProcessEnv = process.env, platform: Nod
     tokenFile: p.join(configDir, 'token'),
     typesDir: p.join(dataDir, 'types'),
     jobsDir: p.join(dataDir, 'jobs'),
+    leasesDir: p.join(dataDir, 'leases'),
   };
 }
 
