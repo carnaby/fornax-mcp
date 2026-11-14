@@ -10,7 +10,8 @@ const config = loadConfig();
 mkdirSync(config.dataDir, { recursive: true });
 const { db, close } = openDb(config.dbFile);
 const store = new FileStore(config.filesDir);
-const app = await buildApp({ config, db, store });
+let maintenanceAt = new Date();
+const app = await buildApp({ config, db, store, maintenanceAt: () => maintenanceAt });
 if (!config.publicUrlConfigured) {
   app.log.warn({ publicUrl: config.publicUrl }, 'PUBLIC_URL is not set: invite and upload links will point to localhost');
 }
@@ -26,6 +27,7 @@ const tick = async () => {
     app.log.error({ err: { message: (e as Error).message, stack: (e as Error).stack } }, 'maintenance failed');
   } finally {
     inFlight = false;
+    maintenanceAt = new Date();
   }
 };
 const timer = setInterval(tick, 60_000);
@@ -40,10 +42,15 @@ const shutdown = async () => {
   await webhooks.stop();
   try {
     await app.close();
-    close();
-  } finally {
-    process.exit(0);
+  } catch (e) {
+    app.log.error({ err: { message: (e as Error).message, stack: (e as Error).stack } }, 'closing the HTTP server failed');
   }
+  try {
+    close();
+  } catch (e) {
+    app.log.error({ err: { message: (e as Error).message, stack: (e as Error).stack } }, 'closing the database failed');
+  }
+  process.exit(0);
 };
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);

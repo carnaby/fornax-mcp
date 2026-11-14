@@ -1,7 +1,5 @@
 import { Readable } from 'node:stream';
-import { eq } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
-import { files } from '../db/schema.js';
 import { PREVIEW_MAX_SOURCE_BYTES, PREVIEWABLE, renderPreview, serverPreviewName } from '../files/preview.js';
 import type { RouteDeps } from '../http/deps.js';
 import { deleteFiles, type FileRow, saveFile } from './files.js';
@@ -27,13 +25,9 @@ async function makePreview(deps: RouteDeps, output: FileRow, log: Pick<FastifyBa
   const name = serverPreviewName(output.name);
   const previous = jobFile(deps.db, output.jobId, name);
   if (previous) {
-    try {
-      await deleteFiles(deps, [previous]);
-    } catch {
-      // The old preview shows the previous upload: its row goes in any case; its file stays behind on disk.
-      log.warn({ file: output.id, preview: previous.id }, 'the previous preview could not be removed');
-      deps.db.delete(files).where(eq(files.id, previous.id)).run();
-    }
+    const { failed } = await deleteFiles(deps, [previous]);
+    // The old preview shows the previous upload: its row is gone; a file left on disk goes with the next disk sweep.
+    if (failed) log.warn({ file: output.id, preview: previous.id }, 'the previous preview could not be removed from disk');
   }
   if (!PREVIEWABLE.has(output.mime) || output.size > PREVIEW_MAX_SOURCE_BYTES) return null;
   let jpeg: Buffer;

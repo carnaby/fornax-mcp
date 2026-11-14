@@ -1,3 +1,5 @@
+import { existsSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
 import { files, jobs } from '../src/db/schema.js';
 import { releaseJob } from '../src/domain/queue.js';
@@ -127,24 +129,35 @@ describe('outputs', () => {
     expect(t.db.select().from(files).all().filter((f) => f.jobId === r.id).map((f) => f.name)).not.toContain('stale.png');
   });
 
-  test('a failing discard releases the claimed job: back to queued, attempts unchanged', async () => {
+  test('a failing disk removal during the discard does not stop the claim; the file is left for the sweep', async () => {
     const r = await running();
     await r.put('stale.png', TINY_PNG);
+    const stale = t.db.select().from(files).all().find((f) => f.name === 'stale.png')!;
     t.clock.advance(600_001);
     class BrokenStore extends FileStore {
       override async remove(): Promise<void> {
         throw new Error('disk error');
       }
     }
-    const lines: string[] = [];
-    const broken = await buildApp({ config: t.config, db: t.db, store: new BrokenStore(t.config.filesDir), clock: () => t.clock.now, logStream: { write: (m) => void lines.push(m) } });
+    const broken = await buildApp({ config: t.config, db: t.db, store: new BrokenStore(t.config.filesDir), clock: () => t.clock.now, logStream: { write: () => undefined } });
     try {
       const res = await broken.inject({ method: 'POST', url: '/api/worker/jobs/claim', headers: { authorization: `Bearer ${r.worker}` }, payload: { wait: 0 } });
-      expect(res.statusCode).toBe(500);
-      expect(lines.join('')).toContain('request failed');
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toMatchObject({ id: r.id, attempt: 2 });
     } finally {
       await broken.close();
     }
-    expect(t.db.select().from(jobs).get()).toMatchObject({ id: r.id, state: 'queued', attempts: 1, leaseExpiresAt: null });
+    expect(t.db.select().from(files).all().map((f) => f.id)).not.toContain(stale.id);
+    expect(existsSync(join(t.config.filesDir, stale.id))).toBe(true);
+  });
+
+  test('a download whose file is missing on disk is 404', async () => {
+    const r = await running();
+    await r.put('frame_0001.png', TINY_PNG);
+    expect((await r.complete({ 'frame_0001.png': {} })).statusCode).toBe(200);
+    const row = t.db.select().from(files).all().find((f) => f.name === 'frame_0001.png')!;
+    rmSync(join(t.config.filesDir, row.id));
+    const res = await t.app.inject({ method: 'GET', url: `/api/jobs/${r.id}/outputs/frame_0001.png`, headers: { authorization: `Bearer ${r.alice}` } });
+    expect(res.statusCode).toBe(404);
   });
 });

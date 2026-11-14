@@ -20,7 +20,12 @@ export type AppDeps = {
   clock?: () => Date;
   /** Tests only: where logs go (default stdout). */
   logStream?: { write(msg: string): void };
+  /** When the maintenance loop last finished a pass (main.ts); /healthz is 503 once that is too long ago. */
+  maintenanceAt?: () => Date;
 };
+
+/** /healthz turns 503 when the maintenance loop (every minute) has not finished a pass for this long. */
+export const MAINTENANCE_STALE_MS = 600_000;
 
 /** Tokens and signatures in URLs never reach the logs. */
 export function maskUrl(url: string): string {
@@ -83,8 +88,12 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     return reply.code(status).send({ error: 'bad_request', message: err.message });
   });
 
-  app.get('/healthz', async () => {
+  app.get('/healthz', async (_req, reply) => {
     routeDeps.db.get(sql`select 1`);
+    const at = deps.maintenanceAt?.();
+    if (at && routeDeps.clock().getTime() - at.getTime() > MAINTENANCE_STALE_MS) {
+      return reply.code(503).send({ ok: false, error: 'maintenance_stalled' });
+    }
     return { ok: true };
   });
   // Siblings: each plugin's auth hook applies only to its own routes.

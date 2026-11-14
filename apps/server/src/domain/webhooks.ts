@@ -45,7 +45,7 @@ export function signWebhook(key: Buffer, timestamp: number, body: string): strin
 }
 
 /** Send every due delivery (at most 20, in parallel). */
-export async function deliverWebhooks(deps: Deps, log: WebhookLog, opts: { timeoutMs?: number } = {}) {
+export async function deliverWebhooks(deps: Deps, log: WebhookLog, opts: { timeoutMs?: number; signal?: AbortSignal } = {}) {
   const now = deps.clock();
   const due = deps.db
     .select()
@@ -54,12 +54,12 @@ export async function deliverWebhooks(deps: Deps, log: WebhookLog, opts: { timeo
     .orderBy(asc(webhookDeliveries.nextAt))
     .limit(BATCH)
     .all();
-  const outcomes = await Promise.all(due.map((d) => deliverOne(deps, d, now, log, opts.timeoutMs ?? WEBHOOK_TIMEOUT_MS)));
+  const outcomes = await Promise.all(due.map((d) => deliverOne(deps, d, now, log, opts.timeoutMs ?? WEBHOOK_TIMEOUT_MS, opts.signal)));
   const count = (s: DeliveryStatus) => outcomes.filter((o) => o === s).length;
   return { sent: count('sent'), retrying: count('pending'), failed: count('failed') };
 }
 
-async function deliverOne(deps: Deps, d: DeliveryRow, now: Date, log: WebhookLog, timeoutMs: number): Promise<DeliveryStatus> {
+async function deliverOne(deps: Deps, d: DeliveryRow, now: Date, log: WebhookLog, timeoutMs: number, stop: AbortSignal | undefined): Promise<DeliveryStatus | 'aborted'> {
   const record = (status: DeliveryStatus, values: { attempt?: number; lastError: string | null; nextAt?: Date }, http: number | null) => {
     deps.db.update(webhookDeliveries).set({ status, ...values, updatedAt: now }).where(eq(webhookDeliveries.id, d.id)).run();
     // Ids and the status code only: the URL (its path and query may hold the client's secrets) and the body stay out.
@@ -80,7 +80,7 @@ async function deliverOne(deps: Deps, d: DeliveryRow, now: Date, log: WebhookLog
       method: 'POST',
       // A redirect is an answer, not a new target: it counts as a failure and is never followed.
       redirect: 'manual',
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: stop ? AbortSignal.any([AbortSignal.timeout(timeoutMs), stop]) : AbortSignal.timeout(timeoutMs),
       headers: {
         'content-type': 'application/json',
         'user-agent': 'fornax-webhook',
@@ -93,6 +93,8 @@ async function deliverOne(deps: Deps, d: DeliveryRow, now: Date, log: WebhookLog
     await res.body?.cancel().catch(() => undefined);
     if (res.status < 200 || res.status > 299) error = `HTTP ${res.status}`;
   } catch (e) {
+    // The server is stopping: nothing is recorded, the delivery stays due and goes out after the next start.
+    if (stop?.aborted) return 'aborted';
     error = (e as Error).name === 'TimeoutError' ? 'timeout' : 'connection failed';
   }
   if (error === null) return record('sent', { attempt, lastError: null }, http);
@@ -102,12 +104,13 @@ async function deliverOne(deps: Deps, d: DeliveryRow, now: Date, log: WebhookLog
     : record('pending', { attempt, lastError: error, nextAt: new Date(now.getTime() + delay) }, http);
 }
 
-/** Sends due deliveries every `intervalMs`, one run at a time; stop() waits for a run in progress. */
+/** Sends due deliveries every `intervalMs`, one run at a time; stop() aborts deliveries in flight and waits for the run to end. */
 export function startWebhookLoop(deps: Deps, log: WebhookLog, intervalMs = WEBHOOK_TICK_MS): { stop(): Promise<void> } {
   let running: Promise<void> | null = null;
+  const stopping = new AbortController();
   const tick = () => {
-    if (running) return;
-    running = deliverWebhooks(deps, log)
+    if (running || stopping.signal.aborted) return;
+    running = deliverWebhooks(deps, log, { signal: stopping.signal })
       .then(() => undefined)
       .catch((e: unknown) => log.error({ err: { message: (e as Error).message, stack: (e as Error).stack } }, 'webhook delivery failed'))
       .finally(() => {
@@ -118,6 +121,7 @@ export function startWebhookLoop(deps: Deps, log: WebhookLog, intervalMs = WEBHO
   return {
     async stop() {
       clearInterval(timer);
+      stopping.abort();
       await running;
     },
   };

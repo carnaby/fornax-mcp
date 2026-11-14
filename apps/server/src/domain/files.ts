@@ -82,11 +82,21 @@ export function getOwnFile(db: Db, owner: string, id: string): FileRow {
   return row;
 }
 
-export async function deleteFiles(deps: RouteDeps, rows: FileRow[]): Promise<void> {
+/**
+ * Delete the rows, then their disk files. The database is the truth: a disk file that cannot be removed (EBUSY,
+ * EPERM) stays behind for the disk sweep (maintenance) and is only counted; this never throws for a disk error.
+ */
+export async function deleteFiles(deps: RouteDeps, rows: FileRow[]): Promise<{ failed: number }> {
+  let failed = 0;
   for (const r of rows) {
-    await deps.store.remove(r.id);
     deps.db.delete(files).where(eq(files.id, r.id)).run();
+    try {
+      await deps.store.remove(r.id);
+    } catch {
+      failed++;
+    }
   }
+  return { failed };
 }
 
 export const fileView = (r: FileRow) => ({

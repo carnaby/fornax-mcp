@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { generateToken } from '@fornax/protocol';
 import { describe, expect, test } from 'vitest';
@@ -91,5 +91,56 @@ describe('maintenance', () => {
     const r = await runMaintenance(deps());
     expect(r).toMatchObject({ pendingTokens: 1, leases: 1 });
     expect(t.db.select().from(tokens).all().map((x) => x.name)).toEqual(['eve']);
+  });
+});
+
+describe('disk sweep', () => {
+  const age = (path: string, ms: number) => {
+    const when = new Date(t.clock.now.getTime() - ms);
+    utimesSync(path, when, when);
+  };
+
+  test('the sweep removes old files without a row and old partial uploads, never young ones or known files', async () => {
+    const alice = issueToken(t.db, 'alice');
+    const known = await uploadFile(t.app, alice, 'a.blend', 'A');
+    const root = t.config.filesDir;
+    const tmp = join(root, 'tmp');
+    const make = (path: string, ms: number) => {
+      writeFileSync(path, 'x');
+      age(path, ms);
+    };
+    make(join(root, '01OLDORPHAN0000000000000000'), 2 * HOUR);
+    make(join(root, '01YOUNGORPHAN00000000000000'), 10 * 60_000);
+    make(join(tmp, '01OLD0000000000000000000000.part'), 2 * HOUR);
+    make(join(tmp, '01YOUNG000000000000000000000.part'), 10 * 60_000);
+    age(join(root, known), 2 * HOUR);
+    const r = await runMaintenance(deps());
+    expect(r.swept).toBe(2);
+    expect(existsSync(join(root, '01OLDORPHAN0000000000000000'))).toBe(false);
+    expect(existsSync(join(root, '01YOUNGORPHAN00000000000000'))).toBe(true);
+    expect(existsSync(join(tmp, '01OLD0000000000000000000000.part'))).toBe(false);
+    expect(existsSync(join(tmp, '01YOUNG000000000000000000000.part'))).toBe(true);
+    expect(existsSync(join(root, known))).toBe(true);
+  });
+
+  test('a file that cannot be removed keeps no row and is swept by a later pass', async () => {
+    const alice = issueToken(t.db, 'alice');
+    const orphan = await uploadFile(t.app, alice, 'a.blend', 'A');
+    t.clock.advance(24 * HOUR + 1);
+    // Young on disk: in this pass only the failing removal touches it, not the sweep.
+    age(join(t.config.filesDir, orphan), 0);
+    class BrokenStore extends FileStore {
+      override async remove(): Promise<void> {
+        throw new Error('EBUSY');
+      }
+    }
+    const broken = { ...deps(), store: new BrokenStore(t.config.filesDir) };
+    const first = await runMaintenance(broken);
+    expect(first).toMatchObject({ orphans: 1, diskErrors: 1 });
+    expect(t.db.select().from(files).all().map((f) => f.id)).not.toContain(orphan);
+    expect(existsSync(join(t.config.filesDir, orphan))).toBe(true);
+    age(join(t.config.filesDir, orphan), 2 * HOUR);
+    expect((await runMaintenance(deps())).swept).toBe(1);
+    expect(existsSync(join(t.config.filesDir, orphan))).toBe(false);
   });
 });

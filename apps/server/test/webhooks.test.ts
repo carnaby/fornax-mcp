@@ -197,3 +197,33 @@ describe('webhook deliveries', () => {
     expect(deliveries()).toEqual([]);
   });
 });
+
+test('stop() aborts a hanging delivery without counting the attempt', async () => {
+  let arrived!: () => void;
+  const reached = new Promise<void>((resolve) => {
+    arrived = resolve;
+  });
+  // A receiver that never answers.
+  const receiver = createServer(() => arrived());
+  await new Promise<void>((resolve) => receiver.listen(0, '127.0.0.1', resolve));
+  const url = `http://127.0.0.1:${(receiver.address() as { port: number }).port}/hooks/`;
+  t.config.webhooks.allowedPrefixes = [url];
+  try {
+    announce(t.db, [renderContract], t.clock.now);
+    const alice = issueToken(t.db, 'alice');
+    const scene = await uploadFile(t.app, alice, 'scene.blend', 'B');
+    const id = (
+      await t.app.inject({ method: 'POST', url: '/api/jobs', headers: { authorization: `Bearer ${alice}` }, payload: { type: 'render', params: { frame_start: 1 }, inputs: { scene }, callback_url: `${url}job` } })
+    ).json().id as string;
+    await t.app.inject({ method: 'POST', url: `/api/jobs/${id}/cancel`, headers: { authorization: `Bearer ${alice}` } });
+    const loop = startWebhookLoop({ config: t.config, db: t.db, clock: () => t.clock.now }, { info: () => undefined, error: () => undefined }, 20);
+    await reached;
+    const started = Date.now();
+    await loop.stop();
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(t.db.select().from(webhookDeliveries).get()).toMatchObject({ status: 'pending', attempt: 0 });
+  } finally {
+    receiver.closeAllConnections();
+    await new Promise<void>((resolve) => receiver.close(() => resolve()));
+  }
+});

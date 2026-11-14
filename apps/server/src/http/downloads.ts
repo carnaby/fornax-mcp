@@ -1,3 +1,4 @@
+import { stat } from 'node:fs/promises';
 import { basename } from 'node:path';
 import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import { notFound } from '../domain/errors.js';
@@ -29,7 +30,13 @@ export const downloadRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps) =
   });
 };
 
-function sendFile(deps: RouteDeps, reply: FastifyReply, file: FileRow) {
+async function sendFile(deps: RouteDeps, reply: FastifyReply, file: FileRow) {
+  try {
+    await stat(deps.store.pathOf(file.id));
+  } catch {
+    // The row outlived its disk file (a restore without files, a disk error): nothing to serve.
+    throw notFound(`output ${file.name} not found`);
+  }
   return reply
     .header('content-type', file.mime)
     .header('content-length', file.size)

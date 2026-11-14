@@ -1,3 +1,5 @@
+import { readdir, rm, stat } from 'node:fs/promises';
+import { join } from 'node:path';
 import { and, count, eq, inArray, isNull, lt, notInArray, or } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { files, invites, jobs, jobTypes, tokens, uploads, webhookDeliveries } from '../db/schema.js';
@@ -9,6 +11,43 @@ import { workerOnline } from './worker-state.js';
 
 export const TYPE_UNAVAILABLE = 'the worker has not offered this job type for too long';
 const ago = (now: Date, ms: number) => new Date(now.getTime() - ms);
+
+/** A file without a row (or a partial upload) younger than this may be an upload whose row is about to be written. */
+export const SWEEP_GRACE_MS = 3_600_000;
+
+/**
+ * Disk entries the database does not know: a file whose row was deleted while the file could not be (deleteFiles), a
+ * file stored just before its row insert failed, a partial upload of a server that crashed. Only entries older than
+ * SWEEP_GRACE_MS go.
+ */
+export async function sweepDisk(deps: RouteDeps, now: Date): Promise<{ removed: number; failed: number }> {
+  const known = new Set(deps.db.select({ id: files.id }).from(files).all().map((r) => r.id));
+  const cutoff = now.getTime() - SWEEP_GRACE_MS;
+  let removed = 0;
+  let failed = 0;
+  const sweep = async (dir: string, wanted: (name: string) => boolean) => {
+    let entries;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      if (!e.isFile() || !wanted(e.name)) continue;
+      const path = join(dir, e.name);
+      try {
+        if ((await stat(path)).mtimeMs >= cutoff) continue;
+        await rm(path, { force: true });
+        removed++;
+      } catch {
+        failed++;
+      }
+    }
+  };
+  await sweep(deps.store.root, (name) => !known.has(name));
+  await sweep(deps.store.tmp, (name) => name.endsWith('.part'));
+  return { removed, failed };
+}
 
 /** One pass of the periodic cleanup (spec 5, "Upratovanie"). Each step is independent and idempotent. */
 export async function runMaintenance(deps: RouteDeps) {
@@ -24,7 +63,15 @@ export async function runMaintenance(deps: RouteDeps) {
     .where(and(eq(files.kind, 'input'), isNull(files.jobId), lt(files.createdAt, ago(now, r.orphanUploadMs))))
     .returning({ id: files.id })
     .all();
-  for (const row of orphanRows) await deps.store.remove(row.id);
+  let diskErrors = 0;
+  for (const row of orphanRows) {
+    try {
+      await deps.store.remove(row.id);
+    } catch {
+      // The row is gone; the disk sweep removes the file in a later pass.
+      diskErrors++;
+    }
+  }
   db.delete(uploads).where(lt(uploads.expiresAt, now)).run();
   db.delete(invites).where(lt(invites.expiresAt, now)).run();
 
@@ -52,7 +99,7 @@ export async function runMaintenance(deps: RouteDeps) {
     .all()
     .map((x) => x.id);
   if (old.length) {
-    await deleteFiles(deps, db.select().from(files).where(inArray(files.jobId, old)).all());
+    diskErrors += (await deleteFiles(deps, db.select().from(files).where(inArray(files.jobId, old)).all())).failed;
     db.delete(webhookDeliveries).where(inArray(webhookDeliveries.jobId, old)).run();
     db.delete(jobs).where(inArray(jobs.id, old)).run();
   }
@@ -63,7 +110,10 @@ export async function runMaintenance(deps: RouteDeps) {
     .returning({ id: tokens.id })
     .all().length;
 
-  return { leases, orphans: orphanRows.length, unavailable, finished: old.length, pendingTokens };
+  const swept = await sweepDisk(deps, now);
+  diskErrors += swept.failed;
+
+  return { leases, orphans: orphanRows.length, unavailable, finished: old.length, pendingTokens, swept: swept.removed, diskErrors };
 }
 
 /** The queue as every client sees it. The running job's message is its owner's free text: only the owner (viewer) gets it. */
