@@ -12,7 +12,7 @@ const { db, close } = openDb(config.dbFile);
 const store = new FileStore(config.filesDir);
 const app = await buildApp({ config, db, store });
 if (!config.publicUrlConfigured) {
-  app.log.warn({ publicUrl: config.publicUrl }, 'public_url is not configured: invite and upload links will point to localhost');
+  app.log.warn({ publicUrl: config.publicUrl }, 'PUBLIC_URL is not set: invite and upload links will point to localhost');
 }
 
 let inFlight = false;

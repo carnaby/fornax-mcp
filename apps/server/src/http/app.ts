@@ -55,6 +55,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     clock: deps.clock ?? (() => new Date()),
   };
   const app = Fastify({
+    // Exactly as many proxies as configured may set the client address and scheme (X-Forwarded-For/-Proto).
+    // Fastify 5 treats a plain number as "trust nobody", so the hop count is spelled out as a function.
+    trustProxy: deps.config.trustProxy > 0 ? (_address: string, hop: number) => hop < deps.config.trustProxy : false,
     logger: {
       level: process.env.LOG_LEVEL ?? 'info',
       ...(deps.logStream ? { stream: deps.logStream } : {}),
