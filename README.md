@@ -71,6 +71,18 @@ fornax-admin tokens uninvite <name>            removes an unused invite
 fornax-admin backup <dir>                      a consistent database copy and the job files
 ```
 
+`backup` is safe while the server runs. `<dir>` must be new or empty and outside `DATA_DIR/files`; a failure prints
+one line and exits 1. A backup written into the data volume is lost with it, so move it out afterwards:
+
+```sh
+docker exec fornax fornax-admin backup /data/backups/2026-11-14
+docker cp fornax:/data/backups/2026-11-14 ./fornax-backup-2026-11-14
+docker exec fornax rm -r /data/backups/2026-11-14
+```
+
+or give the container a second mount for backups (e.g. `-v fornax-backups:/backups`, then
+`fornax-admin backup /backups/2026-11-14`).
+
 Job files are kept 14 days after a job finishes (`FORNAX_FINISHED_DAYS`); the database holds tokens and jobs.
 
 ## Connect a client

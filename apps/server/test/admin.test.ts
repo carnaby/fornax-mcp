@@ -86,3 +86,27 @@ test('backup writes a consistent database copy and the job files without partial
     rmSync(target, { recursive: true, force: true });
   }
 });
+
+test('a backup target inside the files directory is refused before anything is written', () => {
+  mkdirSync(t.config.filesDir, { recursive: true });
+  for (const target of [t.config.filesDir, join(t.config.filesDir, 'backup'), join(t.config.filesDir, '..backup')]) {
+    const r = admin('backup', target);
+    expect(r).toMatchObject({ code: 1, text: expect.stringContaining('inside the files directory') });
+  }
+  expect(existsSync(join(t.config.filesDir, 'backup'))).toBe(false);
+});
+
+test('a backup that fails on the file system is a message and exit 1, not a stack trace', () => {
+  const target = mkdtempSync(join(tmpdir(), 'fornax-backup-'));
+  try {
+    const file = join(target, 'a-file');
+    writeFileSync(file, 'x');
+    for (const dir of [file, join(file, 'nightly')]) {
+      const r = admin('backup', dir);
+      expect(r.code, dir).toBe(1);
+      expect(r.text, dir).toMatch(/^the backup to .* failed: /);
+    }
+  } finally {
+    rmSync(target, { recursive: true, force: true });
+  }
+});

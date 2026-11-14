@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { cpSync, existsSync, mkdirSync, readdirSync, realpathSync, statSync } from 'node:fs';
-import { join, relative, resolve, sep } from 'node:path';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Config } from './config.js';
 import { loadConfig } from './config.js';
@@ -30,23 +30,38 @@ class AdminError extends Error {}
  */
 function backup(db: Db, config: Config, target: string): { dir: string; dbBytes: number; files: number } {
   const dir = resolve(target);
-  if (existsSync(dir) && readdirSync(dir).length > 0) throw new AdminError(`${dir} is not empty; choose a new or empty directory`);
-  mkdirSync(dir, { recursive: true });
+  const inFiles = relative(resolve(config.filesDir), dir);
+  const outside = inFiles === '..' || inFiles.startsWith(`..${sep}`) || isAbsolute(inFiles);
+  if (!outside) {
+    throw new AdminError(`${dir} is inside the files directory, which the backup copies; choose a directory outside ${config.filesDir}`);
+  }
+  // File-system and SQLite errors become one line for the operator (exit 1), not a stack trace.
+  const step = <T>(run: () => T): T => {
+    try {
+      return run();
+    } catch (e) {
+      throw new AdminError(`the backup to ${dir} failed: ${(e as Error).message}`);
+    }
+  };
+  if (step(() => existsSync(dir) && readdirSync(dir).length > 0)) throw new AdminError(`${dir} is not empty; choose a new or empty directory`);
+  step(() => mkdirSync(dir, { recursive: true }));
   const dbFile = join(dir, 'fornax.db');
-  db.$client.exec(`VACUUM INTO '${dbFile.replaceAll("'", "''")}'`);
+  step(() => db.$client.exec(`VACUUM INTO '${dbFile.replaceAll("'", "''")}'`));
   let files = 0;
   if (existsSync(config.filesDir)) {
-    cpSync(config.filesDir, join(dir, 'files'), {
-      recursive: true,
-      filter: (src) => {
-        const rel = relative(config.filesDir, src);
-        if (rel.split(sep)[0] === 'tmp') return false;
-        if (rel !== '' && statSync(src).isFile()) files++;
-        return true;
-      },
-    });
+    step(() =>
+      cpSync(config.filesDir, join(dir, 'files'), {
+        recursive: true,
+        filter: (src) => {
+          const rel = relative(config.filesDir, src);
+          if (rel.split(sep)[0] === 'tmp') return false;
+          if (rel !== '' && statSync(src).isFile()) files++;
+          return true;
+        },
+      }),
+    );
   }
-  return { dir, dbBytes: statSync(dbFile).size, files };
+  return { dir, dbBytes: step(() => statSync(dbFile).size), files };
 }
 
 export function runAdmin(argv: string[], deps: { db: Db; config: Config; now?: Date; out: (line: string) => void }): number {
