@@ -5,7 +5,7 @@ send it jobs (transcription, rendering, and any type you add) and get the result
 
 *Fornax* is Latin for an oven, and the name of a constellation.
 
-Status: first release (0.1). The API may still change.
+Status: an early release (0.2). The API may still change.
 
 ```
 agent (MCP) ─┐                    ┌─ fornax worker on the GPU PC (pulls jobs; no open port)
@@ -100,6 +100,10 @@ MCP tools: `list_job_types`, `create_upload`, `submit_job`, `get_job`, `get_outp
 `queue_status`. Large files go through `create_upload`, which returns a one-time link and a ready `curl -T` command
 (`curl --fail-with-body` needs curl 7.76 or newer; use `-f` with an older one).
 
+`get_job` takes `wait_seconds` (up to 25) and the `change` of the previous answer and then answers as soon as the job
+changes. While a job waits, `note` says why in one sentence (the worker is offline, the type is not offered, other
+programs hold the GPU, or the jobs ahead of it).
+
 ### REST API
 
 All with `Authorization: Bearer <token>`:
@@ -110,7 +114,8 @@ All with `Authorization: Bearer <token>`:
 | `POST /api/files?name=<file name>` | upload a file (streamed body) → `{id, name, size, …}` (`id` is the file id for `inputs`) |
 | `POST /api/uploads` | a one-time upload link (`PUT /api/uploads/<signed>`, no token) |
 | `POST /api/jobs` | submit `{type, params, inputs, priority?, group?, callback_url?}` |
-| `GET /api/jobs`, `GET /api/jobs/:id` | list, details, outputs, result page link |
+| `GET /api/jobs`, `GET /api/jobs/:id` | list, details, outputs, result page link; one job also has `worker` and `note` (why it waits) |
+| `GET /api/jobs/:id?wait=25&change=<change>` | answers as soon as the job's `change` differs (at the latest after `wait` seconds, at most 30): wait instead of polling |
 | `POST /api/jobs/:id/cancel` | cancel |
 | `GET /api/jobs/:id/outputs/<name>` | download (or with a signed `?sig=` link, no token) |
 | `GET /api/queue` | queue summary |
@@ -157,6 +162,60 @@ On the PC with the GPU (Windows or Linux, Node.js 22 or newer):
 4. Install job types and check them: `fornax types install transcribe`, `fornax types install render`,
    `fornax doctor`. The `render` pack needs scenes that are self-contained (File > External Data > Pack Resources).
 5. Start it: `fornax worker`. Ctrl+C gives the running job back; a second Ctrl+C kills the tool.
+
+### The GPU belongs to the queue
+
+**Check the card before each job.** With `gpu.max_used_mib` in `worker.yaml` the worker reads the whole card's memory
+in use (`nvidia-smi`) before it takes a job, and takes none while more than that is in use (another program on the
+card, e.g. Blender started by hand) or while the card cannot be read; `queue_status` then says why nothing runs. The
+key has no default: without it nothing is checked. `fornax doctor` shows the card and suggests a value (what is in use
+now plus some room):
+
+```yaml
+gpu:
+  max_used_mib: 2048
+```
+
+**Lease the card for a program on this PC.** `fornax types install lease`, then store a client token (the worker
+token cannot submit jobs): the admin runs `fornax-admin tokens invite <name>`, you make the token on the pairing page,
+and `fornax lease token` reads it from standard input (paste it, or pipe it in) and checks it. `FORNAX_CLIENT_TOKEN`
+wins over the stored file. Then:
+
+```
+fornax lease [--minutes N] [--wait-minutes N] [--rerun] [--priority low|normal|high] [--label TEXT] -- <program> [args…]
+fornax lease -- blender.exe -b scene.blend -f 1
+```
+
+The program waits for the card in queue order like any job, then runs here with your terminal, working directory and
+environment (plus `FORNAX_LEASE=<job id>`, without the client token), and gives the card back when it ends. Give the
+program itself, not a `.cmd`/`.bat` launcher (there is no shell); a launcher or a program that is not found ends
+`fornax lease` before any job is made. `--minutes` (default 60, at most 720) is the longest one run may take;
+`--wait-minutes` gives up waiting for the card; `--label` names the lease in the queue (default: the program's file
+name); `fornax lease --help` prints the usage. `fornax lease` inside a lease runs its program at once, under the outer
+lease. Its own lines go to stderr, starting with `fornax lease:`; stdout is the program's.
+
+On Linux the program runs in a session of its own (so that its whole process tree can be ended): it has no controlling
+terminal, so interactive prompts and `/dev/tty` do not work; piped standard input works. A nested `fornax lease` runs
+its program in the caller's process group instead.
+
+| Exit code | Meaning | The program |
+|---|---|---|
+| 120 | usage error, or the program cannot start (not found, `.cmd`/`.bat`) | not started |
+| 121 | no lease: no client token, the token was refused, `lease` is not offered, the submit was refused | not started |
+| 122 | gave up waiting (`--wait-minutes`) | not started |
+| 123 | the lease was lost: canceled, failed, `--minutes` ran out; without `--rerun` also a stop or restart of the worker | stopped or not started |
+| 130 | interrupted (Ctrl+C, `SIGTERM`, `SIGHUP`) | stopped |
+| other | the program's own code (128 + the signal's number when a signal ended it) | finished |
+
+A stop of `fornax lease` (Ctrl+C, `SIGTERM`; `SIGHUP`, a closed terminal, counts as `SIGTERM`) is passed on to the
+program, which gets 10 s to end before it is killed; a second Ctrl+C kills it at once. A stop while waiting cancels
+the job.
+
+Stopping or restarting the worker stops a leased program. With `--rerun` (for a program that is safe to start again,
+e.g. one that continues after the frames it has) it starts again once the worker runs again; without it `fornax lease`
+ends with 123. A program never runs without a lease: while the server cannot be reached, `fornax lease` keeps trying
+and waits, and only `--wait-minutes` (122) or a stop (130) ends that wait. A program that already runs goes on while the server is
+unreachable.
 
 `fornax types add <name>` creates an empty pack and copies a prompt for Claude Code that builds the rest with you;
 the format is in [types/README.md](types/README.md).

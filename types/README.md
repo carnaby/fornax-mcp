@@ -107,6 +107,8 @@ Rules, checked when the pack loads:
   `{"frame_0001.png": {"meta": {"width": 1920}, "preview": "previews/frame_0001.jpg"}}`. A file named as a preview is
   not listed as an output of its own.
 - `max_runtime` is enforced: the whole process tree is killed and the job fails (and may be retried).
+- The built-in `lease` pack is an example of a tool that only holds the card: it waits for files that `fornax lease`
+  writes in `<data>/leases/<FORNAX_JOB_ID>/` and ends with 0 when the program is done, with 4 otherwise.
 
 ## Exit codes
 
