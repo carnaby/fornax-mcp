@@ -30,6 +30,9 @@ const fail = (message) => {
   console.error(message);
   process.exit(4);
 };
+// Node's own exit code for a throw is 1, which the worker retries: anything unexpected is 4 as well. The code, not the
+// message: the message may hold this PC's path.
+process.on('uncaughtException', (e) => fail(`the lease tool failed (${e?.code ?? e?.name ?? 'error'})`));
 
 const id = process.env.FORNAX_JOB_ID ?? '';
 if (!/^[0-9A-Za-z]{1,64}$/.test(id)) fail('FORNAX_JOB_ID is missing or not a job id');
@@ -39,6 +42,7 @@ try {
 } catch {
   fail('the params file cannot be read');
 }
+if (!params || typeof params !== 'object') fail('the params are not an object');
 const minutes = params.minutes;
 if (!Number.isInteger(minutes) || minutes < 1) fail('the params have no minutes');
 const label = typeof params.label === 'string' && params.label ? params.label : 'leased';
@@ -46,7 +50,9 @@ const label = typeof params.label === 'string' && params.label ? params.label : 
 const dir = join(leasesDir, id);
 const alive = join(dir, 'alive');
 const done = join(dir, 'done');
+// Wall clock only to compare with alive's change time; elapsed time runs on the monotonic clock.
 const start = Date.now();
+const startMono = performance.now();
 
 /** Newest change of a lease folder: the folder itself or any file in it. */
 function newest(path) {
@@ -116,7 +122,7 @@ function tick() {
   // (the next done overwrites it, the sweep removes leftovers). An empty done or alive is still being written: the
   // next tick decides.
   if (d && d.text && a && a.text === d.text) return end(0);
-  const elapsed = now - start;
+  const elapsed = performance.now() - startMono;
   if (elapsed >= minutes * MINUTE_MS) return end(4, 'the lease time ran out');
   if (!a) {
     if (elapsed > GRACE_MS) return end(4, `no \`fornax lease\` took this lease within ${GRACE_MS / 1000} s`);
@@ -132,7 +138,11 @@ function tick() {
   }
 }
 
-mkdirSync(dir, { recursive: true });
+try {
+  mkdirSync(dir, { recursive: true });
+} catch (e) {
+  fail(`the lease folder cannot be created (${e.code ?? 'error'})`);
+}
 sweep();
 tick();
 if (!ended) timer = setInterval(tick, TICK_MS);

@@ -69,7 +69,7 @@ describe('the lease tool', () => {
 
   test('alive no longer renewed: exit 4', async () => {
     const { pack, dir } = install();
-    const run = tool(pack, { minutes: 5 }, { graceMs: 300 });
+    const run = tool(pack, { minutes: 5 }, { graceMs: 1000 });
     await waitFor(() => existsSync(dir), 5000, 'the lease folder');
     writeFileSync(join(dir, 'alive'), 'S1');
     expect(await run.code).toBe(4);
@@ -83,6 +83,8 @@ describe('the lease tool', () => {
     const hourAgo = new Date(Date.now() - 3_600_000);
     utimesSync(join(dir, 'alive'), hourAgo, hourAgo);
     const run = tool(pack, { minutes: 5 }, { graceMs: 1500 });
+    // The folder exists before the tool here: its first progress line shows it runs, so the 400 ms count from its start.
+    await waitFor(() => run.out.join('').includes('0 min'), 5000, 'the tool to start');
     await sleep(400);
     writeFileSync(join(dir, 'alive'), 'S2');
     writeFileSync(join(dir, 'done'), 'S2');
@@ -116,7 +118,7 @@ describe('the lease tool', () => {
 
   test('minutes ran out: exit 4; progress every minute with the label', async () => {
     const { pack, dir } = install();
-    const run = tool(pack, { minutes: 2, label: 'render job' }, { minuteMs: 300, graceMs: 5000 });
+    const run = tool(pack, { minutes: 2, label: 'render job' }, { minuteMs: 1000, graceMs: 5000 });
     await waitFor(() => existsSync(dir), 5000, 'the lease folder');
     writeFileSync(join(dir, 'alive'), 'S1');
     expect(await run.code).toBe(4);
@@ -126,6 +128,24 @@ describe('the lease tool', () => {
       { progress: 0, message: 'render job, 0 min' },
       { progress: 0.5, message: 'render job, 1 min' },
     ]);
+  });
+
+  test('a lease folder that cannot be created: exit 4, never the retried 1', async () => {
+    const { pack, paths } = install();
+    // <data>/leases as a file: mkdir fails the same way on Windows and Linux.
+    writeFileSync(paths.leasesDir, '');
+    const run = tool(pack, { minutes: 5 });
+    expect(await run.code).toBe(4);
+    expect(run.err.join('')).toMatch(/the lease folder cannot be created \(E[A-Z]+\)/);
+  });
+
+  test('params that are not an object: exit 4', () => {
+    const { pack } = install();
+    const file = join(tmp(), 'params.json');
+    writeFileSync(file, 'null');
+    const r = spawnSync(process.execPath, [join(pack, 'scripts', 'lease.mjs'), '--params', file], { env: { ...process.env, FORNAX_JOB_ID: ID }, encoding: 'utf8' });
+    expect(r.status).toBe(4);
+    expect(r.stderr).toContain('the params are not an object');
   });
 
   test('folders untouched for a day are swept at start; younger ones stay', async () => {
