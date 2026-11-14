@@ -160,4 +160,41 @@ describe('outputs', () => {
     const res = await t.app.inject({ method: 'GET', url: `/api/jobs/${r.id}/outputs/frame_0001.png`, headers: { authorization: `Bearer ${r.alice}` } });
     expect(res.statusCode).toBe(404);
   });
+
+  test('an overlapping claim takes the job while the first one discards stale outputs: the first answers 204', async () => {
+    const r = await running();
+    await r.put('stale.png', TINY_PNG);
+    t.clock.advance(600_001);
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    let entered!: () => void;
+    const inRemove = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    class SlowStore extends FileStore {
+      override async remove(id: string): Promise<void> {
+        entered();
+        await gate;
+        return super.remove(id);
+      }
+    }
+    const slow = await buildApp({ config: t.config, db: t.db, store: new SlowStore(t.config.filesDir), clock: () => t.clock.now, logStream: { write: () => undefined } });
+    try {
+      const claim = (app: typeof slow) =>
+        app.inject({ method: 'POST', url: '/api/worker/jobs/claim', headers: { authorization: `Bearer ${r.worker}` }, payload: { wait: 0 } });
+      const first = claim(slow);
+      await inRemove;
+      // The worker never saw the first answer and claims again: the job is abandoned and claimed anew.
+      const second = await claim(t.app);
+      expect(second.statusCode).toBe(200);
+      open();
+      expect((await first).statusCode).toBe(204);
+      expect(t.db.select().from(jobs).get()).toMatchObject({ state: 'running', leaseId: second.json().lease });
+    } finally {
+      open();
+      await slow.close();
+    }
+  });
 });

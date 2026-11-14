@@ -1,9 +1,10 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fingerprint, parseToken, TOKEN_NAME, type TokenRole, tokenHash, webhookKey } from '@fornax/protocol';
-import { and, desc, eq, gt, isNull, ne } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, isNull, ne } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
-import { invites, tokens } from '../db/schema.js';
+import { invites, jobs, tokens } from '../db/schema.js';
 import { badRequest, conflict, notFound } from './errors.js';
+import { finishJob } from './finish.js';
 
 export const INVITE_TTL_MS = 86_400_000;
 
@@ -86,15 +87,24 @@ export function approveToken(db: Db, name: string, now: Date): { name: string; r
   });
 }
 
-export function revokeToken(db: Db, name: string): number {
-  const rows = db
-    .update(tokens)
-    .set({ status: 'revoked' })
-    .where(and(eq(tokens.name, name), ne(tokens.status, 'revoked')))
-    .returning({ id: tokens.id })
-    .all();
-  if (!rows.length) throw notFound(`no token named ${name}`);
-  return rows.length;
+/** Revoke every token named `name`; their queued and running jobs are canceled (a running job's worker hears it in its next heartbeat). */
+export function revokeToken(db: Db, name: string, now: Date = new Date()): number {
+  return db.transaction(() => {
+    const rows = db
+      .update(tokens)
+      .set({ status: 'revoked' })
+      .where(and(eq(tokens.name, name), ne(tokens.status, 'revoked')))
+      .returning({ id: tokens.id })
+      .all();
+    if (!rows.length) throw notFound(`no token named ${name}`);
+    const open = db
+      .select()
+      .from(jobs)
+      .where(and(inArray(jobs.ownerTokenId, rows.map((r) => r.id)), inArray(jobs.state, ['queued', 'running'])))
+      .all();
+    for (const j of open) finishJob(db, j, { state: 'canceled' }, now);
+    return rows.length;
+  });
 }
 
 export function listTokens(db: Db) {

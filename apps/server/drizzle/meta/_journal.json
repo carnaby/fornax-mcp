@@ -22,6 +22,13 @@
       "when": 1794608532849,
       "tag": "0002_conscious_senator_kelly",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1794632227743,
+      "tag": "0003_handy_zaran",
+      "breakpoints": true
     }
   ]
 }

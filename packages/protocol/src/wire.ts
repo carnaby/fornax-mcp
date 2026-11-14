@@ -6,6 +6,13 @@ export const WORKER_HEADERS = { name: 'x-fornax-worker', version: 'x-fornax-vers
 /** The longest a claim waits for a job before answering 204, in seconds. */
 export const MAX_CLAIM_WAIT_S = 30;
 
+/** A worker holds a job this long without a heartbeat (server) and fits its retries into it (worker). */
+export const LEASE_MS = 600_000;
+
+/** Why a worker gives a job back: it stops (never counts), or the type's environment is broken (spec 5, exit code 3). */
+export const RELEASE_REASONS = ['stopping', 'environment'] as const;
+export type ReleaseReason = (typeof RELEASE_REASONS)[number];
+
 export const announceBody = z.strictObject({ types: z.array(jobTypeContract).max(100) });
 
 export const claimBody = z.strictObject({ wait: z.number().int().min(0).max(MAX_CLAIM_WAIT_S).default(25) });
@@ -30,7 +37,7 @@ export const heartbeatBody = z.strictObject({
 export const heartbeatReply = z.object({ lease_until: z.string().nullable(), cancel: z.boolean() });
 
 export const failBody = z.strictObject({ lease: z.string().min(1), error: z.string().max(10_000), permanent: z.boolean().default(false) });
-export const releaseBody = z.strictObject({ lease: z.string().min(1) });
+export const releaseBody = z.strictObject({ lease: z.string().min(1), reason: z.enum(RELEASE_REASONS).default('stopping') });
 
 const metaValue = z.union([z.string().max(1000), z.number(), z.boolean(), z.null()]);
 

@@ -2,7 +2,7 @@ import type { Stats } from 'node:fs';
 import { lstat, mkdir, rm, writeFile } from 'node:fs/promises';
 import { extname, join, relative, sep } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { type ClaimedJob, validateParams } from '@fornax/protocol';
+import { type ClaimedJob, LEASE_MS, validateParams } from '@fornax/protocol';
 import { ApiError, InputMismatchError, isTransient, LeaseLostError, LocalFileError, NetworkError, UploadFileError, type WorkerApi } from './api.js';
 import { type CollectedOutputs, collectOutputs, LOG_NAME, OutputError, type OutputFile } from './outputs.js';
 import { missingTools, type Pack } from './pack.js';
@@ -18,8 +18,8 @@ export const HEARTBEAT_TIMEOUT_MS = 20_000;
  * the last pause repeats while the lease still holds (see LEASE_MS).
  */
 export const RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 16_000, 32_000, 60_000, 60_000];
-/** The server's lease (plan 01): each heartbeat extends it to this long from then. */
-export const LEASE_MS = 600_000;
+/** The server's lease: each heartbeat extends it to this long from then. */
+export { LEASE_MS };
 /** Retries end this long before the lease would run out, measured from the last successful heartbeat. */
 export const LEASE_MARGIN_MS = 60_000;
 /** A tool that looks stopped by the same Ctrl+C as the worker: wait this long for the worker's own signal. */
@@ -190,10 +190,12 @@ export async function runJob(job: ClaimedJob, pack: Pack, deps: JobDeps): Promis
   };
 
   const release = async (outcome: 'released' | 'broken', detail: string): Promise<JobResult> => {
+    // A broken environment (exit code 3, a tool that cannot start) is told apart: the server counts its second time.
+    const reason = outcome === 'broken' ? 'environment' : 'stopping';
     try {
       // While stopping there is no time for retries; otherwise a short outage must not cost the client an attempt.
-      if (deps.signal?.aborted) await deps.api.release(job.id, job.lease, AbortSignal.timeout(RELEASE_TIMEOUT_MS));
-      else await call(() => deps.api.release(job.id, job.lease));
+      if (deps.signal?.aborted) await deps.api.release(job.id, job.lease, reason, AbortSignal.timeout(RELEASE_TIMEOUT_MS));
+      else await call(() => deps.api.release(job.id, job.lease, reason));
     } catch (e) {
       if (!(e instanceof LeaseLostError)) say(`could not give the job back (${describeError(e)}); the server takes it back when its lease runs out`);
     }

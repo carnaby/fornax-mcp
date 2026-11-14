@@ -85,6 +85,8 @@ export const jobs = sqliteTable(
     callbackUrl: text('callback_url'),
     state: text('state').$type<JobState>().notNull(),
     attempts: integer('attempts').notNull().default(0),
+    /** Releases for a broken environment (exit code 3); the second one counts as a failed attempt. */
+    envReleases: integer('env_releases').notNull().default(0),
     runAfter: ts('run_after').notNull(),
     leaseId: text('lease_id'),
     leaseExpiresAt: ts('lease_expires_at'),

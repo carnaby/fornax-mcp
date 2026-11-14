@@ -73,6 +73,7 @@ describe('runJob', () => {
     const f = fakeApi();
     expect((await runJob(fakeClaim({ params: { mode: 'exit', code: 3 } }), pack, deps(f.api))).outcome).toBe('broken');
     expect(f.called('release')).toHaveLength(1);
+    expect(f.called('release')[0]!.args[2]).toBe('environment');
     expect(f.called('fail')).toHaveLength(0);
   });
 
@@ -147,6 +148,7 @@ describe('runJob', () => {
     const pids = readPids(pidFile)!;
     await waitFor(() => !isAlive(pids.parent) && !isAlive(pids.child), 5000, 'the tree to die');
     expect(f.called('release')).toHaveLength(1);
+    expect(f.called('release')[0]!.args[2]).toBe('stopping');
     expect(f.called('fail')).toHaveLength(0);
   });
 

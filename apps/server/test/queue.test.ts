@@ -1,8 +1,9 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, test } from 'vitest';
-import { jobs } from '../src/db/schema.js';
+import { jobs, tokens } from '../src/db/schema.js';
 import { cancelJob, getOwnJob, submitJob } from '../src/domain/jobs.js';
-import { ABANDONED, abandonRunning, claimJob, confirmJob, expireLeases, failJob, heartbeatJob, LEASE_MS, releaseJob } from '../src/domain/queue.js';
+import { ABANDONED, abandonRunning, claimJob, confirmJob, ENVIRONMENT_AGAIN, expireLeases, failJob, heartbeatJob, LEASE_MS, releaseJob } from '../src/domain/queue.js';
+import { revokeToken } from '../src/domain/tokens.js';
 import { renderContract, transcribeContract } from './fixtures.js';
 import { announce, issueToken, tokenIdOf, uploadFile, useTestApp } from './helpers.js';
 
@@ -204,5 +205,59 @@ describe('heartbeat messages and withdrawn types', () => {
     announce(t.db, [transcribeContract], t.clock.now);
     expect(() => heartbeatJob(t.db, c.id, c.leaseId!, { progress: null, message: null }, at(LEASE_MS + 2))).toThrow(/no longer yours/);
     expect(getOwnJob(t.db, c.ownerTokenId, c.id).state).toBe('queued');
+  });
+});
+
+describe('queue fixes', () => {
+  async function queued(owner = 'alice') {
+    announce(t.db, [renderContract], t.clock.now);
+    const token = issueToken(t.db, owner);
+    const scene = await uploadFile(t.app, token, 'scene.blend', 'B');
+    const res = await t.app.inject({ method: 'POST', url: '/api/jobs', headers: { authorization: `Bearer ${token}` }, payload: { type: 'render', params: { frame_start: 1 }, inputs: { scene } } });
+    return { token, id: res.json().id as string };
+  }
+
+  test('a second environment release of the same job counts an attempt', async () => {
+    const { id } = await queued();
+    const first = claimJob(t.db, t.clock.now)!;
+    expect(releaseJob(t.db, id, first.leaseId!, t.clock.now, 'environment')).toBe('queued');
+    expect(t.db.select().from(jobs).get()).toMatchObject({ state: 'queued', attempts: 0, envReleases: 1 });
+    const second = claimJob(t.db, t.clock.now)!;
+    expect(releaseJob(t.db, id, second.leaseId!, t.clock.now, 'environment')).toBe('queued');
+    const row = t.db.select().from(jobs).get()!;
+    expect(row).toMatchObject({ state: 'queued', attempts: 1, error: ENVIRONMENT_AGAIN });
+    expect(row.runAfter.getTime()).toBe(t.clock.now.getTime() + 60_000);
+  });
+
+  test('a stopping release never counts an attempt, also after an environment release', async () => {
+    const { id } = await queued();
+    releaseJob(t.db, id, claimJob(t.db, t.clock.now)!.leaseId!, t.clock.now, 'environment');
+    releaseJob(t.db, id, claimJob(t.db, t.clock.now)!.leaseId!, t.clock.now, 'stopping');
+    expect(t.db.select().from(jobs).get()).toMatchObject({ state: 'queued', attempts: 0, envReleases: 1 });
+  });
+
+  test('jobs of a revoked owner are canceled and never claimed', async () => {
+    const { id } = await queued('alice');
+    const other = await queued('bob');
+    revokeToken(t.db, 'alice', t.clock.now);
+    expect(t.db.select().from(jobs).all().find((j) => j.id === id)).toMatchObject({ state: 'canceled' });
+    expect(claimJob(t.db, t.clock.now)!.id).toBe(other.id);
+  });
+
+  test('revoking the owner of a running job cancels it; the worker hears it in the next heartbeat', async () => {
+    const { id } = await queued('alice');
+    const worker = issueToken(t.db, 'pc', 'worker');
+    const lease = (await t.app.inject({ method: 'POST', url: '/api/worker/jobs/claim', headers: { authorization: `Bearer ${worker}` }, payload: { wait: 0 } })).json().lease as string;
+    revokeToken(t.db, 'alice', t.clock.now);
+    const beat = await t.app.inject({ method: 'POST', url: `/api/worker/jobs/${id}/heartbeat`, headers: { authorization: `Bearer ${worker}` }, payload: { lease } });
+    expect(beat.json()).toMatchObject({ cancel: true });
+  });
+
+  test('a queued job whose owner token is no longer active is skipped by the claim', async () => {
+    const { id } = await queued('alice');
+    // A token made inactive without the cancel path (e.g. by an older server version): the claim still skips its job.
+    t.db.update(tokens).set({ status: 'revoked' }).run();
+    expect(claimJob(t.db, t.clock.now)).toBeNull();
+    expect(t.db.select().from(jobs).get()).toMatchObject({ id, state: 'queued' });
   });
 });

@@ -2,7 +2,7 @@ import { announceBody, claimBody, completeBody, failBody, heartbeatBody, release
 import { eq } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { files } from '../db/schema.js';
+import { files, jobs } from '../db/schema.js';
 import { notFound } from '../domain/errors.js';
 import { announceTypes } from '../domain/job-types.js';
 import { abandonRunning, claimJob, claimView, confirmJob, failJob, heartbeatJob, ownedJob, releaseJob } from '../domain/queue.js';
@@ -77,7 +77,7 @@ export const workerRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps) => 
         const job = claimJob(deps.db, deps.clock());
         if (job) {
           if (!gone && hasProducedFiles(deps.db, job.id)) {
-            // An earlier attempt (lease ran out, or a failed discard on release) may have left outputs; they must not reach this attempt's manifest.
+            // An earlier attempt whose lease ran out may have left outputs; they must not reach this attempt's manifest.
             try {
               await discardOutputs(deps, job.id, { keepLog: false });
             } catch (e) {
@@ -85,8 +85,12 @@ export const workerRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps) => 
               throw e;
             }
           }
+          // An overlapping claim (the worker asked again while this one awaited) may have taken the job meanwhile:
+          // then the lease in `job` is stale and not ours to give back.
+          const current = deps.db.select().from(jobs).where(eq(jobs.id, job.id)).get();
+          if (current?.state !== 'running' || current.leaseId !== job.leaseId) return reply.code(204).send();
           // Re-checked after the await: a worker that left meanwhile must not keep a lease it never saw.
-          if (!gone && !stop.signal.aborted) return claimView(deps.db, job);
+          if (!gone && !stop.signal.aborted) return claimView(deps.db, current);
           releaseJob(deps.db, job.id, job.leaseId!, deps.clock());
           return reply.code(204).send();
         }
@@ -116,8 +120,8 @@ export const workerRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps) => 
 
   app.post<{ Params: { id: string } }>('/jobs/:id/release', async (req, reply) => {
     const b = parse(releaseBody, req.body);
-    releaseJob(deps.db, req.params.id, b.lease, deps.clock());
-    await discardOutputs(deps, req.params.id, { keepLog: false });
+    const state = releaseJob(deps.db, req.params.id, b.lease, deps.clock(), b.reason);
+    await discardOutputs(deps, req.params.id, { keepLog: state === 'failed' });
     return reply.code(204).send();
   });
 

@@ -1,16 +1,15 @@
 import { randomUUID } from 'node:crypto';
-import { type ClaimedJob, contractHash } from '@fornax/protocol';
+import { type ClaimedJob, contractHash, LEASE_MS, type ReleaseReason } from '@fornax/protocol';
 import { and, asc, desc, eq, inArray, isNull, lt, lte } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
-import { files, type JobState, jobs, jobTypes } from '../db/schema.js';
+import { files, type JobState, jobs, jobTypes, tokens } from '../db/schema.js';
 import { conflict, notFound } from './errors.js';
 import { finishJob } from './finish.js';
 import { isOffered } from './job-types.js';
 import type { JobRow } from './jobs.js';
 import { jobSignal } from './signal.js';
 
-/** A worker holds a job this long without a heartbeat. */
-export const LEASE_MS = 600_000;
+export { LEASE_MS };
 export const MAX_ATTEMPTS = 3;
 /** Wait before the next attempt after the n-th failed one: 1 minute, then 4. */
 export const retryDelayMs = (attempts: number): number => 60_000 * 4 ** Math.max(0, attempts - 1);
@@ -87,6 +86,8 @@ export function claimJob(db: Db, now: Date): JobRow | null {
       .select({ id: jobs.id })
       .from(jobs)
       .innerJoin(jobTypes, and(eq(jobTypes.name, jobs.type), eq(jobTypes.offered, true)))
+      // A job of a token that is no longer active (revoked) is never run.
+      .innerJoin(tokens, and(eq(tokens.id, jobs.ownerTokenId), eq(tokens.status, 'active')))
       .where(and(eq(jobs.state, 'queued'), lte(jobs.runAfter, now)))
       .orderBy(desc(jobs.priority), asc(jobs.createdAt), asc(jobs.id))
       .limit(1)
@@ -162,16 +163,29 @@ export function failJob(
   return result;
 }
 
-/** The worker gives the job back without trying (stopping, or its environment is broken): the attempt does not count. */
-export function releaseJob(db: Db, id: string, lease: string, now: Date): void {
-  db.transaction(() => {
+export const ENVIRONMENT_AGAIN = 'the tool reported a broken environment again for this job';
+
+/**
+ * The worker gives the job back without trying: it is stopping, or the type's environment is broken (exit code 3).
+ * Neither counts an attempt, except a second environment release of the same job: a job that breaks the tool every
+ * time must not keep its type offline forever, so that one is a failed attempt (retried later, failed after the last).
+ */
+export function releaseJob(db: Db, id: string, lease: string, now: Date, reason: ReleaseReason = 'stopping'): 'queued' | 'failed' {
+  const again = db.transaction(() => {
     const row = ownedJob(db, id, lease, ['running', 'queued']);
+    if (reason === 'environment' && row.envReleases >= 1 && row.state === 'running') return true;
     db.update(jobs)
-      .set({ state: 'queued', attempts: Math.max(row.attempts - 1, 0), leaseId: null, leaseExpiresAt: null, runAfter: now, startedAt: null, updatedAt: now })
+      .set({
+        state: 'queued', attempts: Math.max(row.attempts - 1, 0), envReleases: row.envReleases + (reason === 'environment' ? 1 : 0),
+        leaseId: null, leaseExpiresAt: null, runAfter: now, startedAt: null, updatedAt: now,
+      })
       .where(eq(jobs.id, id))
       .run();
+    return false;
   });
+  if (again) return failJob(db, id, lease, { error: ENVIRONMENT_AGAIN, permanent: false }, now).state;
   jobSignal.wake();
+  return 'queued';
 }
 
 export function claimView(db: Db, row: JobRow): ClaimedJob {

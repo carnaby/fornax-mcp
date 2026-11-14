@@ -1,0 +1,1 @@
+ALTER TABLE `jobs` ADD `env_releases` integer DEFAULT 0 NOT NULL;

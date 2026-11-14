@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { completeBody, outputsJson } from '../src/wire.js';
+import { completeBody, LEASE_MS, outputsJson, releaseBody } from '../src/wire.js';
 
 test('outputs.json: meta and preview per output, nothing else', () => {
   const ok = { 'a.png': { meta: { width: 2, hdr: true, note: null }, preview: 'p/a.jpg' } };
@@ -10,4 +10,11 @@ test('outputs.json: meta and preview per output, nothing else', () => {
 
 test('the complete body reuses it and defaults to no outputs', () => {
   expect(completeBody.parse({ lease: 'l' })).toEqual({ lease: 'l', outputs: {} });
+});
+
+test('the lease length is shared by server and worker, and a release says why', () => {
+  expect(LEASE_MS).toBe(600_000);
+  expect(releaseBody.parse({ lease: 'l' })).toEqual({ lease: 'l', reason: 'stopping' });
+  expect(releaseBody.parse({ lease: 'l', reason: 'environment' }).reason).toBe('environment');
+  expect(releaseBody.safeParse({ lease: 'l', reason: 'tired' }).success).toBe(false);
 });

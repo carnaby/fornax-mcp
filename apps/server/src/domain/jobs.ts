@@ -62,7 +62,7 @@ export function submitJob(db: Db, config: Config, owner: string, input: SubmitIn
     const row: JobRow = {
       id: ulid(now.getTime()), ownerTokenId: owner, type: contract.name, params: params.value, inputs,
       priority: PRIORITIES.indexOf(input.priority ?? 'normal'), group: input.group ?? null, callbackUrl: callbackHref,
-      state: 'queued', attempts: 0, runAfter: now, leaseId: null, leaseExpiresAt: null, confirmedAt: null, progress: null, progressMessage: null,
+      state: 'queued', attempts: 0, envReleases: 0, runAfter: now, leaseId: null, leaseExpiresAt: null, confirmedAt: null, progress: null, progressMessage: null,
       error: null, manifest: null, createdAt: now, startedAt: null, finishedAt: null, updatedAt: now,
     };
     tx.insert(jobs).values(row).run();

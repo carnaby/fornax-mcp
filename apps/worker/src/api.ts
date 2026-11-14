@@ -5,7 +5,7 @@ import { hostname } from 'node:os';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { ReadableStream as WebReadableStream } from 'node:stream/web';
-import { type ClaimedJob, claimedJob, type JobTypeContract, type OutputsJson, WORKER_HEADERS } from '@fornax/protocol';
+import { type ClaimedJob, claimedJob, type JobTypeContract, type OutputsJson, type ReleaseReason, WORKER_HEADERS } from '@fornax/protocol';
 import { WORKER_VERSION } from './version.js';
 
 /** The server answered with an error status. */
@@ -127,8 +127,8 @@ export class WorkerApi {
     return ((await res.json()) as { state: 'queued' | 'failed' }).state;
   }
 
-  async release(id: string, lease: string, signal?: AbortSignal): Promise<void> {
-    await this.send('POST', `/jobs/${enc(id)}/release`, { json: { lease }, signal });
+  async release(id: string, lease: string, reason: ReleaseReason = 'stopping', signal?: AbortSignal): Promise<void> {
+    await this.send('POST', `/jobs/${enc(id)}/release`, { json: { lease, reason }, signal });
   }
 
   async complete(id: string, lease: string, outputs: OutputsJson): Promise<void> {
