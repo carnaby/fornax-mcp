@@ -9,6 +9,12 @@ on:
 permissions:
   contents: read
 
+# One run per ref at a time. On main a newer push cancels the older run, so an older run can never push :latest after
+# a newer one; on other refs runs wait for each other.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/main' }}
+
 jobs:
   test:
     strategy:
@@ -41,7 +47,9 @@ jobs:
       - name: Run it as an arbitrary UID and check health, the worker bundle, the admin CLI and a fast stop
         run: |
           set -eu
-          docker run -d --name fornax --user 12345:12345 \
+          # A read-only root with a tmpfs /tmp and a named volume on /data (it takes the image's 1777 mode): the
+          # server may write only to DATA_DIR and /tmp.
+          docker run -d --name fornax --user 12345:12345 --read-only --tmpfs /tmp -v fornax-ci:/data \
             -e FORNAX_SECRET="$(openssl rand -hex 32)" -e PUBLIC_URL=http://127.0.0.1:3000 \
             -p 127.0.0.1:3000:3000 fornax:ci
           for i in $(seq 1 30); do curl -fsS http://127.0.0.1:3000/healthz && break; sleep 1; done
@@ -67,7 +75,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-    concurrency: { group: image, cancel-in-progress: true }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
