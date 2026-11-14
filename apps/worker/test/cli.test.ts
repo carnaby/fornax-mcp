@@ -7,7 +7,7 @@ import { FORNAX_VERSION, fingerprint, generateToken } from '@fornax/protocol';
 import { startTestServer, type TestServer } from '@fornax/server/testing';
 import { afterEach, describe, expect, test } from 'vitest';
 import { ApiError, type WorkerApi } from '../src/api.js';
-import { consoleWriter, makeSignalHandler, runCli, wireSignals } from '../src/cli.js';
+import { consoleWriter, LEASE_STOP_SIGNALS, makeSignalHandler, runCli, wireSignals } from '../src/cli.js';
 import { hasRunning, killRunning, runProcess } from '../src/process.js';
 import type { Ctx } from '../src/commands/context.js';
 import { LEASE_USAGE } from '../src/commands/lease.js';
@@ -369,7 +369,7 @@ describe('pairing answers', () => {
 
 describe('signal handling', () => {
   const tick = () => new Promise((r) => setTimeout(r, 10));
-  const wire = (running: boolean) => {
+  const wire = (running: boolean, cancelGraceMs?: number) => {
     const events: string[] = [];
     const handler = makeSignalHandler({
       abort: (s) => events.push(s ? `abort ${s}` : 'abort'),
@@ -377,6 +377,7 @@ describe('signal handling', () => {
       hasRunning: () => running,
       exit: (c) => events.push(`exit ${c}`),
       say: (t) => events.push(`say ${t}`),
+      cancelGraceMs,
     });
     return { handler, events };
   };
@@ -395,12 +396,31 @@ describe('signal handling', () => {
     expect(events.filter((e) => e === 'kill')).toHaveLength(1);
   });
 
-  test("the signal's name reaches the stop (fornax lease passes it on to its program); SIGHUP stops as SIGTERM does", () => {
-    for (const s of ['SIGTERM', 'SIGHUP'] as const) {
+  test("the signal's name reaches the stop (fornax lease passes it on to its program); SIGHUP and SIGQUIT stop as SIGTERM does", () => {
+    for (const s of ['SIGTERM', 'SIGHUP', 'SIGQUIT'] as const) {
       const { handler, events } = wire(false);
       handler(s);
       expect(events).toContain(`abort ${s}`);
     }
+  });
+
+  test('fornax lease, no program running: the second signal waits for the cancel of the job (bounded), then exits 130', async () => {
+    const { handler, events } = wire(false, 150);
+    handler('SIGINT');
+    handler('SIGINT');
+    await tick();
+    // No kill and no exit yet: the first signal's cancel is under way, and the command may end by itself meanwhile.
+    expect(events.filter((e) => e === 'kill' || e.startsWith('exit'))).toEqual([]);
+    await waitFor(() => events.includes('exit 130'), 2000, 'the bounded exit');
+    expect(events).not.toContain('kill');
+  });
+
+  test('fornax lease with its program running: the second signal still kills it at once', async () => {
+    const { handler, events } = wire(true, 60_000);
+    handler('SIGINT');
+    handler('SIGINT');
+    await tick();
+    expect(events.slice(-2)).toEqual(['kill', 'exit 130']);
   });
 
   test('the first message is neutral when no job runs', () => {
@@ -442,6 +462,20 @@ describe('signal handling', () => {
     expect(seen).toHaveLength(3);
     unwire();
     expect(proc.eventNames()).toEqual([]);
+  });
+
+  test("fornax lease also stops on SIGQUIT (Ctrl+\\ on Linux; its program is out of the terminal's reach)", () => {
+    const proc = new EventEmitter();
+    const seen: (string | undefined)[] = [];
+    const unwire = wireSignals(proc, (s) => seen.push(s), LEASE_STOP_SIGNALS);
+    for (const s of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGQUIT']) proc.emit(s, s);
+    expect(seen).toEqual(['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGQUIT']);
+    unwire();
+    expect(proc.eventNames()).toEqual([]);
+    // The worker itself keeps the default SIGQUIT.
+    const plain = new EventEmitter();
+    wireSignals(plain, () => {});
+    expect(plain.eventNames()).not.toContain('SIGQUIT');
   });
 
   test('killRunning ends a live tool and returns', async () => {

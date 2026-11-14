@@ -45,7 +45,7 @@ export type LeaseDeps = {
   leasesDir: string;
   /** One line for the user (stderr); runLease adds the "fornax lease: " prefix. */
   say: (line: string) => void;
-  /** The wrapper was told to stop (Ctrl+C, SIGTERM, SIGHUP); its reason is the signal's name, passed on to the program. */
+  /** The wrapper was told to stop (Ctrl+C, SIGTERM, SIGHUP, SIGQUIT); its reason is the signal's name, passed on to the program. */
   signal: AbortSignal;
   env: NodeJS.ProcessEnv;
   cwd: string;
@@ -91,9 +91,20 @@ const refusalOf = (e: unknown): Refusal | null => {
 };
 const TOKEN_REFUSED = 'the client token was refused (store a new one with fornax lease token)';
 
-/** How a line ends after the job was to be canceled: `why` is null once it was canceled (or was over already). */
-const canceledText = (why: string | null): string =>
-  why === null ? 'the job was canceled' : `the job could not be canceled (${why}); a lease nobody uses ends itself within a minute`;
+/** What a cancel did: the job was canceled, it had ended already (404, 409), or why it could not be canceled. */
+type Canceled = { kind: 'canceled' } | { kind: 'over' } | { kind: 'failed'; why: string };
+
+/**
+ * How a line ends after the job was to be canceled. `claimed`: the worker runs the lease now, so a lease nobody renews
+ * ends itself within a minute; else the job may still wait in the queue (and only once claimed end that way).
+ */
+const canceledText = (id: string, c: Canceled, claimed: boolean): string => {
+  if (c.kind === 'canceled') return 'the job was canceled';
+  if (c.kind === 'over') return 'the job had already ended';
+  return claimed
+    ? `the job could not be canceled (${c.why}); a lease nobody uses ends itself within a minute`
+    : `the job could not be canceled (${c.why}); job ${id} may still wait in the queue; once the worker takes it, its lease ends itself within a minute, as nobody uses it`;
+};
 
 type RunEnd =
   | { kind: 'exited'; exit: ProgramExit }
@@ -152,27 +163,25 @@ export async function runLease(req: LeaseRequest, d: LeaseDeps): Promise<number>
     }
   };
 
-  /**
-   * Cancel the job, best effort: a few tries, never interrupted (it also runs after Ctrl+C). Null once the job is
-   * canceled, was over already or is gone; else why it could not be canceled.
-   */
-  const cancelJob = async (id: string): Promise<string | null> => {
+  /** Cancel the job, best effort: a few tries, never interrupted (it also runs after Ctrl+C). */
+  const cancelJob = async (id: string): Promise<Canceled> => {
     let why = 'the server cannot be reached';
     for (let i = 0; i < 3; i++) {
       if (i > 0) await sleep(t.backoff.baseMs);
       try {
         await d.api.cancel(id);
-        return null;
+        return { kind: 'canceled' };
       } catch (e) {
         const refusal = refusalOf(e);
-        if (refusal === 'gone' || (e instanceof ApiError && e.status === 409)) return null;
-        if (refusal === 'token') return 'the client token was refused';
-        if (e instanceof ApiError && e.status < 500) return oneLine(e.message, 300);
+        // Gone (404) or already in a final state (409): nothing is left to cancel.
+        if (refusal === 'gone' || (e instanceof ApiError && e.status === 409)) return { kind: 'over' };
+        if (refusal === 'token') return { kind: 'failed', why: 'the client token was refused' };
+        if (e instanceof ApiError && e.status < 500) return { kind: 'failed', why: oneLine(e.message, 300) };
         // Unreachable, a 5xx, or an answer that cannot be read: try again.
         why = e instanceof ApiError ? `the server answered ${e.status}` : 'the server cannot be reached';
       }
     }
-    return why;
+    return { kind: 'failed', why };
   };
 
   const launch = (id: string, o: { nested?: boolean; onHardQuit?: () => void } = {}): Program =>
@@ -276,12 +285,13 @@ export async function runLease(req: LeaseRequest, d: LeaseDeps): Promise<number>
         v = await persist((signal) => d.api.job(id, { wait: waitS, change, signal }), d.signal, { deadline });
       }
     } catch (e) {
+      // The job may have been claimed meanwhile, but as far as this wrapper knows it is queued.
       if (e instanceof Stopped) {
-        say(`interrupted; ${canceledText(await cancelJob(id))}`);
+        say(`interrupted; ${canceledText(id, await cancelJob(id), false)}`);
         return LEASE_EXIT.interrupted;
       }
       if (e instanceof GaveUp) {
-        say(`${gaveUpText}; ${canceledText(await cancelJob(id))}`);
+        say(`${gaveUpText}; ${canceledText(id, await cancelJob(id), false)}`);
         return LEASE_EXIT.gaveUp;
       }
       const refusal = refusalOf(e);
@@ -325,13 +335,14 @@ export async function runLease(req: LeaseRequest, d: LeaseDeps): Promise<number>
   const runOnce = async (id: string, files: LeaseFiles, running: ClientJobView): Promise<number | { again: ClientJobView }> => {
     const startedAt = running.started_at ?? '';
     // Ctrl+C while the lease came back (--rerun): the program does not start again.
+    // Both cases: the worker runs the lease (`running`), and this run never renews it.
     if (d.signal.aborted) {
-      say(`interrupted; ${canceledText(await cancelJob(id))}`);
+      say(`interrupted; ${canceledText(id, await cancelJob(id), true)}`);
       return LEASE_EXIT.interrupted;
     }
     // Without alive the tool ends the lease within a minute: do not start a program it would not cover.
     if (!files.alive(startedAt)) {
-      say(`the lease files cannot be written in ${files.dir}; ${canceledText(await cancelJob(id))}`);
+      say(`the lease files cannot be written in ${files.dir}; ${canceledText(id, await cancelJob(id), true)}`);
       return LEASE_EXIT.noLease;
     }
     say(`the lease started (job ${id}); running ${req.program}`);
@@ -387,8 +398,10 @@ export async function runLease(req: LeaseRequest, d: LeaseDeps): Promise<number>
             say('the worker gave the lease back; the program will start again when the lease returns');
             return { again: end.view };
           }
-          const why = await cancelJob(id);
-          say(`the lease was lost: the worker gave it back (it stopped or restarted); the program was stopped${why === null ? '' : `; ${canceledText(why)}`}`);
+          // Given back: the job is queued again (or already claimed again, with no alive of that claim).
+          const c = await cancelJob(id);
+          const tail = c.kind === 'canceled' ? '' : `; ${canceledText(id, c, end.view.state === 'running')}`;
+          say(`the lease was lost: the worker gave it back (it stopped or restarted); the program was stopped${tail}`);
           return LEASE_EXIT.lost;
         }
       }

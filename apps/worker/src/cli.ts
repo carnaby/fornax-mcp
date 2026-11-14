@@ -109,9 +109,20 @@ type SignalDeps = {
   hasRunning: () => boolean;
   exit: (code: number) => void;
   say: (text: string) => void;
+  /**
+   * fornax lease: with no program running, the second signal does not quit at once but gives the first one's cancel of
+   * the waiting job this long (the command then ends by itself), and exits 130 only after it. Unset: quit at once.
+   */
+  cancelGraceMs?: number;
 };
 
-/** First signal: stop gracefully. Second: kill the running tool tree, then exit 130 (a hard quit must not orphan the tool). Later ones are ignored. */
+/** The longest a second Ctrl+C of fornax lease waits for the cancel of a waiting job. */
+export const LEASE_CANCEL_GRACE_MS = 3000;
+
+/**
+ * First signal: stop gracefully. Second: kill the running tool tree, then exit 130 (a hard quit must not orphan the
+ * tool); for fornax lease with no program running, wait (bounded) for the cancel of its job first. Later ones are ignored.
+ */
 export function makeSignalHandler(d: SignalDeps): (signal?: NodeJS.Signals) => void {
   let signals = 0;
   return (signal) => {
@@ -123,6 +134,12 @@ export function makeSignalHandler(d: SignalDeps): (signal?: NodeJS.Signals) => v
       );
       d.abort(signal);
     } else if (signals === 2) {
+      if (d.cancelGraceMs !== undefined && !d.hasRunning()) {
+        // Quitting now would leave the lease job queued (once claimed it would block the card for a minute). Unref'd:
+        // when the command ends by itself sooner, the process ends with it.
+        setTimeout(() => d.exit(130), d.cancelGraceMs).unref();
+        return;
+      }
       void d.killRunning().finally(() => d.exit(130));
     }
   };
@@ -158,12 +175,21 @@ export function consoleWriter(stream: NodeJS.WritableStream): (text: string) => 
 
 /** The signals that stop the worker. SIGHUP: the terminal or SSH session closed (Linux), the console window closed (Windows). */
 export const STOP_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const;
+/**
+ * fornax lease also stops on SIGQUIT (Ctrl+\ on Linux): its program runs in a session of its own, which the terminal's
+ * signals do not reach, so without this the wrapper would end and leave the program on the card.
+ */
+export const LEASE_STOP_SIGNALS = [...STOP_SIGNALS, 'SIGQUIT'] as const;
 
-/** Wire `handler` to every stop signal (Node calls it with the signal's name); returns the unwiring. */
-export function wireSignals(target: Pick<NodeJS.EventEmitter, 'on' | 'off'>, handler: (signal?: NodeJS.Signals) => void): () => void {
-  for (const s of STOP_SIGNALS) target.on(s, handler);
+/** Wire `handler` to every signal of `signals` (Node calls it with the signal's name); returns the unwiring. */
+export function wireSignals(
+  target: Pick<NodeJS.EventEmitter, 'on' | 'off'>,
+  handler: (signal?: NodeJS.Signals) => void,
+  signals: readonly NodeJS.Signals[] = STOP_SIGNALS,
+): () => void {
+  for (const s of signals) target.on(s, handler);
   return () => {
-    for (const s of STOP_SIGNALS) target.off(s, handler);
+    for (const s of signals) target.off(s, handler);
   };
 }
 
@@ -181,8 +207,9 @@ if (isMainModule()) {
   // Every line the worker prints goes through these: a hung-up terminal must not crash it (see consoleWriter).
   const out = consoleWriter(process.stdout);
   const err = consoleWriter(process.stderr);
-  // fornax lease says itself what a stop does (it cancels the job or stops its program). SIGHUP stops it as SIGTERM
-  // does: on Linux the program runs in a session of its own, so a closed terminal reaches the program only this way.
+  // fornax lease says itself what a stop does (it cancels the job or stops its program). SIGHUP and SIGQUIT stop it as
+  // SIGTERM does: on Linux the program runs in a session of its own, so a closed terminal or Ctrl+\ reaches the program
+  // only this way (the signal itself is passed on).
   const leasing = process.argv[2] === 'lease' && process.argv[3] !== 'token';
   const onSignal = makeSignalHandler({
     abort: (signal) => stop.abort(signal),
@@ -190,8 +217,9 @@ if (isMainModule()) {
     hasRunning,
     exit: (c) => process.exit(c),
     say: leasing ? () => {} : (t) => err(`${t}\n`),
+    cancelGraceMs: leasing ? LEASE_CANCEL_GRACE_MS : undefined,
   });
-  const unwire = wireSignals(process, onSignal);
+  const unwire = wireSignals(process, onSignal, leasing ? LEASE_STOP_SIGNALS : STOP_SIGNALS);
   const ctx: Ctx = { paths: resolvePaths(), out: (l) => out(`${l}\n`), err: (l) => err(`${l}\n`), write: out, signal: stop.signal };
   process.exitCode = await runCli(process.argv.slice(2), ctx);
   unwire();

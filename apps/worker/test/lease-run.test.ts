@@ -286,8 +286,8 @@ describe('runLease', () => {
     expect(readFileSync(join(l.dir, 'done'), 'utf8')).toBe(STARTED);
   });
 
-  test('SIGTERM and SIGHUP (a closed terminal) while the program runs: it is stopped as on Ctrl+C, done, 130', async () => {
-    for (const signal of ['SIGTERM', 'SIGHUP']) {
+  test('SIGTERM, SIGHUP (a closed terminal) and SIGQUIT (Ctrl+\\) while the program runs: it is stopped as on Ctrl+C, done, 130', async () => {
+    for (const signal of ['SIGTERM', 'SIGHUP', 'SIGQUIT']) {
       const s = fakeServer();
       const stop = new AbortController();
       const pids = join(tmp(), 'pids.json');
@@ -342,9 +342,37 @@ describe('runLease', () => {
     const l = lease(s, ['--exit', '0'], { waitMinutes: 2 }, { timings: { minuteMs: 100 } });
     expect(await l.run).toBe(122);
     expect(s.job.state).toBe('queued');
+    // Still queued: the lease's own end within a minute only starts once the worker takes it.
     expect(l.lines.at(-1)).toBe(
-      'fornax lease: gave up waiting after 2 min; the job could not be canceled (the client token was refused); a lease nobody uses ends itself within a minute',
+      `fornax lease: gave up waiting after 2 min; the job could not be canceled (the client token was refused); job ${ID} may still wait in the queue; once the worker takes it, its lease ends itself within a minute, as nobody uses it`,
     );
+  });
+
+  test('a cancel refused once the worker runs the lease: the lease nobody uses ends itself within a minute', async () => {
+    const s = fakeServer();
+    s.api.cancel = async () => {
+      throw new ApiError(401, 'unauthorized', 'unauthorized');
+    };
+    const leasesDir = join(tmp(), 'leases');
+    writeFileSync(leasesDir, 'not a folder');
+    const l = lease(s, ['--exit', '0'], {}, { leasesDir });
+    s.set({ state: 'running', started_at: STARTED });
+    expect(await l.run).toBe(121);
+    expect(l.lines.at(-1)).toMatch(
+      /^fornax lease: the lease files cannot be written in .+; the job could not be canceled \(the client token was refused\); a lease nobody uses ends itself within a minute$/,
+    );
+  });
+
+  test('a cancel answered 404 or 409 (the job is gone or over): "the job had already ended", never "was canceled"', async () => {
+    for (const error of [new ApiError(404, 'not_found', 'job not found'), new ApiError(409, 'conflict', 'the job has ended')]) {
+      const s = fakeServer();
+      s.api.cancel = async () => {
+        throw error;
+      };
+      const l = lease(s, ['--exit', '0'], { waitMinutes: 2 }, { timings: { minuteMs: 100 } });
+      expect(await l.run).toBe(122);
+      expect(l.lines.at(-1)).toBe('fornax lease: gave up waiting after 2 min; the job had already ended');
+    }
   });
 
   test('the queue note is shown again after noteMs while nothing changes: the long-poll waits no longer than that', async () => {
