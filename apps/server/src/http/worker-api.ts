@@ -1,3 +1,4 @@
+import { stat } from 'node:fs/promises';
 import { announceBody, claimBody, completeBody, FORNAX_VERSION, failBody, heartbeatBody, releaseBody, WORKER_HEADERS } from '@fornax/protocol';
 import { eq } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
@@ -162,6 +163,12 @@ export const workerRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps) => 
     const fileId = Object.hasOwn(job.inputs, req.params.name) ? job.inputs[req.params.name] : undefined;
     const file = fileId ? deps.db.select().from(files).where(eq(files.id, fileId)).get() : undefined;
     if (!file) throw notFound(`input ${req.params.name} not found`);
+    try {
+      await stat(deps.store.pathOf(file.id));
+    } catch {
+      // The row outlived its disk file (a restore without files, a disk error): nothing to serve.
+      throw notFound(`input ${req.params.name} not found`);
+    }
     return reply.header('content-type', 'application/octet-stream').header('content-length', file.size).send(deps.store.openRead(file.id));
   });
 };

@@ -1,4 +1,6 @@
 import { randomBytes } from 'node:crypto';
+import { rmSync } from 'node:fs';
+import { join } from 'node:path';
 import { crc32, deflateSync } from 'node:zlib';
 import { and, eq } from 'drizzle-orm';
 import sharp from 'sharp';
@@ -129,6 +131,16 @@ describe('get_output', () => {
     expect(await callTool(client, 'get_output', { job_id: job.id, name: 'b.txt' })).toMatchObject({ isError: true, text: '404: output b.txt not found; get_job lists the outputs' });
     const other = await mcp.connect('/mcp', bearerHeader(issueToken(t.db, 'eve')));
     expect(await callTool(other, 'get_output', { job_id: job.id, name: 'a.txt' })).toMatchObject({ isError: true, text: `404: job ${job.id} not found` });
+  });
+
+  test('an output whose disk file is gone is a tool error that says so, not an internal error', async () => {
+    const log = 'x'.repeat(70_000);
+    const job = await jobWith([['a.txt', 'A'], ['big.log', log, 'log'], ['data.bin', randomBytes(64)]]);
+    await job.complete();
+    for (const row of t.db.select().from(files).where(eq(files.jobId, job.id)).all()) rmSync(join(t.config.filesDir, row.id));
+    for (const name of ['a.txt', 'big.log', 'data.bin']) {
+      expect(await job.get(name), name).toMatchObject({ isError: true, text: `404: the file of output ${name} is no longer on the server` });
+    }
   });
 
   test('the image block carries the type its bytes have; bytes that are no browser image, or text with NUL, become a link', async () => {

@@ -1,3 +1,5 @@
+import { rmSync } from 'node:fs';
+import { join } from 'node:path';
 import { FORNAX_VERSION } from '@fornax/protocol';
 import { describe, expect, test } from 'vitest';
 import { submitJob } from '../src/domain/jobs.js';
@@ -34,6 +36,15 @@ describe('worker API', () => {
     expect(hb.json()).toMatchObject({ cancel: false });
     const seen = (await t.app.inject({ method: 'GET', url: `/api/jobs/${jobId}`, headers: { authorization: `Bearer ${alice}` } })).json();
     expect(seen).toMatchObject({ state: 'running', progress: 0.25, progress_message: 'frame 1/4' });
+  });
+
+  test('an input whose disk file is gone is 404', async () => {
+    const { worker, scene, jobId } = await setup();
+    const job = (await t.app.inject({ method: 'POST', url: '/api/worker/jobs/claim', headers: w(worker), payload: { wait: 0 } })).json();
+    rmSync(join(t.config.filesDir, scene));
+    const res = await t.app.inject({ method: 'GET', url: `/api/worker/jobs/${jobId}/inputs/scene`, headers: w(worker, { 'x-fornax-lease': job.lease }) });
+    expect(res.statusCode).toBe(404);
+    expect(res.json()).toMatchObject({ error: 'not_found' });
   });
 
   test('an empty queue answers 204 after the wait', async () => {

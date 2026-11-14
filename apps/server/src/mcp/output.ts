@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { conflict, notFound } from '../domain/errors.js';
 import type { FileRow } from '../domain/files.js';
 import type { JobRow } from '../domain/jobs.js';
@@ -17,6 +17,19 @@ export const IMAGE_BLOCK_MAX_PX = 2000;
 const BLOCK_FORMATS: Record<string, string> = { jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif' };
 
 const readOrNull = (deps: RouteDeps, f: FileRow): Promise<Buffer | null> => readFile(deps.store.pathOf(f.id)).catch(() => null);
+
+/** The row outlived its disk file (a restore without files, a disk error): there is nothing to show or download. */
+const gone = (f: FileRow) => notFound(`the file of output ${f.name} is no longer on the server`);
+
+/** `read()`, with a missing disk file turned into the tool error of `gone`. */
+async function readOrGone<T>(f: FileRow, read: () => Promise<T>): Promise<T> {
+  try {
+    return await read();
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') throw gone(f);
+    throw e;
+  }
+}
 
 /**
  * An image block of `f`: the server's preview of it when there is one (a JPEG of at most 1024 px); else the file itself
@@ -53,6 +66,8 @@ export async function outputBlocks(deps: RouteDeps, job: JobRow, name: string): 
   if (!job.manifest) throw conflict(`the job is ${job.state}; its outputs are ready once it has finished`);
   const file = downloadableFile(deps.db, job, name);
   if (!file) throw notFound(`output ${name} not found; get_job lists the outputs`);
+  // Checked first: the download link of a missing file would only answer 404.
+  await readOrGone(file, () => stat(deps.store.pathOf(file.id)));
   const entry = job.manifest.outputs.find((o) => o.name === file.name);
   const link = downloadUrl(deps, job, file);
   const info = {
@@ -67,12 +82,12 @@ export async function outputBlocks(deps: RouteDeps, job: JobRow, name: string): 
   }
   if (file.kind === 'log' && file.size > INLINE_TEXT_BYTES) {
     // Like the result page: the end of a long log is what tells how the job went.
-    const tail = await deps.store.tail(file.id, INLINE_TEXT_BYTES);
+    const tail = await readOrGone(file, () => deps.store.tail(file.id, INLINE_TEXT_BYTES));
     if (!tail.text.includes('\u0000')) return [json({ ...info, note: `the last ${INLINE_TEXT_BYTES / 1000} kB of the log; download all of it with the link` }), { type: 'text', text: tail.text }];
     return [json({ ...info, note: 'not readable text: download it with the link' })];
   }
   if (isTextMime(file.mime) && file.size <= INLINE_TEXT_BYTES) {
-    const data = await readFile(deps.store.pathOf(file.id));
+    const data = await readOrGone(file, () => readFile(deps.store.pathOf(file.id)));
     if (!data.includes(0)) return [json(info), { type: 'text', text: data.toString('utf8') }];
     return [json({ ...info, note: 'not readable text: download it with the link' })];
   }
