@@ -1,7 +1,10 @@
 import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { generateToken } from '@fornax/protocol';
 import { describe, expect, test } from 'vitest';
-import { ConfigError, readToken, readWorkerConfig, saveServer, saveToken, serverWarning } from '../src/config.js';
+import {
+  ConfigError, readClientToken, readToken, readWorkerConfig, saveClientToken, saveServer, saveToken, serverWarning,
+} from '../src/config.js';
 import { testPaths, useTempDir } from './helpers.js';
 
 const tmp = useTempDir();
@@ -104,5 +107,29 @@ describe('token file', () => {
     // POSIX modes are not meaningful on Windows (the profile ACL applies there).
     if (process.platform !== 'win32') expect(statSync(p.tokenFile).mode & 0o777).toBe(0o600);
     expect(readToken(p)).not.toBeNull();
+  });
+});
+
+describe('client token', () => {
+  test('stored next to the worker token; FORNAX_CLIENT_TOKEN wins; mode 0600 on Linux', () => {
+    const p = testPaths(tmp());
+    expect(readClientToken(p, {})).toBeNull();
+    const a = generateToken('alice');
+    const b = generateToken('bob');
+    saveClientToken(p, a);
+    expect(p.clientTokenFile).toBe(join(p.configDir, 'client-token'));
+    expect(readClientToken(p, {})).toBe(a);
+    expect(readClientToken(p, { FORNAX_CLIENT_TOKEN: ` ${b}\n` })).toBe(b);
+    if (process.platform !== 'win32') expect(statSync(p.clientTokenFile).mode & 0o777).toBe(0o600);
+  });
+
+  test('a damaged file or variable is an error that does not echo it', () => {
+    const p = testPaths(tmp());
+    expect(() => readClientToken(p, { FORNAX_CLIENT_TOKEN: 'secret-stuff' })).toThrow(ConfigError);
+    expect(() => readClientToken(p, { FORNAX_CLIENT_TOKEN: 'secret-stuff' })).not.toThrow(/secret-stuff/);
+    mkdirSync(p.configDir, { recursive: true });
+    writeFileSync(p.clientTokenFile, 'secret-stuff\n');
+    expect(() => readClientToken(p, {})).toThrow(/fornax lease token/);
+    expect(() => readClientToken(p, {})).not.toThrow(/secret-stuff/);
   });
 });

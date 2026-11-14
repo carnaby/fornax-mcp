@@ -10,6 +10,7 @@ describe('resolvePaths', () => {
       dataDir: 'C:\\Users\\u\\AppData\\Local\\fornax',
       configFile: 'C:\\Users\\u\\AppData\\Roaming\\fornax\\worker.yaml',
       tokenFile: 'C:\\Users\\u\\AppData\\Roaming\\fornax\\token',
+      clientTokenFile: 'C:\\Users\\u\\AppData\\Roaming\\fornax\\client-token',
       typesDir: 'C:\\Users\\u\\AppData\\Local\\fornax\\types',
       jobsDir: 'C:\\Users\\u\\AppData\\Local\\fornax\\jobs',
       leasesDir: 'C:\\Users\\u\\AppData\\Local\\fornax\\leases',

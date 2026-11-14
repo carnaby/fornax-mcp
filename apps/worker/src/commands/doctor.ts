@@ -1,7 +1,8 @@
 import { statSync } from 'node:fs';
 import { ApiError, NetworkError } from '../api.js';
 import { checkPack, findTool } from '../checks.js';
-import { ConfigError, readToken, readWorkerConfig, serverWarning, type WorkerConfig } from '../config.js';
+import { ClientApi } from '../client-api.js';
+import { ConfigError, readClientToken, readToken, readWorkerConfig, serverWarning, type WorkerConfig } from '../config.js';
 import { doctorGpuLines, readGpu } from '../gpu.js';
 import { loadPacks } from '../pack.js';
 import { apiFor, type Ctx } from './context.js';
@@ -48,6 +49,28 @@ export async function doctor(ctx: Ctx, only?: string): Promise<number> {
       else if (e instanceof ApiError && e.status === 401) line(false, `server ${config.server}: the token is refused (revoked, replaced or never registered)`);
       else if (e instanceof NetworkError) line(false, `server ${config.server}: unreachable (${e.message})`);
       else throw e;
+    }
+  }
+  // Spec 05a 4.3: fornax lease submits with a client token of its own.
+  if (config) {
+    let clientToken: string | null = null;
+    let damaged = false;
+    try {
+      clientToken = readClientToken(ctx.paths, ctx.env ?? process.env);
+    } catch (e) {
+      if (!(e instanceof ConfigError)) throw e;
+      damaged = true;
+      warn(`${e.message}: fornax lease cannot run`);
+    }
+    if (!clientToken && !damaged) warn('no client token: fornax lease cannot run (fornax lease token)');
+    if (clientToken) {
+      try {
+        line(true, `client token: ${(await new ClientApi({ server: config.server, token: clientToken }).whoami(ctx.signal)).name}`);
+      } catch (e) {
+        if (e instanceof ApiError) warn('client token refused by the server: fornax lease cannot run (fornax lease token)');
+        else if (e instanceof NetworkError) warn('client token: not checked, the server is unreachable');
+        else throw e;
+      }
     }
   }
 

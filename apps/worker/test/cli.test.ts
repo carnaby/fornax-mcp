@@ -10,7 +10,7 @@ import { ApiError, type WorkerApi } from '../src/api.js';
 import { consoleWriter, makeSignalHandler, runCli, wireSignals } from '../src/cli.js';
 import { hasRunning, killRunning, runProcess } from '../src/process.js';
 import type { Ctx } from '../src/commands/context.js';
-import { readToken, readWorkerConfig, saveToken } from '../src/config.js';
+import { readClientToken, readToken, readWorkerConfig, saveToken } from '../src/config.js';
 import { FAKE_SMI, testPaths, useTempDir, waitFor, writeEchoPack } from './helpers.js';
 
 const tmp = useTempDir();
@@ -30,6 +30,9 @@ function cli() {
   const ctx: Ctx = {
     paths: testPaths(tmp()),
     out: (l) => lines.push(l),
+    err: (l) => lines.push(l),
+    // An explicit empty environment: a real FORNAX_CLIENT_TOKEN of whoever runs the tests never reaches doctor.
+    env: {},
     signal: new AbortController().signal,
     clipboard: () => null,
     loopOptions: { claimWaitS: 0, checkTimeoutMs: 10_000 },
@@ -44,6 +47,36 @@ function cli() {
 }
 
 describe('fornax CLI', () => {
+  test('lease token: read from stdin, checked as a client token, stored; a worker token or no token is refused', async () => {
+    const s = await server();
+    const { ctx, run } = cli();
+    mkdirSync(ctx.paths.configDir, { recursive: true });
+    writeFileSync(ctx.paths.configFile, `server: ${s.url}\n`);
+    const client = s.issueToken('alice');
+    ctx.readStdin = async () => `${client}\r\n`;
+    const saved = await run('lease', 'token');
+    expect(saved.code).toBe(0);
+    expect(saved.text).not.toContain(client);
+    expect(readClientToken(ctx.paths, {})).toBe(client);
+    ctx.readStdin = async () => s.issueToken('pc', 'worker');
+    expect((await run('lease', 'token')).code).toBe(1);
+    ctx.readStdin = async () => 'not a token';
+    expect((await run('lease', 'token')).code).toBe(1);
+    expect(readClientToken(ctx.paths, {})).toBe(client);
+  });
+
+  test('doctor names the client token, or says fornax lease cannot run without one', async () => {
+    const s = await server();
+    const { ctx, run } = cli();
+    s.invite('pc', 'worker');
+    await run('worker', 'pair', '--server', s.url, '--name', 'pc');
+    s.approve('pc');
+    ctx.env = {};
+    expect((await run('doctor')).text).toMatch(/^WARN\s+no client token: fornax lease cannot run \(fornax lease token\)$/m);
+    ctx.env = { FORNAX_CLIENT_TOKEN: s.issueToken('alice') };
+    expect((await run('doctor')).text).toMatch(/^ok\s+client token: alice$/m);
+  });
+
   test('pair, wait for approval, doctor, then serve once', async () => {
     const s = await server();
     const { ctx, run } = cli();

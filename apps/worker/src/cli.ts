@@ -6,6 +6,7 @@ import { FORNAX_VERSION } from '@fornax/protocol';
 import { ApiError, NetworkError } from './api.js';
 import type { Ctx } from './commands/context.js';
 import { doctor } from './commands/doctor.js';
+import { leaseToken } from './commands/lease-token.js';
 import { pair } from './commands/pair.js';
 import { typesAdd, typesInstall, typesList } from './commands/types.js';
 import { queueCommand, workerCommand } from './commands/worker.js';
@@ -22,13 +23,32 @@ export const USAGE = [
   '       fornax types list',
   '       fornax types install <name> [--from <dir>]',
   '       fornax types add <name>',
+  '       fornax lease token       (reads a client token from standard input)',
   '       fornax --version',
 ].join('\n');
 
 type Flags = { server?: string; name?: string; force?: boolean; from?: string; once?: boolean; help?: boolean; version?: boolean };
 
+/** How a command's error ends: our own errors with their message, anything else only with its class (it may hold paths or tool output). */
+export function reportError(e: unknown, say: (line: string) => void): number {
+  if (e instanceof ConfigError || e instanceof PackError || e instanceof NetworkError || e instanceof ApiError) {
+    say(e.message);
+    return 1;
+  }
+  const code = (e as NodeJS.ErrnoException).code;
+  say(`unexpected error: ${e instanceof Error ? e.constructor.name : typeof e}${typeof code === 'string' ? ` (${code})` : ''}`);
+  return 1;
+}
+
 /** Parse and dispatch. 0 done, 1 failed (the message says why), 2 usage. */
 export async function runCli(argv: string[], ctx: Ctx): Promise<number> {
+  if (argv[0] === 'lease' && argv[1] === 'token' && argv.length === 2) {
+    try {
+      return await leaseToken(ctx);
+    } catch (e) {
+      return reportError(e, ctx.err ?? ctx.out);
+    }
+  }
   let flags: Flags;
   let words: string[];
   try {
@@ -75,14 +95,7 @@ export async function runCli(argv: string[], ctx: Ctx): Promise<number> {
     if (group === 'types' && sub === 'install' && arg !== undefined && shape(3, 'from')) return await typesInstall(ctx, arg, flags.from);
     if (group === 'types' && sub === 'add' && arg !== undefined && shape(3)) return await typesAdd(ctx, arg);
   } catch (e) {
-    if (e instanceof ConfigError || e instanceof PackError || e instanceof NetworkError || e instanceof ApiError) {
-      ctx.out(e.message);
-      return 1;
-    }
-    // Anything else may carry local paths or tool output in its message: only its class and code are shown.
-    const code = (e as NodeJS.ErrnoException).code;
-    ctx.out(`unexpected error: ${e instanceof Error ? e.constructor.name : typeof e}${typeof code === 'string' ? ` (${code})` : ''}`);
-    return 1;
+    return reportError(e, ctx.out);
   }
   ctx.out(USAGE);
   return 2;
@@ -174,7 +187,7 @@ if (isMainModule()) {
     say: (t) => err(`${t}\n`),
   });
   const unwire = wireSignals(process, onSignal);
-  const ctx: Ctx = { paths: resolvePaths(), out: (l) => out(`${l}\n`), write: out, signal: stop.signal };
+  const ctx: Ctx = { paths: resolvePaths(), out: (l) => out(`${l}\n`), err: (l) => err(`${l}\n`), write: out, signal: stop.signal };
   process.exitCode = await runCli(process.argv.slice(2), ctx);
   unwire();
 }

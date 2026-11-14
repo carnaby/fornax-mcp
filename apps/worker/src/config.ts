@@ -107,9 +107,31 @@ export function readToken(paths: Paths): string | null {
   return token;
 }
 
-export function saveToken(paths: Paths, token: string): void {
+/** A token file: mode 0600 on Linux (Windows relies on the profile ACL). */
+function writeTokenFile(paths: Paths, file: string, token: string): void {
   mkdirSync(paths.configDir, { recursive: true });
-  writeFileSync(paths.tokenFile, `${token}\n`, { mode: 0o600 });
-  // The mode applies only when the file is created; an older file keeps its mode otherwise. Windows relies on the profile ACL.
-  if (process.platform !== 'win32') chmodSync(paths.tokenFile, 0o600);
+  writeFileSync(file, `${token}\n`, { mode: 0o600 });
+  // The mode applies only when the file is created; an older file keeps its mode otherwise.
+  if (process.platform !== 'win32') chmodSync(file, 0o600);
+}
+
+export function saveToken(paths: Paths, token: string): void {
+  writeTokenFile(paths, paths.tokenFile, token);
+}
+
+export function saveClientToken(paths: Paths, token: string): void {
+  writeTokenFile(paths, paths.clientTokenFile, token);
+}
+
+/** Spec 05a 4.3: the client token for fornax lease, FORNAX_CLIENT_TOKEN before the file; null when there is none. Never echoed. */
+export function readClientToken(paths: Paths, env: NodeJS.ProcessEnv = process.env): string | null {
+  const fromEnv = env.FORNAX_CLIENT_TOKEN?.trim();
+  if (fromEnv) {
+    if (!parseToken(fromEnv)) throw new ConfigError('FORNAX_CLIENT_TOKEN does not hold a Fornax token');
+    return fromEnv;
+  }
+  if (!existsSync(paths.clientTokenFile)) return null;
+  const token = readFileSync(paths.clientTokenFile, 'utf8').trim();
+  if (!parseToken(token)) throw new ConfigError(`${paths.clientTokenFile} does not hold a Fornax token; store a new one with fornax lease token`);
+  return token;
 }

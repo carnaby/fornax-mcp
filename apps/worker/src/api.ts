@@ -33,6 +33,31 @@ export class LocalFileError extends Error {}
 export const isTransient = (e: unknown): boolean =>
   e instanceof NetworkError || e instanceof InputMismatchError || (e instanceof ApiError && e.status >= 500);
 
+/** A failed fetch as these clients report it: a time limit or an unreachable server is a NetworkError, a caller's abort stays. */
+export function networkErrorOf(e: unknown, signal?: AbortSignal): unknown {
+  // A time limit (AbortSignal.timeout) is a server that did not answer: worth another try.
+  if (signal?.aborted && (signal.reason as Error | undefined)?.name === 'TimeoutError') {
+    return new NetworkError('the server did not answer in time', { cause: e });
+  }
+  if (signal?.aborted) return e;
+  const cause = (e as { cause?: { code?: string; message?: string } }).cause;
+  return new NetworkError(`cannot reach the server: ${cause?.code ?? cause?.message ?? (e as Error).message}`, { cause: e });
+}
+
+/** The error of a non-2xx answer, with the server's JSON error code and message when it sent them. */
+export async function apiErrorOf(res: Response): Promise<ApiError> {
+  let code = 'http_error';
+  let message = `the server answered ${res.status}`;
+  try {
+    const b = (await res.json()) as { error?: unknown; message?: unknown };
+    if (typeof b.error === 'string') code = b.error;
+    if (typeof b.message === 'string') message = b.message;
+  } catch {
+    // Not JSON: keep the generic message.
+  }
+  return new ApiError(res.status, code, message);
+}
+
 /** The server keeps this shape of a computer name and shows "worker" for anything else. */
 const HOSTNAME = /^[a-z0-9][a-z0-9._-]{0,62}$/;
 
@@ -79,13 +104,7 @@ export class WorkerApi {
     try {
       res = await fetch(`${this.base}${path}`, { method, headers, body, signal: init.signal, ...(init.body ? { duplex: 'half' as const } : {}) });
     } catch (e) {
-      // A caller's time limit (AbortSignal.timeout) is a server that did not answer: worth another try.
-      if (init.signal?.aborted && (init.signal.reason as Error | undefined)?.name === 'TimeoutError') {
-        throw new NetworkError('the server did not answer in time', { cause: e });
-      }
-      if (init.signal?.aborted) throw e;
-      const cause = (e as { cause?: { code?: string; message?: string } }).cause;
-      throw new NetworkError(`cannot reach the server: ${cause?.code ?? cause?.message ?? (e as Error).message}`, { cause: e });
+      throw networkErrorOf(e, init.signal);
     }
     const warning = res.headers.get(WORKER_HEADERS.warning);
     if (warning && !this.warned) {
@@ -94,16 +113,8 @@ export class WorkerApi {
       this.onWarning?.(warning);
     }
     if (res.ok) return res;
-    let code = 'http_error';
-    let message = `the server answered ${res.status}`;
-    try {
-      const b = (await res.json()) as { error?: unknown; message?: unknown };
-      if (typeof b.error === 'string') code = b.error;
-      if (typeof b.message === 'string') message = b.message;
-    } catch {
-      // Not JSON: keep the generic message.
-    }
-    throw res.status === 409 ? new LeaseLostError(409, code, message) : new ApiError(res.status, code, message);
+    const err = await apiErrorOf(res);
+    throw res.status === 409 ? new LeaseLostError(409, err.code, err.message) : err;
   }
 
   /** A request whose answer body is not needed; reading it frees the connection. */

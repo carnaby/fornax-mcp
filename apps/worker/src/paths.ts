@@ -9,6 +9,8 @@ export type Paths = {
   dataDir: string;
   configFile: string;
   tokenFile: string;
+  /** Spec 05a 4.3: the client token fornax lease submits with (the worker token may not submit jobs). */
+  clientTokenFile: string;
   typesDir: string;
   jobsDir: string;
   /** Spec 05a 4.2: <data>/leases, where fornax lease and the lease tool talk through files. */
@@ -40,6 +42,7 @@ export function resolvePaths(env: NodeJS.ProcessEnv = process.env, platform: Nod
     dataDir,
     configFile: p.join(configDir, 'worker.yaml'),
     tokenFile: p.join(configDir, 'token'),
+    clientTokenFile: p.join(configDir, 'client-token'),
     typesDir: p.join(dataDir, 'types'),
     jobsDir: p.join(dataDir, 'jobs'),
     leasesDir: p.join(dataDir, 'leases'),

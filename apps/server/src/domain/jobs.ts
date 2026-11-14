@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { extname } from 'node:path';
-import { validateParams } from '@fornax/protocol';
+import { JOB_STATES, PRIORITIES, type Priority, validateParams } from '@fornax/protocol';
 import { and, count, desc, eq, gt, inArray, lt, or } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import type { Config } from '../config.js';
@@ -14,11 +14,9 @@ import { callbackAllowed } from './webhooks.js';
 import { workerOnline, type WorkerView } from './worker-state.js';
 
 export { callbackAllowed };
+export { JOB_STATES, PRIORITIES, type Priority };
 
 export type JobRow = typeof jobs.$inferSelect;
-export const PRIORITIES = ['low', 'normal', 'high'] as const;
-export type Priority = (typeof PRIORITIES)[number];
-export const JOB_STATES = ['queued', 'running', 'succeeded', 'failed', 'canceled'] as const;
 export const GROUP = /^[A-Za-z0-9._-]{1,100}$/;
 
 export type SubmitInput = {
