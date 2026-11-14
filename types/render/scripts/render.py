@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import bpy  # noqa: E402
 from blender_gpu import enable_gpu  # noqa: E402
-from render_lib import FILE_FORMATS, InvalidParams, frame_name, frames, outputs_entry, preview_name, preview_size, progress_line, script_args  # noqa: E402
+from render_lib import FILE_FORMATS, InvalidParams, first_file_strip, first_refused_node, frame_name, frames, outputs_entry, preview_name, preview_size, progress_line, script_args  # noqa: E402
 
 
 def leave(code, message):
@@ -31,25 +31,64 @@ def same_file(a, b):
 
 
 def node_trees():
-    """Every node tree that can be a compositor tree: scene trees, 5.x compositing groups, all (nested) node groups."""
+    """(owner, tree) for every node tree of the scene file: materials, worlds, lights, compositor trees (scene.node_tree
+    in 4.x, scene.compositing_node_group in 5.x), line styles, legacy textures and every node group (nested groups are
+    node groups too). The owner names the tree in messages. A tree reached twice is yielded once."""
+    seen = set()
+
+    def owned(kind, items, attribute="node_tree"):
+        for item in items:
+            tree = getattr(item, attribute, None)
+            if tree is not None and tree.as_pointer() not in seen:
+                seen.add(tree.as_pointer())
+                yield f"{kind} {item.name}", tree
+
+    data = bpy.data
+    yield from owned("material", data.materials)
+    yield from owned("world", data.worlds)
+    yield from owned("light", data.lights)
+    yield from owned("the compositor of scene", data.scenes)
+    yield from owned("the compositor of scene", data.scenes, "compositing_node_group")
+    yield from owned("line style", getattr(data, "linestyles", ()))
+    yield from owned("texture", getattr(data, "textures", ()))
+    for group in data.node_groups:
+        if group.as_pointer() not in seen:
+            seen.add(group.as_pointer())
+            yield f"node group {group.name}", group
+
+
+def refuse_nodes():
+    """Nodes that run code or read a file of this PC by path: OSL script nodes, external IES textures, geometry
+    Import nodes. Names the node kind and its tree, never a path."""
+    for owner, tree in node_trees():
+        kind = first_refused_node((node.bl_idname, getattr(node, "mode", None)) for node in tree.nodes)
+        if kind is not None:
+            leave(2, f"the scene uses a refused node ({kind}) in {owner}; remove it (nodes may not run code or read files of this PC)")
+
+
+def scene_strips(scene):
+    """Every strip of the scene's video sequencer, inside meta strips too (strips_all in 5.x, sequences_all before)."""
+    editor = getattr(scene, "sequence_editor", None)
+    if editor is None:
+        return ()
+    strips = getattr(editor, "strips_all", None)
+    if strips is None:
+        strips = getattr(editor, "sequences_all", ())
+    return strips
+
+
+def refuse_sequencer_files():
+    """Image, movie and sound strips read files by path. The sequencer is switched off before rendering anyway."""
     for scene in bpy.data.scenes:
-        tree = getattr(scene, "node_tree", None)
-        if tree is not None:
-            yield tree
-        group = getattr(scene, "compositing_node_group", None)
-        if group is not None:
-            yield group
-    yield from bpy.data.node_groups
+        kind = first_file_strip(strip.type for strip in scene_strips(scene))
+        if kind is not None:
+            leave(2, f"scene {scene.name} has a {kind} strip in its video sequencer; remove the sequencer strips that use files")
 
 
 def mute_file_outputs():
     """File Output nodes write wherever the scene says; mute them all. Returns how many were muted."""
-    seen = set()
     muted = 0
-    for tree in node_trees():
-        if tree.as_pointer() in seen:
-            continue
-        seen.add(tree.as_pointer())
+    for _, tree in node_trees():
         for node in tree.nodes:
             if node.bl_idname == "CompositorNodeOutputFile":
                 node.mute = True
@@ -71,7 +110,8 @@ def is_packed(item):
 
 
 def refuse_external_files():
-    """The scene must be self-contained: no file of this PC is read through it. Names only, never paths."""
+    """The scene must be self-contained. open_mainfile has already read linked libraries; refusing here means that
+    nothing of another file of this PC is rendered into the outputs. Messages name the data, never a path."""
     def refuse(kind, item):
         leave(2, f"the scene uses an external {kind} ({item.name}); pack resources first (File > External Data > Pack Resources)")
 
@@ -129,6 +169,12 @@ def main():
         todo = frames(params)
     except InvalidParams as e:
         leave(2, str(e))
+    # Every refusal comes before mute_file_outputs: a File Output node of a linked library cannot be muted (the
+    # assignment raises, exit 1), and the library itself is refused here as invalid input.
+    refuse_external_files()
+    refuse_nodes()
+    refuse_sequencer_files()
+    refuse_freestyle_scripts()
     kind, names = enable_gpu()
     if kind is None:
         leave(3, "Cycles finds no GPU (OptiX, CUDA, HIP, oneAPI or Metal); check the driver, then fornax doctor render")
@@ -136,8 +182,12 @@ def main():
 
     muted = mute_file_outputs()
     print(f"render: muted {muted} File Output node(s)", file=sys.stderr, flush=True)
-    refuse_freestyle_scripts()
-    refuse_external_files()
+    # Every scene, not only the active one: a compositor Render Layers node can render another scene.
+    for each in bpy.data.scenes:
+        each.render.use_sequencer = False
+        cycles = getattr(each, "cycles", None)
+        if cycles is not None:
+            cycles.shading_system = False  # no OSL
 
     scene = bpy.context.scene
     if scene.camera is None:

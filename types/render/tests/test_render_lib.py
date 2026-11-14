@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-from render_lib import MAX_FRAMES, InvalidParams, frame_name, frames, outputs_entry, preview_name, preview_size, progress_line, script_args  # noqa: E402
+from render_lib import MAX_FRAMES, InvalidParams, first_file_strip, first_refused_node, frame_name, frames, outputs_entry, preview_name, preview_size, progress_line, refused_node, script_args  # noqa: E402
 
 
 class ScriptArgs(unittest.TestCase):
@@ -60,6 +60,43 @@ class OutputsAndProgress(unittest.TestCase):
 
     def test_progress_line_is_the_workers_format(self):
         self.assertEqual(json.loads(progress_line(1, 4, 10)), {"progress": 0.25, "message": "frame 10 (1/4)"})
+
+
+class RefusedNodes(unittest.TestCase):
+    def test_osl_script_nodes_are_refused_in_any_mode(self):
+        self.assertEqual(refused_node("ShaderNodeScript", "INTERNAL"), "OSL script node")
+        self.assertEqual(refused_node("ShaderNodeScript", "EXTERNAL"), "OSL script node")
+
+    def test_only_an_external_ies_texture_is_refused(self):
+        self.assertEqual(refused_node("ShaderNodeTexIES", "EXTERNAL"), "external IES texture node")
+        self.assertIsNone(refused_node("ShaderNodeTexIES", "INTERNAL"))
+
+    def test_geometry_import_nodes_are_refused(self):
+        for idname in ("GeometryNodeImportOBJ", "GeometryNodeImportPLY", "GeometryNodeImportSTL", "GeometryNodeImportCSV", "GeometryNodeImportText", "GeometryNodeImportVDB"):
+            self.assertEqual(refused_node(idname, None), "geometry Import node")
+
+    def test_ordinary_nodes_pass(self):
+        for idname in ("ShaderNodeTexImage", "ShaderNodeBsdfPrincipled", "CompositorNodeOutputFile", "GeometryNodeMeshCube", "NodeGroupInput"):
+            self.assertIsNone(refused_node(idname, None))
+
+    def test_the_first_refused_node_of_a_tree(self):
+        self.assertIsNone(first_refused_node([]))
+        self.assertIsNone(first_refused_node([("ShaderNodeTexIES", "INTERNAL"), ("ShaderNodeOutputMaterial", None)]))
+        self.assertEqual(
+            first_refused_node([("ShaderNodeBsdfDiffuse", None), ("GeometryNodeImportOBJ", None), ("ShaderNodeScript", "INTERNAL")]),
+            "geometry Import node",
+        )
+
+
+class FileStrips(unittest.TestCase):
+    def test_image_movie_and_sound_strips_read_files(self):
+        self.assertEqual(first_file_strip(["SCENE", "MOVIE", "IMAGE"]), "movie")
+        self.assertEqual(first_file_strip(["IMAGE"]), "image")
+        self.assertEqual(first_file_strip(["SOUND"]), "sound")
+
+    def test_other_strips_pass(self):
+        self.assertIsNone(first_file_strip([]))
+        self.assertIsNone(first_file_strip(["SCENE", "COLOR", "TEXT", "META", "CROSS"]))
 
 
 if __name__ == "__main__":

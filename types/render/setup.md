@@ -27,9 +27,12 @@ Blender always runs with `--disable-autoexec` (scripts and drivers inside the sc
 file itself.
 
 Scenes must be self-contained: pack external data (File > External Data > Pack Resources) before submitting. A scene
-that still uses an unpacked external file (image, linked library, movie clip, sound, volume, cache file or font) is
-refused as invalid input. File Output nodes of the compositor are muted, and Freestyle in Python scripting mode is
-refused, so a scene cannot write outside the job's output folder or run its own code.
+is refused as invalid input, before anything renders, when it still uses an unpacked external file (image, linked
+library, movie clip, sound, volume, cache file or font), has image, movie or sound strips in its video sequencer, or
+has a node that runs code or reads a file by path: an OSL script node, an IES texture in external mode, or a geometry
+Import node (OBJ, PLY, STL, CSV, Text, VDB). Freestyle in Python scripting mode is refused too. Before rendering, File
+Output nodes of the compositor are muted, and in every scene the sequencer and Cycles' Open Shading Language are
+switched off, so a scene cannot read files of this PC, write outside the job's output folder or run its own code.
 
 ## Parameters
 

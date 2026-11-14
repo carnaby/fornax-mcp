@@ -1,4 +1,5 @@
-"""The render pack's logic that needs no Blender (unit-tested in CI): arguments, frames, names, outputs.json, progress."""
+"""The render pack's logic that needs no Blender (unit-tested in CI): arguments, frames, names, outputs.json, progress,
+and which nodes and sequencer strips make a scene invalid."""
 import argparse
 import json
 
@@ -8,6 +9,12 @@ PREVIEW_MAX_PX = 1024
 MAX_FRAMES = 500
 EXTENSIONS = {"png": "png", "jpg": "jpg"}
 FILE_FORMATS = {"png": "PNG", "jpg": "JPEG"}
+
+
+# Geometry nodes that read a file by path (OBJ, PLY, STL, CSV, Text, VDB import in recent Blender).
+REFUSED_NODE_PREFIXES = ("GeometryNodeImport",)
+# Sequencer strip types that read a file (type -> the word used in the message).
+FILE_STRIP_TYPES = {"IMAGE": "image", "MOVIE": "movie", "SOUND": "sound"}
 
 
 class InvalidParams(ValueError):
@@ -56,3 +63,31 @@ def outputs_entry(width, height, frame, samples, preview):
 
 def progress_line(done, total, frame):
     return json.dumps({"progress": round(done / total, 4), "message": f"frame {frame} ({done}/{total})"})
+
+
+def refused_node(bl_idname, mode):
+    """What kind of refused node this is (for the message), or None: nodes that run code or read a file by path."""
+    if bl_idname == "ShaderNodeScript":
+        return "OSL script node"
+    if bl_idname == "ShaderNodeTexIES" and mode == "EXTERNAL":
+        return "external IES texture node"
+    if bl_idname.startswith(REFUSED_NODE_PREFIXES):
+        return "geometry Import node"
+    return None
+
+
+def first_refused_node(nodes):
+    """The kind of the first refused node among (bl_idname, mode) pairs, or None."""
+    for bl_idname, mode in nodes:
+        kind = refused_node(bl_idname, mode)
+        if kind is not None:
+            return kind
+    return None
+
+
+def first_file_strip(strip_types):
+    """The kind of the first sequencer strip that reads a file, or None."""
+    for strip_type in strip_types:
+        if strip_type in FILE_STRIP_TYPES:
+            return FILE_STRIP_TYPES[strip_type]
+    return None
