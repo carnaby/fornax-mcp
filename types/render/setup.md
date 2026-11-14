@@ -26,10 +26,15 @@ Blender always runs with `--disable-autoexec` (scripts and drivers inside the sc
 `--factory-startup` (no add-ons or startup files of this PC). `render.py` refuses to render anything but the input
 file itself.
 
+Scenes must be self-contained: pack external data (File > External Data > Pack Resources) before submitting. A scene
+that still uses an unpacked external file (image, linked library, movie clip, sound, volume, cache file or font) is
+refused as invalid input. File Output nodes of the compositor are muted, and Freestyle in Python scripting mode is
+refused, so a scene cannot write outside the job's output folder or run its own code.
+
 ## Parameters
 
 `frame_start` (required), `frame_end` (default `frame_start`), `samples` (default 128), `format` (`png` or `jpg`).
-At most 10 000 frames per job; split a long animation into several jobs with the same `group`.
+At most 500 frames per job; split a long animation into several jobs with the same `group`.
 
 ## Smoke test
 

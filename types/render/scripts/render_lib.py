@@ -3,8 +3,9 @@ import argparse
 import json
 
 PREVIEW_MAX_PX = 1024
-# More frames than this in one job is a mistake (6 hours would never be enough); a long animation is several jobs.
-MAX_FRAMES = 10_000
+# The worker accepts at most 1000 output files per job and every frame writes two (the frame and its preview):
+# 1000 // 2. A longer animation is several jobs.
+MAX_FRAMES = 500
 EXTENSIONS = {"png": "png", "jpg": "jpg"}
 FILE_FORMATS = {"png": "PNG", "jpg": "JPEG"}
 

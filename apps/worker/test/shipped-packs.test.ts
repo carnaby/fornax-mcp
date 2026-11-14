@@ -34,7 +34,7 @@ describe('built-in type packs', () => {
     expect(pack.impl.tools).toEqual(['blender']);
     expect(pack.impl.setup).toBeUndefined();
     expect(expandArgv(pack.impl.run, { pack: '/p', tools: { blender: 'b' }, job, platform: 'linux' })).toEqual([
-      'b', '-b', '--factory-startup', '--disable-autoexec', '--python-exit-code', '1', '/w/in/scene.blend',
+      'b', '-b', '--factory-startup', '--disable-autoexec', '--python-exit-code', '1',
       '--python', '/p/scripts/render.py', '--', '--params', '/w/work/params.json', '--scene', '/w/in/scene.blend', '--out', '/w/out',
     ]);
     expect(expandArgv(pack.impl.check!, { pack: '/p', tools: { blender: 'b' }, platform: 'linux' })).toEqual([

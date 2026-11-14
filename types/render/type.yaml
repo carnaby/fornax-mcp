@@ -17,5 +17,5 @@ params:
 max_runtime: 6h
 tools: [blender]
 check: ["{tool.blender}", "-b", "--factory-startup", "--python-exit-code", "1", "--python", "{pack}/scripts/check.py"]
-run: ["{tool.blender}", "-b", "--factory-startup", "--disable-autoexec", "--python-exit-code", "1", "{input.scene}",
+run: ["{tool.blender}", "-b", "--factory-startup", "--disable-autoexec", "--python-exit-code", "1",
       "--python", "{pack}/scripts/render.py", "--", "--params", "{params_json}", "--scene", "{input.scene}", "--out", "{out}"]

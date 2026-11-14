@@ -30,6 +30,7 @@ class Frames(unittest.TestCase):
             frames({"frame_start": 5, "frame_end": 4})
 
     def test_too_many_frames_are_invalid(self):
+        self.assertEqual(MAX_FRAMES, 500)  # the worker's 1000-file output limit, two files per frame
         with self.assertRaises(InvalidParams):
             frames({"frame_start": 0, "frame_end": MAX_FRAMES})
         self.assertEqual(len(frames({"frame_start": 0, "frame_end": MAX_FRAMES - 1})), MAX_FRAMES)
