@@ -116,18 +116,34 @@ describe('the lease tool', () => {
     expect(await run.code).toBe(0);
   });
 
-  test('minutes ran out: exit 4; progress every minute with the label', async () => {
+  test('minutes ran out: exit 4 a minute after the minutes (a backstop); progress every minute with the label', async () => {
     const { pack, dir } = install();
+    const t0 = Date.now();
     const run = tool(pack, { minutes: 2, label: 'render job' }, { minuteMs: 1000, graceMs: 5000 });
     await waitFor(() => existsSync(dir), 5000, 'the lease folder');
     writeFileSync(join(dir, 'alive'), 'S1');
     expect(await run.code).toBe(4);
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(3000);
     expect(run.err.join('')).toContain('the lease time ran out');
     const progress = run.out.join('').split('\n').filter(Boolean).map((l) => JSON.parse(l) as { progress: number; message: string });
     expect(progress).toEqual([
       { progress: 0, message: 'render job, 0 min' },
       { progress: 0.5, message: 'render job, 1 min' },
+      { progress: 1, message: 'render job, 2 min' },
     ]);
+  });
+
+  test('at the minutes the lease still holds: fornax lease stops its program then and ends the lease with done', async () => {
+    const { pack, dir } = install();
+    const run = tool(pack, { minutes: 1 }, { minuteMs: 2000, graceMs: 10_000 });
+    await waitFor(() => existsSync(dir), 5000, 'the lease folder');
+    writeFileSync(join(dir, 'alive'), 'S1');
+    // The minute is over (the "1 min" line), and the tool still runs: the wrapper's kill of the program has time.
+    await waitFor(() => run.out.join('').includes(', 1 min'), 5000, 'the minute to pass');
+    await sleep(300);
+    expect(run.running()).toBe(true);
+    writeFileSync(join(dir, 'done'), 'S1');
+    expect(await run.code).toBe(0);
   });
 
   test('a lease folder that cannot be created: exit 4, never the retried 1', async () => {

@@ -21,6 +21,10 @@ const positive = (name, fallback) => {
 const TICK_MS = positive('tick-ms', 1000);
 const GRACE_MS = positive('grace-ms', 60_000);
 const MINUTE_MS = positive('minute-ms', 60_000);
+// fornax lease stops the program at --minutes itself and then writes done. The tool's own limit is a minute later, a
+// backstop for a wrapper that is gone: ending at the same moment would free the card for the next job while the
+// program is still being stopped (the kill may take its grace). The type's max_runtime (725m) covers 720 + 1 minutes.
+const SLACK_MS = MINUTE_MS;
 const LEFTOVER_MS = 86_400_000;
 
 /** <data>/types/lease/scripts/lease.mjs → <data>/leases: the folder fornax lease finds through its own paths. */
@@ -123,7 +127,7 @@ function tick() {
   // next tick decides.
   if (d && d.text && a && a.text === d.text) return end(0);
   const elapsed = performance.now() - startMono;
-  if (elapsed >= minutes * MINUTE_MS) return end(4, 'the lease time ran out');
+  if (elapsed >= minutes * MINUTE_MS + SLACK_MS) return end(4, 'the lease time ran out');
   if (!a) {
     if (elapsed > GRACE_MS) return end(4, `no \`fornax lease\` took this lease within ${GRACE_MS / 1000} s`);
   } else if (now - Math.max(a.mtimeMs, start) > GRACE_MS) {
