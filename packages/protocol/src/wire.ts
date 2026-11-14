@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { jobTypeContract } from './contract.js';
 
-export const WORKER_HEADERS = { name: 'x-fornax-worker', version: 'x-fornax-version', lease: 'x-fornax-lease' } as const;
+export const WORKER_HEADERS = { name: 'x-fornax-worker', version: 'x-fornax-version', lease: 'x-fornax-lease', warning: 'x-fornax-warning' } as const;
 
 /** The longest a claim waits for a job before answering 204, in seconds. */
 export const MAX_CLAIM_WAIT_S = 30;

@@ -1,4 +1,4 @@
-import { announceBody, claimBody, completeBody, failBody, heartbeatBody, releaseBody, WORKER_HEADERS } from '@fornax/protocol';
+import { announceBody, claimBody, completeBody, FORNAX_VERSION, failBody, heartbeatBody, releaseBody, WORKER_HEADERS } from '@fornax/protocol';
 import { eq } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
@@ -30,9 +30,17 @@ const hostnameOf = (raw: unknown) => {
 };
 const versionOf = (raw: unknown) => (typeof raw === 'string' && /^[0-9A-Za-z.+-]{1,40}$/.test(raw) ? raw : null);
 
+/** What a worker of another version is told (spec 3); it never blocks jobs. */
+export const versionWarning = (workerVersion: string, publicUrl: string): string =>
+  `this worker is ${workerVersion}, the server ${FORNAX_VERSION}; get the matching worker from ${publicUrl}/downloads/fornax-worker.zip`;
+
 /** /api/worker/*: the worker API. Only the worker token opens it. */
 export const workerRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps) => {
   app.addHook('onRequest', requireRole(deps, 'worker'));
+  app.addHook('preHandler', async (req, reply) => {
+    const version = versionOf(req.headers[WORKER_HEADERS.version]);
+    if (version !== null && version !== FORNAX_VERSION) reply.header(WORKER_HEADERS.warning, versionWarning(version, deps.config.publicUrl));
+  });
   app.addHook('preHandler', async (req) => {
     if (req.routeOptions.config.quiet) return;
     touchWorker(
@@ -77,11 +85,15 @@ export const workerRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps) => 
         const job = claimJob(deps.db, deps.clock());
         if (job) {
           if (!gone && hasProducedFiles(deps.db, job.id)) {
-            // An earlier attempt whose lease ran out may have left outputs; they must not reach this attempt's manifest.
+            // An earlier attempt whose lease ran out or that was abandoned may have left outputs; they must not reach this attempt's manifest.
             try {
               await discardOutputs(deps, job.id, { keepLog: false });
             } catch (e) {
-              releaseJob(deps.db, job.id, job.leaseId!, deps.clock());
+              try {
+                releaseJob(deps.db, job.id, job.leaseId!, deps.clock());
+              } catch {
+                // An overlapping claim took the job: the original error is the one to report.
+              }
               throw e;
             }
           }

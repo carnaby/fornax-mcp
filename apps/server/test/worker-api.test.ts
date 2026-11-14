@@ -1,3 +1,4 @@
+import { FORNAX_VERSION } from '@fornax/protocol';
 import { describe, expect, test } from 'vitest';
 import { submitJob } from '../src/domain/jobs.js';
 import { renderContract } from './fixtures.js';
@@ -103,4 +104,13 @@ describe('worker API', () => {
     const again = (await t.app.inject({ method: 'POST', url: '/api/worker/jobs/claim', headers: w(worker), payload: { wait: 0 } })).json();
     expect(again).toMatchObject({ id: jobId, attempt: 2 });
   });
+});
+
+test('a worker of another version gets a warning header with the download link; a matching one gets none', async () => {
+  const worker = issueToken(t.db, 'pc', 'worker');
+  const ping = (version: string) =>
+    t.app.inject({ method: 'GET', url: '/api/worker/ping', headers: { authorization: `Bearer ${worker}`, 'x-fornax-version': version } });
+  const old = await ping('0.0.9');
+  expect(old.headers['x-fornax-warning']).toBe(`this worker is 0.0.9, the server ${FORNAX_VERSION}; get the matching worker from https://fornax.example.com/downloads/fornax-worker.zip`);
+  expect((await ping(FORNAX_VERSION)).headers['x-fornax-warning']).toBeUndefined();
 });

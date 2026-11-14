@@ -253,3 +253,17 @@ describe('WorkerApi', () => {
     }
   });
 });
+
+test('a version warning from the server is reported once', async () => {
+  const token = s.issueToken('pc', 'worker');
+  const seen: string[] = [];
+  const old = new WorkerApi({ server: s.url, token, version: '0.0.9', onWarning: (m) => seen.push(m) });
+  await old.ping();
+  await old.ping();
+  expect(seen).toHaveLength(1);
+  expect(seen[0]).toContain('this worker is 0.0.9');
+  expect(seen[0]).toContain('/downloads/fornax-worker.zip');
+  const same: string[] = [];
+  await new WorkerApi({ server: s.url, token, onWarning: (m) => same.push(m) }).ping();
+  expect(same).toEqual([]);
+});

@@ -11,6 +11,11 @@ export const INVITE_TTL_MS = 86_400_000;
 export type Identity = { tokenId: string; name: string; role: TokenRole };
 export type Resolved = { kind: 'active'; identity: Identity } | { kind: 'pending'; fingerprint: string; role: TokenRole } | null;
 
+/** Delete the unused invites of `name` (a lost link otherwise blocks a new invite until it expires). */
+export function deleteInvites(db: Db, name: string): number {
+  return db.delete(invites).where(and(eq(invites.name, name), isNull(invites.tokenId))).returning({ id: invites.id }).all().length;
+}
+
 export function createInvite(db: Db, input: { name: string; role: TokenRole }, now: Date): { id: string; expiresAt: Date } {
   if (!TOKEN_NAME.test(input.name)) throw badRequest('the name must be 1-24 characters a-z or 0-9');
   const pending = db.select({ id: tokens.id }).from(tokens).where(and(eq(tokens.name, input.name), eq(tokens.status, 'pending'))).get();

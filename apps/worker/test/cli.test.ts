@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events';
 import { Writable } from 'node:stream';
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { fingerprint, generateToken } from '@fornax/protocol';
+import { FORNAX_VERSION, fingerprint, generateToken } from '@fornax/protocol';
 import { startTestServer, type TestServer } from '@fornax/server/testing';
 import { afterEach, describe, expect, test } from 'vitest';
 import { ApiError, type WorkerApi } from '../src/api.js';
@@ -344,4 +344,9 @@ describe('signal handling', () => {
     expect(r.code === 0 && r.signal === null).toBe(false);
     expect(hasRunning()).toBe(false);
   });
+});
+
+test('fornax --version prints the version', async () => {
+  const { run } = cli();
+  expect(await run('--version')).toEqual({ code: 0, text: FORNAX_VERSION });
 });

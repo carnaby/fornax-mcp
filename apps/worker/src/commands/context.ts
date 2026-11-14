@@ -17,7 +17,8 @@ export type Ctx = {
   clipboard?: (text: string) => string | null;
 };
 
-export const apiFor = (ctx: Ctx, server: string, token: string): WorkerApi => ctx.makeApi?.(server, token) ?? new WorkerApi({ server, token });
+export const apiFor = (ctx: Ctx, server: string, token: string): WorkerApi =>
+  ctx.makeApi?.(server, token) ?? new WorkerApi({ server, token, onWarning: (m) => ctx.out(`warning: ${m}`) });
 
 /** worker.yaml, the token and an API client; ConfigError with a hint when this PC is not paired. */
 export function connect(ctx: Ctx): { config: WorkerConfig; api: WorkerApi } {

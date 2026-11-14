@@ -1,3 +1,4 @@
+import { FORNAX_VERSION } from '@fornax/protocol';
 import { McpServer } from '@modelcontextprotocol/server';
 import type { FastifyBaseLogger } from 'fastify';
 import { z } from 'zod';
@@ -14,7 +15,7 @@ import { outputBlocks } from './output.js';
 import { SERVER_INSTRUCTIONS, TOOL_DESCRIPTIONS as D, TOOL_TITLES as T } from './text.js';
 import type { Block, ToolResult } from './types.js';
 
-export const MCP_SERVER_VERSION = '0.1.0';
+export const MCP_SERVER_VERSION = FORNAX_VERSION;
 /** Caps the elements one tools/call may carry (GHSA-46jr-4wx8-v453: validating a huge argument list can exhaust memory). */
 const MAX_TOOL_INPUT_ELEMENTS = 10_000;
 

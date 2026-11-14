@@ -1,2 +1,4 @@
-/** Sent as X-Fornax-Version; keep it equal to package.json (a test checks). */
-export const WORKER_VERSION = '0.1.0';
+import { FORNAX_VERSION } from '@fornax/protocol';
+
+/** Sent as X-Fornax-Version: the one version of the repository (protocol FORNAX_VERSION). */
+export const WORKER_VERSION = FORNAX_VERSION;

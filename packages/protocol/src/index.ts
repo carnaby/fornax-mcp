@@ -4,3 +4,4 @@ export * from './params-schema.js';
 export * from './contract.js';
 export * from './names.js';
 export * from './wire.js';
+export * from './version.js';

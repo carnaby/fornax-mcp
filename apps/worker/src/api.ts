@@ -59,12 +59,16 @@ export class WorkerApi {
   private readonly base: string;
   private readonly headers: Record<string, string>;
 
-  constructor(opts: { server: string; token: string }) {
+  private readonly onWarning: ((message: string) => void) | undefined;
+  private warned = false;
+
+  constructor(opts: { server: string; token: string; onWarning?: (message: string) => void; version?: string }) {
+    this.onWarning = opts.onWarning;
     this.base = `${opts.server.replace(/\/+$/, '')}/api/worker`;
     this.headers = {
       authorization: `Bearer ${opts.token}`,
       [WORKER_HEADERS.name]: workerHostname(),
-      [WORKER_HEADERS.version]: WORKER_VERSION,
+      [WORKER_HEADERS.version]: opts.version ?? WORKER_VERSION,
     };
   }
 
@@ -82,6 +86,12 @@ export class WorkerApi {
       if (init.signal?.aborted) throw e;
       const cause = (e as { cause?: { code?: string; message?: string } }).cause;
       throw new NetworkError(`cannot reach the server: ${cause?.code ?? cause?.message ?? (e as Error).message}`, { cause: e });
+    }
+    const warning = res.headers.get(WORKER_HEADERS.warning);
+    if (warning && !this.warned) {
+      // Once per process: every call would carry it.
+      this.warned = true;
+      this.onWarning?.(warning);
     }
     if (res.ok) return res;
     let code = 'http_error';

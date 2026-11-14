@@ -2,6 +2,7 @@
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import { FORNAX_VERSION } from '@fornax/protocol';
 import { ApiError, NetworkError } from './api.js';
 import type { Ctx } from './commands/context.js';
 import { doctor } from './commands/doctor.js';
@@ -21,9 +22,10 @@ export const USAGE = [
   '       fornax types list',
   '       fornax types install <name> [--from <dir>]',
   '       fornax types add <name>',
+  '       fornax --version',
 ].join('\n');
 
-type Flags = { server?: string; name?: string; force?: boolean; from?: string; once?: boolean; help?: boolean };
+type Flags = { server?: string; name?: string; force?: boolean; from?: string; once?: boolean; help?: boolean; version?: boolean };
 
 /** Parse and dispatch. 0 done, 1 failed (the message says why), 2 usage. */
 export async function runCli(argv: string[], ctx: Ctx): Promise<number> {
@@ -41,6 +43,7 @@ export async function runCli(argv: string[], ctx: Ctx): Promise<number> {
         from: { type: 'string' },
         once: { type: 'boolean' },
         help: { type: 'boolean', short: 'h' },
+        version: { type: 'boolean', short: 'v' },
       },
     });
     flags = parsed.values;
@@ -49,6 +52,10 @@ export async function runCli(argv: string[], ctx: Ctx): Promise<number> {
     ctx.out((e as Error).message);
     ctx.out(USAGE);
     return 2;
+  }
+  if (flags.version) {
+    ctx.out(FORNAX_VERSION);
+    return 0;
   }
   if (flags.help) {
     ctx.out(USAGE);

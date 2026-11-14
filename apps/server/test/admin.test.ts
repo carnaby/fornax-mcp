@@ -1,7 +1,11 @@
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { generateToken } from '@fornax/protocol';
 import { expect, test } from 'vitest';
 import { runAdmin } from '../src/admin.js';
-import { resolveToken } from '../src/domain/tokens.js';
+import { openDb } from '../src/db/client.js';
+import { listTokens, resolveToken } from '../src/domain/tokens.js';
 import { useTestDb } from './helpers.js';
 
 const t = useTestDb();
@@ -48,4 +52,37 @@ test('errors and usage', () => {
   expect(admin('tokens', 'approve', 'nobody')).toMatchObject({ code: 1 });
   expect(admin('tokens', 'invite', 'Bad Name').code).toBe(1);
   expect(admin('nonsense').code).toBe(2);
+});
+
+test('uninvite removes an unused invite so a new one can be made', () => {
+  expect(admin('tokens', 'invite', 'alice').code).toBe(0);
+  expect(admin('tokens', 'invite', 'alice').code).toBe(1);
+  expect(admin('tokens', 'uninvite', 'alice')).toMatchObject({ code: 0, text: 'removed 1 unused invite(s) for alice' });
+  expect(admin('tokens', 'invite', 'alice').code).toBe(0);
+  expect(admin('tokens', 'uninvite').code).toBe(2);
+});
+
+test('backup writes a consistent database copy and the job files without partial uploads', () => {
+  admin('tokens', 'invite', 'alice');
+  resolveToken(t.db, generateToken('alice'), now);
+  mkdirSync(join(t.config.filesDir, 'tmp'), { recursive: true });
+  writeFileSync(join(t.config.filesDir, '01FILE0000000000000000000A'), 'content');
+  writeFileSync(join(t.config.filesDir, 'tmp', '01PART000000000000000000000.part'), 'partial');
+  const target = mkdtempSync(join(tmpdir(), 'fornax-backup-'));
+  try {
+    const r = admin('backup', join(target, 'nightly'));
+    expect(r.code).toBe(0);
+    expect(r.text).toMatch(/backup written to .*nightly: database \d+ bytes, 1 file\(s\)/);
+    expect(readdirSync(join(target, 'nightly', 'files'))).toEqual(['01FILE0000000000000000000A']);
+    const copy = openDb(join(target, 'nightly', 'fornax.db'));
+    try {
+      expect(listTokens(copy.db).map((x) => x.name)).toEqual(['alice']);
+    } finally {
+      copy.close();
+    }
+    expect(admin('backup', join(target, 'nightly')).code).toBe(1);
+    expect(existsSync(join(target, 'nightly', 'fornax.db'))).toBe(true);
+  } finally {
+    rmSync(target, { recursive: true, force: true });
+  }
 });

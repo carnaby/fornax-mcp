@@ -1,27 +1,75 @@
 #!/usr/bin/env node
-import { realpathSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Config } from './config.js';
 import { loadConfig } from './config.js';
 import { type Db, openDb } from './db/client.js';
 import { DomainError } from './domain/errors.js';
-import { approveToken, createInvite, listTokens, revokeToken } from './domain/tokens.js';
+import { approveToken, createInvite, deleteInvites, listTokens, revokeToken } from './domain/tokens.js';
 
 const USAGE = [
   'usage: fornax-admin tokens invite <name> [--worker]',
   '       fornax-admin tokens pending | list',
   '       fornax-admin tokens approve <name>',
   '       fornax-admin tokens revoke <name>',
+  '       fornax-admin tokens uninvite <name>',
+  '       fornax-admin backup <dir>',
 ].join('\n');
 
 /** Flags each command accepts; anything else is refused, so a typo like --wroker cannot silently change the meaning. */
 const FLAGS: Record<string, string[]> = { invite: ['--worker'] };
-const NEEDS_NAME = ['invite', 'approve', 'revoke'];
+const NEEDS_NAME = ['invite', 'approve', 'revoke', 'uninvite'];
+
+class AdminError extends Error {}
+
+/**
+ * `fornax-admin backup <dir>`: a consistent copy of the database (VACUUM INTO, safe while the server runs) and the
+ * job files without partial uploads. Files written after the database copy are harmless extras; a row whose file is
+ * missing answers 404 on download.
+ */
+function backup(db: Db, config: Config, target: string): { dir: string; dbBytes: number; files: number } {
+  const dir = resolve(target);
+  if (existsSync(dir) && readdirSync(dir).length > 0) throw new AdminError(`${dir} is not empty; choose a new or empty directory`);
+  mkdirSync(dir, { recursive: true });
+  const dbFile = join(dir, 'fornax.db');
+  db.$client.exec(`VACUUM INTO '${dbFile.replaceAll("'", "''")}'`);
+  let files = 0;
+  if (existsSync(config.filesDir)) {
+    cpSync(config.filesDir, join(dir, 'files'), {
+      recursive: true,
+      filter: (src) => {
+        const rel = relative(config.filesDir, src);
+        if (rel.split(sep)[0] === 'tmp') return false;
+        if (rel !== '' && statSync(src).isFile()) files++;
+        return true;
+      },
+    });
+  }
+  return { dir, dbBytes: statSync(dbFile).size, files };
+}
 
 export function runAdmin(argv: string[], deps: { db: Db; config: Config; now?: Date; out: (line: string) => void }): number {
   const { db, config, out } = deps;
   const now = deps.now ?? new Date();
   const [group, cmd, ...args] = argv;
+  if (group === 'backup') {
+    if (cmd === undefined || argv.length !== 2 || cmd.startsWith('-')) {
+      out(USAGE);
+      return 2;
+    }
+    try {
+      const r = backup(db, config, cmd);
+      out(`backup written to ${r.dir}: database ${r.dbBytes} bytes, ${r.files} file(s)`);
+      return 0;
+    } catch (e) {
+      if (e instanceof AdminError) {
+        out(e.message);
+        return 1;
+      }
+      throw e;
+    }
+  }
   const flags = args.filter((a) => a.startsWith('-'));
   const words = args.filter((a) => !a.startsWith('-'));
   const allowed = cmd !== undefined && Object.hasOwn(FLAGS, cmd) ? FLAGS[cmd]! : [];
@@ -68,6 +116,11 @@ export function runAdmin(argv: string[], deps: { db: Db; config: Config; now?: D
         if (!name) break;
         const r = approveToken(db, name, now);
         out(`approved ${r.name} (${r.role}, ${r.fingerprint})`);
+        return 0;
+      }
+      case 'uninvite': {
+        if (!name) break;
+        out(`removed ${deleteInvites(db, name)} unused invite(s) for ${name}`);
         return 0;
       }
       case 'revoke': {
