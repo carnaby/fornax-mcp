@@ -24,22 +24,44 @@ export function parseNvidiaSmi(stdout: string): { used_mib: number; total_mib: n
 export function readGpu(opts: { command?: string[]; timeoutMs?: number } = {}): Promise<GpuReading> {
   const [program, ...lead] = opts.command ?? ['nvidia-smi'];
   const timeoutMs = opts.timeoutMs ?? GPU_TIMEOUT_MS;
+  const noAnswer: GpuReading = { ok: false, error: `nvidia-smi: no answer within ${timeoutMs / 1000} s` };
   return new Promise((resolve) => {
-    execFile(
-      program!,
-      [...lead, ...NVIDIA_SMI_ARGS],
-      { timeout: timeoutMs, windowsHide: true, encoding: 'utf8', maxBuffer: 64 * 1024 },
-      (e, stdout) => {
-        if (e) {
-          const err = e as NodeJS.ErrnoException & { killed?: boolean; code?: string | number | null };
-          if (err.code === 'ENOENT') return resolve({ ok: false, error: 'nvidia-smi: not found' });
-          if (err.killed) return resolve({ ok: false, error: `nvidia-smi: no answer within ${timeoutMs / 1000} s` });
-          if (typeof err.code === 'number') return resolve({ ok: false, error: `nvidia-smi: exit code ${err.code}` });
-          return resolve({ ok: false, error: `nvidia-smi: ${err.code ?? 'cannot start'}` });
-        }
-        const card = parseNvidiaSmi(stdout);
-        resolve(card ? { ok: true, ...card } : { ok: false, error: 'nvidia-smi: unreadable output' });
-      },
-    );
+    let guard: NodeJS.Timeout | undefined;
+    let settled = false;
+    const settle = (reading: GpuReading) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(guard);
+      resolve(reading);
+    };
+    let child: ReturnType<typeof execFile>;
+    try {
+      child = execFile(
+        program ?? '',
+        [...lead, ...NVIDIA_SMI_ARGS],
+        { timeout: timeoutMs, killSignal: 'SIGKILL', windowsHide: true, encoding: 'utf8', maxBuffer: 64 * 1024 },
+        (e, stdout) => {
+          if (e) {
+            const err = e as NodeJS.ErrnoException & { killed?: boolean; code?: string | number | null };
+            if (err.code === 'ENOENT') return settle({ ok: false, error: 'nvidia-smi: not found' });
+            if (err.killed) return settle(noAnswer);
+            if (typeof err.code === 'number') return settle({ ok: false, error: `nvidia-smi: exit code ${err.code}` });
+            return settle({ ok: false, error: `nvidia-smi: ${err.code ?? 'cannot start'}` });
+          }
+          const card = parseNvidiaSmi(stdout);
+          settle(card ? { ok: true, ...card } : { ok: false, error: 'nvidia-smi: unreadable output' });
+        },
+      );
+    } catch {
+      return settle({ ok: false, error: 'nvidia-smi: cannot start' });
+    }
+    // execFile's own timeout kills and then waits for the pipes to close, which may never happen (a process stuck in
+    // the driver, or a descendant holding stdout open). This guard answers on time regardless and lets go of the pipes.
+    guard = setTimeout(() => {
+      settle(noAnswer);
+      child.kill('SIGKILL');
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+    }, timeoutMs);
   });
 }

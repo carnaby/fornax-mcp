@@ -35,4 +35,10 @@ describe('readGpu', () => {
     expect(await readGpu({ command: smi('hang'), timeoutMs: 500 })).toEqual({ ok: false, error: 'nvidia-smi: no answer within 0.5 s' });
     expect(Date.now() - t0).toBeLessThan(5000);
   });
+
+  test('a nvidia-smi that ignores SIGTERM is cut off too', async () => {
+    const t0 = Date.now();
+    expect(await readGpu({ command: smi('stubborn'), timeoutMs: 500 })).toEqual({ ok: false, error: 'nvidia-smi: no answer within 0.5 s' });
+    expect(Date.now() - t0).toBeLessThan(2500);
+  });
 });

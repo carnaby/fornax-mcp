@@ -23,6 +23,11 @@ switch (mode) {
   case 'hang':
     setInterval(() => {}, 1000);
     break;
+  case 'stubborn':
+    // Ignores the polite kill (on Windows a kill always terminates, so there it behaves like "hang").
+    process.on('SIGTERM', () => {});
+    setInterval(() => {}, 1000);
+    break;
   default:
     process.exit(2);
 }
