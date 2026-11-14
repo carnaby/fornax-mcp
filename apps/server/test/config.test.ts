@@ -85,9 +85,19 @@ describe('loadConfig', () => {
       ['FORNAX_MAX_UPLOAD_MB', '0'],
       ['FORNAX_MAX_QUEUED_PER_TOKEN', '1.5'],
       ['FORNAX_FINISHED_DAYS', 'two'],
+      ['FORNAX_FINISHED_DAYS', '0'],
       ['FORNAX_PENDING_TOKEN_DAYS', '-1'],
     ];
     for (const [name, value] of cases) expect(() => loadConfig(env({ [name]: value })), `${name}=${value}`).toThrow(new RegExp(name));
+  });
+
+  test('a retention of 0 is refused: it would delete everything within a minute', () => {
+    for (const name of ['FORNAX_FINISHED_DAYS', 'FORNAX_ORPHAN_UPLOAD_HOURS', 'FORNAX_UNAVAILABLE_TYPE_DAYS', 'FORNAX_PENDING_TOKEN_DAYS']) {
+      for (const value of ['0', '0.0']) {
+        expect(() => loadConfig(env({ [name]: value })), `${name}=${value}`).toThrow(`${name} must be a number greater than 0, not "${value}"`);
+      }
+    }
+    expect(loadConfig(env({ FORNAX_ORPHAN_UPLOAD_HOURS: '0.5' })).retention.orphanUploadMs).toBe(1_800_000);
   });
 
   test('a missing or short secret stops the server without echoing it', () => {

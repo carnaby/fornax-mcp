@@ -71,11 +71,13 @@ function wholeNumber(env: Env, name: string, fallback: number, min: number, max:
   return n;
 }
 
+/** A retention period: more than 0 (a 0 would delete everything at the next maintenance pass, within a minute). */
 function amount(env: Env, name: string, fallback: number): number {
   const raw = valueOf(env, name);
   if (raw === undefined) return fallback;
-  if (!/^\d+(\.\d+)?$/.test(raw)) throw new Error(`${name} must be a number of 0 or more, not "${raw}"`);
-  return Number(raw);
+  const n = Number(raw);
+  if (!/^\d+(\.\d+)?$/.test(raw) || !(n > 0)) throw new Error(`${name} must be a number greater than 0, not "${raw}"`);
+  return n;
 }
 
 /** Scheme and host only: pages and links use root-relative paths, so Fornax is always served at the root. */
