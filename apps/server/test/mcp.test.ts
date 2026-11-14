@@ -31,6 +31,7 @@ describe('the MCP endpoint', () => {
     const { tools } = await client.listTools();
     expect(tools.map((x) => x.name).sort()).toEqual(['cancel_job', 'create_upload', 'get_job', 'get_output', 'list_job_types', 'list_jobs', 'queue_status', 'submit_job']);
     for (const tool of tools) expect(tool.description, tool.name).toBeTruthy();
+    expect(tools.find((x) => x.name === 'queue_status')!.description).toContain('worker.waiting');
     const ins = client.getInstructions() ?? '';
     expect(ins).toMatch(/^Fornax is a job queue for one GPU worker/);
     expect(ins).toContain('create_upload');
@@ -50,7 +51,7 @@ describe('the MCP endpoint', () => {
     for (const client of [await mcp.connect('/mcp', bearerHeader(alice)), await mcp.connect(`/mcp/${alice}`)]) {
       const r = await callJson(client, 'list_job_types');
       expect(r.types.map((x: { name: string }) => x.name)).toEqual(['render']);
-      expect(r.worker).toEqual({ online: false, last_seen: null });
+      expect(r.worker).toEqual({ online: false, last_seen: null, waiting: null });
     }
   });
 
@@ -171,9 +172,13 @@ describe('the job tools', () => {
     await t.app.inject({ method: 'POST', url: `/api/worker/jobs/${job.id}/heartbeat`, headers: bearer(worker), payload: { lease: job.lease, progress: 0.5, message: 'half' } });
 
     const own = await callJson(await mcp.connect('/mcp', bearerHeader(alice)), 'queue_status');
-    expect(own).toEqual({ queued: 0, running: 1, worker: { online: true, last_seen: expect.any(String) }, current: { type: 'render', progress: 0.5, progress_message: 'half' } });
+    expect(own).toEqual({
+      queued: 0, running: 1,
+      worker: { online: true, last_seen: expect.any(String), waiting: null },
+      current: { type: 'render', progress: 0.5, progress_message: 'half', started_at: expect.any(String) },
+    });
     const foreign = await callJson(await mcp.connect('/mcp', bearerHeader(eve)), 'queue_status');
-    expect(foreign.current).toEqual({ type: 'render', progress: 0.5, progress_message: null });
+    expect(foreign.current).toEqual({ type: 'render', progress: 0.5, progress_message: null, started_at: expect.any(String) });
     expect((await t.app.inject({ method: 'GET', url: '/api/queue', headers: bearer(eve) })).json().current.progress_message).toBeNull();
     expect((await t.app.inject({ method: 'GET', url: '/api/queue', headers: bearer(alice) })).json().current.progress_message).toBe('half');
   });

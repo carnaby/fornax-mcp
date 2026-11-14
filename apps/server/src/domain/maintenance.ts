@@ -131,7 +131,13 @@ export function queueStatus(db: Db, now: Date, viewer: string | null = null) {
     running: counts.find((c) => c.state === 'running')?.n ?? 0,
     worker: workerOnline(db, now),
     current: running
-      ? { type: running.type, progress: running.progress, progress_message: running.ownerTokenId === viewer ? running.progressMessage : null }
+      ? {
+          type: running.type,
+          progress: running.progress,
+          progress_message: running.ownerTokenId === viewer ? running.progressMessage : null,
+          // Spec 05a 2.4: since when it runs (a waiting job's note says so).
+          started_at: running.startedAt?.toISOString() ?? null,
+        }
       : null,
   };
 }

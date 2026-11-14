@@ -29,6 +29,13 @@
       "when": 1794632227743,
       "tag": "0003_handy_zaran",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1794673045772,
+      "tag": "0004_regular_star_brand",
+      "breakpoints": true
     }
   ]
 }

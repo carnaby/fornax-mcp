@@ -1,5 +1,5 @@
 import { stat } from 'node:fs/promises';
-import { announceBody, claimBody, completeBody, FORNAX_VERSION, failBody, heartbeatBody, releaseBody, WORKER_HEADERS } from '@fornax/protocol';
+import { announceBody, claimBody, completeBody, FORNAX_VERSION, failBody, heartbeatBody, releaseBody, statusBody, WORKER_HEADERS } from '@fornax/protocol';
 import { eq } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
@@ -11,7 +11,7 @@ import { workerQueue } from '../domain/maintenance.js';
 import { completeJob, discardOutputs, hasProducedFiles, outputBudget, storeOutput } from '../domain/outputs.js';
 import { attachServerPreview } from '../domain/previews.js';
 import { jobSignal } from '../domain/signal.js';
-import { touchWorker } from '../domain/worker-state.js';
+import { setWorkerWaiting, touchWorker } from '../domain/worker-state.js';
 import { requireRole } from './auth.js';
 import type { RouteDeps } from './deps.js';
 import { parse } from './parse.js';
@@ -58,6 +58,14 @@ export const workerRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps) => 
     return announceTypes(deps.db, types, deps.clock());
   });
 
+  // Spec 05a 2.4: why the worker takes no job now (the card is busy or unreadable), or null. Like every worker request
+  // it is a sign of life too, which keeps a worker that only waits for the card online.
+  app.put('/status', async (req, reply) => {
+    const { waiting } = parse(statusBody, req.body);
+    setWorkerWaiting(deps.db, waiting);
+    return reply.code(204).send();
+  });
+
   // On shutdown waiting claims answer at once instead of holding the close up.
   const closing = new AbortController();
   app.addHook('preClose', async () => closing.abort());
@@ -68,6 +76,8 @@ export const workerRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps) => 
     const { wait } = parse(claimBody, req.body ?? {});
     // One worker runs one job at a time: a job still running now was abandoned (see abandonRunning).
     abandonRunning(deps.db, deps.clock());
+    // A worker that asks for a job does not wait for the card.
+    setWorkerWaiting(deps.db, null);
     const deadline = Date.now() + wait * 1000;
     const stop = new AbortController();
     let gone = req.raw.socket?.destroyed === true;

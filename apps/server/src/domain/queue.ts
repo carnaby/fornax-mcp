@@ -19,7 +19,7 @@ export const LEASE_LOST = 'the job is no longer yours: it finished, was canceled
 export const ABANDONED = 'the worker asked for a new job while this one was still running (it restarted or lost the connection)';
 
 /** One line of at most `max` characters, without control characters; null when nothing is left. */
-function oneLine(raw: string, max: number): string | null {
+export function oneLine(raw: string, max: number): string | null {
   const line = raw.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').replace(/\s+/g, ' ').trim();
   return line ? [...line].slice(0, max).join('') : null;
 }

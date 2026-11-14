@@ -53,3 +53,15 @@ export const completeBody = z.strictObject({
   outputs: outputsJson.default({}),
 });
 export type CompleteBody = z.infer<typeof completeBody>;
+
+const mib = z.number().int().min(0).max(16_777_216);
+
+/** Spec 05a 2.4: why the worker takes no job now. */
+export const workerWaiting = z.union([
+  z.strictObject({ reason: z.literal('gpu_busy'), used_mib: mib, total_mib: mib, limit_mib: mib }),
+  z.strictObject({ reason: z.literal('gpu_unreadable'), error: z.string().max(200), limit_mib: mib }),
+]);
+export type WorkerWaiting = z.infer<typeof workerWaiting>;
+
+/** PUT /api/worker/status: `waiting` is null when the worker takes jobs. */
+export const statusBody = z.strictObject({ waiting: workerWaiting.nullable() });

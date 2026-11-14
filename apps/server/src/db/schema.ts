@@ -1,4 +1,4 @@
-import type { JobTypeContract, TokenRole } from '@fornax/protocol';
+import type { JobTypeContract, TokenRole, WorkerWaiting } from '@fornax/protocol';
 import { index, integer, real, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 
 const ts = (name: string) => integer(name, { mode: 'timestamp_ms' });
@@ -111,6 +111,8 @@ export const workerState = sqliteTable('worker', {
   hostname: text('hostname').notNull(),
   version: text('version'),
   lastSeenAt: ts('last_seen_at').notNull(),
+  /** Spec 05a 2.4: why the worker takes no job now (its last status), or null. */
+  waiting: text('waiting', { mode: 'json' }).$type<WorkerWaiting>(),
 });
 
 export type DeliveryStatus = 'pending' | 'sent' | 'failed';

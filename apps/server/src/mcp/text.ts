@@ -21,7 +21,8 @@ export const TOOL_DESCRIPTIONS = {
     'One file of a finished job by name (an output, its preview, or the log): an image comes back as a preview image (at most 2000 px per side) plus a download link, text or JSON up to 60 kB as text (a longer log as its last 60 kB), anything else as a download link valid 24 hours.',
   list_jobs: 'Your jobs, newest first; filter by state or group.',
   cancel_job: 'Cancel one of your jobs. A queued job is canceled at once; a running one is stopped by the worker at its next heartbeat (within about 30 seconds).',
-  queue_status: 'The whole queue: how many jobs wait and run, whether the worker is online, and the type and progress of the running job.',
+  queue_status:
+    'The whole queue: how many jobs wait and run, whether the worker is online, and the type, progress and start time of the running job. worker.waiting explains why nothing runs while jobs wait (e.g. other programs hold the GPU); its message says it in one sentence.',
 } as const;
 
 /** Short names clients show for the tools. */

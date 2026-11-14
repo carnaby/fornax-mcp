@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { completeBody, LEASE_MS, outputsJson, releaseBody } from '../src/wire.js';
+import { completeBody, LEASE_MS, outputsJson, releaseBody, statusBody } from '../src/wire.js';
 
 test('outputs.json: meta and preview per output, nothing else', () => {
   const ok = { 'a.png': { meta: { width: 2, hdr: true, note: null }, preview: 'p/a.jpg' } };
@@ -17,4 +17,17 @@ test('the lease length is shared by server and worker, and a release says why', 
   expect(releaseBody.parse({ lease: 'l' })).toEqual({ lease: 'l', reason: 'stopping' });
   expect(releaseBody.parse({ lease: 'l', reason: 'environment' }).reason).toBe('environment');
   expect(releaseBody.safeParse({ lease: 'l', reason: 'tired' }).success).toBe(false);
+});
+
+test('a worker status says why it waits, or null', () => {
+  const busy = { reason: 'gpu_busy', used_mib: 5120, total_mib: 16311, limit_mib: 2048 };
+  expect(statusBody.parse({ waiting: null })).toEqual({ waiting: null });
+  expect(statusBody.parse({ waiting: busy })).toEqual({ waiting: busy });
+  const unreadable = { reason: 'gpu_unreadable', error: 'nvidia-smi: not found', limit_mib: 2048 };
+  expect(statusBody.parse({ waiting: unreadable })).toEqual({ waiting: unreadable });
+  expect(statusBody.safeParse({}).success).toBe(false);
+  expect(statusBody.safeParse({ waiting: { ...busy, used_mib: 1.5 } }).success).toBe(false);
+  expect(statusBody.safeParse({ waiting: { ...busy, extra: 1 } }).success).toBe(false);
+  expect(statusBody.safeParse({ waiting: { ...unreadable, error: 'x'.repeat(201) } }).success).toBe(false);
+  expect(statusBody.safeParse({ waiting: { reason: 'tired', limit_mib: 1 } }).success).toBe(false);
 });

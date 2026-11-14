@@ -17,10 +17,14 @@ test("queue status shows counts and the running job; its message only to the job
   await t.app.inject({ method: 'POST', url: `/api/worker/jobs/${job.id}/heartbeat`, headers: { authorization: `Bearer ${worker}` }, payload: { lease: job.lease, progress: 0.5, message: 'half' } });
 
   const q = (await t.app.inject({ method: 'GET', url: '/api/queue', headers: { authorization: `Bearer ${eve}` } })).json();
-  expect(q).toEqual({ queued: 1, running: 1, worker: { online: true, last_seen: expect.any(String) }, current: { type: 'render', progress: 0.5, progress_message: null } });
+  expect(q).toEqual({
+    queued: 1, running: 1,
+    worker: { online: true, last_seen: expect.any(String), waiting: null },
+    current: { type: 'render', progress: 0.5, progress_message: null, started_at: t.clock.now.toISOString() },
+  });
   expect(JSON.stringify(q)).not.toContain(job.id);
   const own = (await t.app.inject({ method: 'GET', url: '/api/queue', headers: { authorization: `Bearer ${alice}` } })).json();
-  expect(own.current).toEqual({ type: 'render', progress: 0.5, progress_message: 'half' });
+  expect(own.current).toEqual({ type: 'render', progress: 0.5, progress_message: 'half', started_at: t.clock.now.toISOString() });
 
   const wq = (await t.app.inject({ method: 'GET', url: '/api/worker/queue', headers: { authorization: `Bearer ${worker}` } })).json();
   expect(wq).toEqual({ queued: 1, running: 1, unavailable: [] });
