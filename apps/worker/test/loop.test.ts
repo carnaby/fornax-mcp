@@ -46,6 +46,15 @@ describe('runWorker', () => {
     expect(await alice.job(job.id)).toMatchObject({ state: 'queued', attempts: 0, type_unavailable: true });
   });
 
+  test('exit code 4 fails the job after its first attempt', async () => {
+    const { paths, api, alice, say } = await setup();
+    const worker = runWorker({ api, paths, tools: NODE_TOOLS, out: say, signal: new AbortController().signal, once: true, ...fast });
+    await waitFor(async () => (await alice.offered()).includes('echo'), 10_000, 'echo to be offered');
+    const job = await alice.submit('echo', { mode: 'exit', code: 4 });
+    expect(await worker).toBe(0);
+    expect(await alice.job(job.id)).toMatchObject({ state: 'failed', attempts: 1, error: expect.stringContaining('(exit code 4)') });
+  });
+
   test('stopping the worker during a job kills the tool and releases the job', async () => {
     const { paths, api, alice, say } = await setup();
     const stop = new AbortController();

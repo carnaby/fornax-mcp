@@ -363,6 +363,8 @@ export async function runJob(job: ClaimedJob, pack: Pack, deps: JobDeps): Promis
     if (r.code === 3) return await giveBack('broken', `the tool reported a broken environment (exit code 3)${why}`);
     await uploadLog(r.log);
     if (r.code === 2) return await fail(`the tool refused the input (exit code 2)${why}`, true);
+    // Spec 05a 3: a failure a retry would not change (the tool's own time limit, out of memory after all its tries).
+    if (r.code === 4) return await fail(`the tool failed and asked not to be retried (exit code 4)${why}`, true);
     return await fail(r.code === null ? `the tool was killed (${r.signal ?? 'signal'})${why}` : `the tool failed (exit code ${r.code})${why}`, false);
   } catch (e) {
     // A transfer or a pause aborted by a stop: the stop decides.

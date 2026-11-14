@@ -115,6 +115,7 @@ Rules, checked when the pack loads:
 | 1 | the job failed (also out of memory) | the log is uploaded; the server retries up to 3 attempts |
 | 2 | invalid input | the log is uploaded; the job fails at once |
 | 3 | broken environment (no GPU, missing model) | the job goes back to the queue without losing an attempt the first time; if the same job reports 3 a second time, that counts as a failed attempt (retried later, failed after the last). The worker stops offering the type until it restarts with a passing check |
+| 4 | a failure a retry would not change (the tool's own time limit, out of memory after all of the type's own attempts) | the log is uploaded; the job fails at once, the attempt counts |
 | other, killed | as 1 | |
 
 ## check and setup

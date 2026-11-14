@@ -59,6 +59,14 @@ describe('runJob', () => {
     expect(f.uploads.get('log.txt')).toContain('bad input');
   });
 
+  test('exit 4 fails for good: the tool asked not to be retried; the log is uploaded', async () => {
+    const { pack, deps } = setup();
+    const f = fakeApi();
+    expect((await runJob(fakeClaim({ params: { mode: 'exit', code: 4 } }), pack, deps(f.api))).outcome).toBe('failed');
+    expect(f.called('fail')[0]!.args.slice(2)).toEqual(['the tool failed and asked not to be retried (exit code 4): bad input: the file is empty', true]);
+    expect(f.uploads.get('log.txt')).toContain('bad input');
+  });
+
   test('exit 1 and any other code fail for a retry', async () => {
     const { pack, deps } = setup();
     for (const code of [1, 7]) {
