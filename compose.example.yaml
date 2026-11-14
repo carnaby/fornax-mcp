@@ -1,0 +1,16 @@
+# A local example only (invented values): run Fornax on this machine with `docker compose -f compose.example.yaml up`.
+# Copy .env.example to .env first and set FORNAX_SECRET and PUBLIC_URL. Put a TLS reverse proxy in front of it for
+# anything but a local test, and see README.md ("Behind a reverse proxy").
+services:
+  fornax:
+    build: .
+    image: fornax:local
+    env_file: .env
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - fornax-data:/data
+    restart: unless-stopped
+    stop_grace_period: 20s
+volumes:
+  fornax-data:

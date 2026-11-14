@@ -1,0 +1,12 @@
+**/node_modules
+**/dist
+dist
+docs
+.superpowers
+.git
+.github
+**/*.log
+**/__pycache__
+types/*/env
+.env
+.env.*

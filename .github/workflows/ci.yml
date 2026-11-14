@@ -2,6 +2,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
@@ -25,6 +26,86 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version: '${{ matrix.node }}', cache: pnpm }
       - run: pnpm install --frozen-lockfile
+      # Strict compiler checks are the lint step.
       - run: pnpm typecheck
       - run: pnpm build
+      # Workspace tests, then the type packs' Python tests (the runners have Python 3).
       - run: pnpm test
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build the image
+        run: docker build -t fornax:ci .
+      - name: Run it as an arbitrary UID and check health, the worker bundle, the admin CLI and a fast stop
+        run: |
+          set -eu
+          docker run -d --name fornax --user 12345:12345 \
+            -e FORNAX_SECRET="$(openssl rand -hex 32)" -e PUBLIC_URL=http://127.0.0.1:3000 \
+            -p 127.0.0.1:3000:3000 fornax:ci
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:3000/healthz && break; sleep 1; done
+          curl -fsS http://127.0.0.1:3000/healthz | grep -q '"ok":true'
+          curl -fsS -o worker.zip http://127.0.0.1:3000/downloads/fornax-worker.zip
+          unzip -l worker.zip | grep -q 'fornax-worker/types/render/type.yaml'
+          docker exec fornax fornax-admin tokens list | grep -q 'no tokens'
+          docker exec fornax node /app/dist/src/healthcheck.js
+          start=$(date +%s)
+          docker stop -t 30 fornax
+          took=$(( $(date +%s) - start ))
+          echo "docker stop took ${took} s"
+          test "$took" -le 5
+      - name: Server log
+        if: always()
+        run: docker logs fornax 2>&1 | tail -n 50 || true
+
+  image:
+    # Only from main, and only after every test job is green: a published image is deployed automatically.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [test, docker]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    concurrency: { group: image, cancel-in-progress: true }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with: { registry: ghcr.io, username: '${{ github.actor }}', password: '${{ secrets.GITHUB_TOKEN }}' }
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/fornax:latest
+            ghcr.io/${{ github.repository_owner }}/fornax:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.licenses=MIT
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  worker-release:
+    # A v<version> tag publishes the worker bundle as a GitHub release.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version: '24', cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - name: The tag is v<FORNAX_VERSION>
+        run: |
+          version=$(node -p "require('./apps/worker/package.json').version")
+          test "$GITHUB_REF_NAME" = "v$version" || { echo "tag $GITHUB_REF_NAME is not v$version"; exit 1; }
+      - run: pnpm bundle:worker
+      - name: Release with the worker bundle
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: gh release create "$GITHUB_REF_NAME" dist/worker/fornax-worker-*.zip --title "Fornax $GITHUB_REF_NAME" --generate-notes

@@ -1,0 +1,3 @@
+#!/bin/sh
+# fornax-admin inside the image: docker exec <container> fornax-admin tokens list
+exec node /app/dist/src/admin.js "$@"
