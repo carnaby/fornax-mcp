@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { createUploadLink, fileView, getOwnFile, saveFile, uploadLinkView } from '../domain/files.js';
-import { cancelJob, getOwnJob, GROUP, JOB_STATES, jobView, listJobs, PRIORITIES, submitJob } from '../domain/jobs.js';
+import { cancelJob, getOwnJob, GROUP, JOB_STATES, jobDetail, jobView, listJobs, PRIORITIES, submitJob } from '../domain/jobs.js';
 import { offeredTypes, typeView } from '../domain/job-types.js';
 import { MAX_JOB_WAIT_S, waitForJobChange } from '../domain/job-wait.js';
 import { queueStatus } from '../domain/maintenance.js';
@@ -54,7 +54,7 @@ export const clientRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps) => 
   app.post('/jobs', async (req, reply) => {
     const body = parse(submitSchema, req.body);
     const row = submitJob(deps.db, deps.config, req.identity!.tokenId, body, deps.clock());
-    return reply.code(201).send(jobView(deps.db, row));
+    return reply.code(201).send(jobDetail(deps.db, deps.config, row, deps.clock()));
   });
 
   app.get('/jobs', async (req) => {
@@ -78,7 +78,7 @@ export const clientRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps) => 
   app.get<{ Params: { id: string } }>('/jobs/:id', async (req, reply) => {
     const q = parse(jobQuery, req.query);
     const owner = req.identity!.tokenId;
-    const read = () => jobView(deps.db, getOwnJob(deps.db, owner, req.params.id));
+    const read = () => jobDetail(deps.db, deps.config, getOwnJob(deps.db, owner, req.params.id), deps.clock());
     if (!q.wait) return read();
     const stop = new AbortController();
     const hangUp = () => stop.abort();

@@ -4,8 +4,9 @@ import type { FastifyBaseLogger } from 'fastify';
 import { z } from 'zod';
 import { DomainError } from '../domain/errors.js';
 import { createUploadLink, uploadLinkView } from '../domain/files.js';
-import { cancelJob, getOwnJob, GROUP, JOB_STATES, jobView, listJobs, PRIORITIES, queuePosition, submitJob } from '../domain/jobs.js';
+import { cancelJob, getOwnJob, GROUP, JOB_STATES, jobDetail, jobView, listJobs, PRIORITIES, submitJob } from '../domain/jobs.js';
 import { offeredTypes, typeView } from '../domain/job-types.js';
+import { MAX_MCP_JOB_WAIT_S, waitForJobChange } from '../domain/job-wait.js';
 import { queueStatus } from '../domain/maintenance.js';
 import type { Identity } from '../domain/tokens.js';
 import { workerOnline } from '../domain/worker-state.js';
@@ -98,15 +99,34 @@ export function buildMcpServer(ctx: McpContext): McpServer {
           { type: a.type, params: a.params, inputs: a.inputs, priority: a.priority, group: a.group ?? null, callback_url: a.callback_url ?? null },
           deps.clock(),
         );
-        return { job_id: row.id, state: row.state, position: queuePosition(db, row) };
+        const d = jobDetail(db, deps.config, row, deps.clock());
+        return { job_id: row.id, state: row.state, position: d.position, worker: d.worker, note: d.note };
       }),
   );
 
-  server.registerTool('get_job', { title: T.get_job, description: D.get_job, annotations: READS, inputSchema: z.object({ job_id: jobId }) }, ({ job_id }) =>
-    runJson(ctx, (me) => {
-      const row = getOwnJob(db, me.tokenId, job_id);
-      return { ...jobView(db, row), result_url: resultUrl(deps, row) };
-    }),
+  server.registerTool(
+    'get_job',
+    {
+      title: T.get_job,
+      description: D.get_job,
+      annotations: READS,
+      inputSchema: z.object({
+        job_id: jobId,
+        wait_seconds: z
+          .number().int().min(0).max(MAX_MCP_JOB_WAIT_S).optional()
+          .describe('With change: wait up to this many seconds for the job to change; 0 or none answers at once.'),
+        change: z.string().max(64).optional().describe('The change value of your previous get_job answer.'),
+      }),
+    },
+    ({ job_id, wait_seconds, change }, sdk) =>
+      runJson(ctx, (me) => {
+        const read = () => {
+          const row = getOwnJob(db, me.tokenId, job_id);
+          return { ...jobDetail(db, deps.config, row, deps.clock()), result_url: resultUrl(deps, row) };
+        };
+        // The request's signal ends the wait when the client cancels or the connection closes.
+        return waitForJobChange(read, change, (wait_seconds ?? 0) * 1000, sdk.mcpReq.signal);
+      }),
   );
 
   server.registerTool(

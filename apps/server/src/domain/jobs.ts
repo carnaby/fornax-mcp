@@ -11,6 +11,7 @@ import { finishJob } from './finish.js';
 import { getOfferedType, isOffered } from './job-types.js';
 import { jobChanges, jobSignal } from './signal.js';
 import { callbackAllowed } from './webhooks.js';
+import { workerOnline, type WorkerView } from './worker-state.js';
 
 export { callbackAllowed };
 
@@ -149,4 +150,38 @@ export function jobView(db: Db, row: JobRow) {
     finished_at: iso(row.finishedAt),
   };
   return { ...view, change: jobChange(view) };
+}
+
+/** "13:40 UTC": a time in a sentence does not depend on the server's time zone; exact times are in the fields. */
+const hhmm = (d: Date): string => `${d.toISOString().slice(11, 16)} UTC`;
+const AGAIN = 'asking again changes nothing';
+
+/**
+ * Spec 05a 5.2: one sentence, for a person and for an agent, why a queued job waits; null in every other state. The
+ * first match wins: the worker is offline, the type is not offered, the worker waits for the card, else the queue.
+ */
+export function jobNote(db: Db, config: Config, row: JobRow, worker: WorkerView, now: Date): string | null {
+  if (row.state !== 'queued') return null;
+  if (!worker.online) {
+    return worker.last_seen === null
+      ? `waiting: the worker has not connected yet; the job starts when the worker runs, ${AGAIN}`
+      : `waiting: the worker is offline since ${hhmm(new Date(worker.last_seen))}; the job starts when the worker runs again, ${AGAIN}`;
+  }
+  const position = queuePosition(db, row);
+  if (position === null) {
+    const days = Math.round(config.retention.unavailableTypeMs / 86_400_000);
+    return `waiting: the worker does not offer the type ${row.type} now; the job starts when it is offered again, or fails after ${days} days without it`;
+  }
+  if (worker.waiting) return worker.waiting.message;
+  const retry = row.runAfter.getTime() > now.getTime() ? `; the next attempt starts at ${hhmm(row.runAfter)} at the earliest` : '';
+  const running = db.select({ type: jobs.type, startedAt: jobs.startedAt }).from(jobs).where(eq(jobs.state, 'running')).get();
+  if (running) return `waiting, position ${position}; running ${running.type} since ${hhmm(running.startedAt ?? now)}${retry}`;
+  if (position === 1) return `waiting, position 1; the worker takes it next${retry}`;
+  return `waiting, position ${position}; the worker takes the jobs ahead first${retry}`;
+}
+
+/** One job with the worker's state and the note (spec 05a 5.2): the answer to a submit and to a single job. */
+export function jobDetail(db: Db, config: Config, row: JobRow, now: Date) {
+  const worker = workerOnline(db, now);
+  return { ...jobView(db, row), worker, note: jobNote(db, config, row, worker, now) };
 }

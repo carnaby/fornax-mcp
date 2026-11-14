@@ -137,7 +137,10 @@ describe('the job tools', () => {
     expect(put.statusCode).toBe(201);
 
     const submitted = await callJson(client, 'submit_job', { type: 'render', params: { frame_start: 1 }, inputs: { scene: link.file_id }, group: 'shot-1' });
-    expect(submitted).toEqual({ job_id: expect.any(String), state: 'queued', position: 1 });
+    expect(submitted).toEqual({
+      job_id: expect.any(String), state: 'queued', position: 1,
+      worker: { online: false, last_seen: null, waiting: null }, note: expect.stringMatching(/^waiting: the worker has not connected yet;/),
+    });
     const job = await callJson(client, 'get_job', { job_id: submitted.job_id });
     expect(job).toMatchObject({ id: submitted.job_id, type: 'render', state: 'queued', params: { frame_start: 1, samples: 128 }, type_unavailable: false, group: 'shot-1' });
     expect(job.result_url).toMatch(new RegExp(`^https://fornax\\.example\\.com/r/${submitted.job_id}\\.\\d+\\.[A-Za-z0-9_-]+$`));
