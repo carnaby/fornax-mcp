@@ -114,7 +114,7 @@ Rules, checked when the pack loads:
 | 0 | done | outputs and log are uploaded, the job succeeds |
 | 1 | the job failed (also out of memory) | the log is uploaded; the server retries up to 3 attempts |
 | 2 | invalid input | the log is uploaded; the job fails at once |
-| 3 | broken environment (no GPU, missing model) | the job goes back to the queue without losing an attempt; the worker stops offering the type until it restarts with a passing check |
+| 3 | broken environment (no GPU, missing model) | the job goes back to the queue without losing an attempt the first time; if the same job reports 3 a second time, that counts as a failed attempt (retried later, failed after the last). The worker stops offering the type until it restarts with a passing check |
 | other, killed | as 1 | |
 
 ## check and setup
@@ -123,6 +123,12 @@ Rules, checked when the pack loads:
 - `setup` runs once in `fornax types install`, with the pack directory as working directory. It installs into
   `{pack}/env` only; it may take at most 2 hours. If it fails, nothing stays installed.
 
+## Tools
+
+`tools` names the programs a pack needs; their paths come from `worker.yaml` on the PC. Give the program itself, not
+a launcher that starts it and exits (on Windows e.g. `blender.exe`, not `blender-launcher.exe`): the worker follows,
+times and stops the process it started, and a launcher would end at once while the real work goes on unwatched.
+
 ## Safety rules for every pack
 
 - Never run a tool in a mode that executes the content of an input file (Blender: always `--disable-autoexec`; no
@@ -130,3 +136,15 @@ Rules, checked when the pack loads:
 - Keep parameter schemas strict: enums, bounded numbers, patterns and `maxLength`.
 - Inputs reach the tool only through `{input.<name>}`; never build a file path from a parameter.
 - Install only into `{pack}/env`; change nothing outside the pack directory.
+
+## Built-in packs
+
+`fornax types install <name>` copies one of these from the worker bundle and runs its setup:
+
+| Pack | Does | Needs |
+|---|---|---|
+| `transcribe` | speech to text with faster-whisper, optional speaker labels with pyannote | NVIDIA GPU, Python 3.10+, ffmpeg |
+| `render` | Blender Cycles frames with JPEG previews | Blender 4.2+, a GPU Cycles supports, a self-contained .blend (packed resources) |
+
+Their `setup.md` files say what is installed and how to check it. Both are good examples for a new pack: `transcribe`
+for a Python tool in its own environment, `render` for an installed application.

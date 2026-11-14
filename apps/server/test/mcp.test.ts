@@ -36,6 +36,8 @@ describe('the MCP endpoint', () => {
     expect(ins).toContain('create_upload');
     expect(ins).toContain('<path>');
     expect(ins).toContain('connection reset');
+    expect(ins).toContain('--fail-with-body');
+    expect(ins).toContain('older than 7.76');
     expect(ins).toContain('curl.exe');
     expect(ins).toMatch(/cannot run commands.*give the user the command/s);
     expect(ins).toContain('get_output');
