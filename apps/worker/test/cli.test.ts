@@ -10,6 +10,7 @@ import { ApiError, type WorkerApi } from '../src/api.js';
 import { consoleWriter, makeSignalHandler, runCli, wireSignals } from '../src/cli.js';
 import { hasRunning, killRunning, runProcess } from '../src/process.js';
 import type { Ctx } from '../src/commands/context.js';
+import { LEASE_USAGE } from '../src/commands/lease.js';
 import { readClientToken, readToken, readWorkerConfig, saveToken } from '../src/config.js';
 import { FAKE_SMI, testPaths, useTempDir, waitFor, writeEchoPack } from './helpers.js';
 
@@ -99,6 +100,16 @@ describe('fornax CLI', () => {
     const unpaired = await run('lease', '--', process.execPath);
     expect(unpaired.code).toBe(121);
     expect(unpaired.text).toMatch(/^fornax lease: .* does not exist; pair this PC first/);
+  });
+
+  test('fornax lease --help and -h print the lease usage and exit 0; after -- they belong to the program', async () => {
+    const { ctx, run } = cli();
+    ctx.env = {};
+    for (const flag of ['--help', '-h']) {
+      expect(await run('lease', flag)).toEqual({ code: 0, text: LEASE_USAGE });
+    }
+    // No worker.yaml: the program's --help is not the wrapper's, so the lease is asked for (and fails here with 121).
+    expect((await run('lease', '--', process.execPath, '--help')).code).toBe(121);
   });
 
   test('the usage of fornax and of fornax lease share the lease lines', async () => {

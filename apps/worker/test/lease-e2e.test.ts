@@ -119,7 +119,11 @@ function runCli(st: Station, args: string[], env: Record<string, string> = {}) {
   return new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve) => child.on('close', (code) => resolve({ code, stdout, stderr })));
 }
 
-const ready = (st: Station) => waitFor(async () => (await st.rest.offered()).includes('lease'), 10_000, 'lease to be offered');
+/**
+ * The worker is up: it has checked its packs and announced them (its first request; the station's own announce does not
+ * count, it touches no worker state). Each station's server is fresh, so the worker seen is this one.
+ */
+const ready = (st: Station) => waitFor(async () => ((await st.rest.call('GET', '/api/queue')).worker as { online: boolean }).online, 10_000, 'the worker to be up');
 
 /** The lease job ends succeeded: its tool exited 0 without outputs, and the worker completed it so. */
 const succeeds = async (st: Station, id: string) => {
@@ -254,12 +258,16 @@ describe('fornax lease against a real server and worker', () => {
     const st = await station({ pack: false });
     const unknown = lease({ ...st, alice: generateToken('nobody') }, ['--exit', '0']);
     expect(await unknown.run).toBe(121);
+    expect(unknown.lines).toContain('fornax lease: the client token was refused (store a new one with fornax lease token)');
     const l = lease(st, ['--exit', '0']);
     expect(await l.run).toBe(121);
     expect(l.lines).toContain('fornax lease: the worker does not offer the job type lease: run fornax types install lease on the worker PC, then restart the worker');
   });
 
   test('a server unreachable at submit: retried until it is up, then the lease runs', async () => {
+    // A port that was free a moment ago. Another process may bind it before the server below does (it then fails with
+    // EADDRINUSE); a retry on another port is not possible, the wrapper already knows this one. The window is ~300 ms
+    // on 127.0.0.1 and the OS hands out ephemeral ports in rotation, so this is rare enough for a test.
     const port = await new Promise<number>((resolve) => {
       const probe = createServer();
       probe.listen(0, '127.0.0.1', () => {

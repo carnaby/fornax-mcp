@@ -28,7 +28,7 @@ function whole(raw: string | undefined, fallback: number | null, min: number, ma
 /**
  * `fornax lease …` (spec 05a 4.4). Everything after `--` is the program and its arguments, untouched. Its own exit
  * codes: 120 usage (anywhere under fornax lease), 121 no lease (also no client token or no worker.yaml), 122, 123 and
- * 130 from runLease; `fornax lease token` ends with 0 or 1.
+ * 130 from runLease; `fornax lease token` ends with 0 or 1, `--help` (before `--`) with 0.
  */
 export async function leaseCommand(argv: string[], ctx: Ctx): Promise<number> {
   const err = ctx.err ?? ctx.out;
@@ -50,10 +50,15 @@ export async function leaseCommand(argv: string[], ctx: Ctx): Promise<number> {
         rerun: { type: 'boolean' },
         priority: { type: 'string' },
         label: { type: 'string' },
+        help: { type: 'boolean', short: 'h' },
       },
     });
   } catch (e) {
     return usage((e as Error).message);
+  }
+  if (parsed.values.help) {
+    ctx.out(LEASE_USAGE);
+    return 0;
   }
   const end = parsed.tokens.find((tk) => tk.kind === 'option-terminator');
   const before = parsed.tokens.flatMap((tk) => (tk.kind === 'positional' && (end === undefined || tk.index < end.index) ? [tk.value] : []));
