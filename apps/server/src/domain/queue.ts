@@ -7,7 +7,7 @@ import { conflict, notFound } from './errors.js';
 import { finishJob } from './finish.js';
 import { isOffered } from './job-types.js';
 import type { JobRow } from './jobs.js';
-import { jobSignal } from './signal.js';
+import { jobChanges, jobSignal } from './signal.js';
 
 export { LEASE_MS };
 export const MAX_ATTEMPTS = 3;
@@ -44,7 +44,10 @@ export function expireLeases(db: Db, now: Date): number {
         .run();
     }
   });
-  if (expired.length) jobSignal.wake();
+  if (expired.length) {
+    jobSignal.wake();
+    jobChanges.wake();
+  }
   return expired.length;
 }
 
@@ -75,13 +78,14 @@ export function abandonRunning(db: Db, now: Date): number {
     }
   });
   jobSignal.wake();
+  jobChanges.wake();
   return running.length;
 }
 
 /** The next due job of an offered type, under a fresh lease; null when there is none. */
 export function claimJob(db: Db, now: Date): JobRow | null {
   expireLeases(db, now);
-  return db.transaction((tx) => {
+  const row = db.transaction((tx) => {
     const next = tx
       .select({ id: jobs.id })
       .from(jobs)
@@ -104,6 +108,8 @@ export function claimJob(db: Db, now: Date): JobRow | null {
       .returning()
       .get()!;
   });
+  if (row) jobChanges.wake();
+  return row;
 }
 
 /** The worker has shown it holds the job (first heartbeat or input download). */
@@ -122,7 +128,7 @@ export function ownedJob(db: Db, id: string, lease: string, states: JobState[] =
 export function heartbeatJob(
   db: Db, id: string, lease: string, input: { progress: number | null; message: string | null }, now: Date,
 ): { leaseUntil: Date | null; cancel: boolean } {
-  return db.transaction(() => {
+  const r = db.transaction(() => {
     const row = ownedJob(db, id, lease, ['running', 'queued', 'canceled']);
     if (row.state === 'canceled') return { leaseUntil: null, cancel: true };
     // A late heartbeat may take an expired job back, but not one whose type the worker no longer offers.
@@ -139,6 +145,8 @@ export function heartbeatJob(
       .run();
     return { leaseUntil, cancel: false };
   });
+  jobChanges.wake();
+  return r;
 }
 
 /** A failed attempt: back to the queue after a back-off, or failed for good after the last attempt or when permanent. */
@@ -160,6 +168,7 @@ export function failJob(
     return { state: 'queued' as const, retryAt };
   });
   if (result.state === 'queued') jobSignal.wake();
+  jobChanges.wake();
   return result;
 }
 
@@ -185,6 +194,7 @@ export function releaseJob(db: Db, id: string, lease: string, now: Date, reason:
   });
   if (again) return failJob(db, id, lease, { error: ENVIRONMENT_AGAIN, permanent: false }, now).state;
   jobSignal.wake();
+  jobChanges.wake();
   return 'queued';
 }
 

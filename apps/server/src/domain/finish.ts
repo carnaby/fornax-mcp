@@ -2,6 +2,7 @@ import { and, eq } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { files, jobs, type Manifest } from '../db/schema.js';
 import type { JobRow } from './jobs.js';
+import { jobChanges } from './signal.js';
 import { enqueueWebhook } from './webhooks.js';
 
 export type Finish = { state: 'succeeded'; manifest: Manifest } | { state: 'failed'; error: string } | { state: 'canceled' };
@@ -36,6 +37,9 @@ export function finishJob(db: Db, job: JobRow, finish: Finish, now: Date): JobRo
       .returning()
       .get() ?? null;
   // Spec 5: after succeeded, failed or canceled the webhook is queued (when the job has a callback_url).
-  if (row) enqueueWebhook(db, row, now);
+  if (row) {
+    enqueueWebhook(db, row, now);
+    jobChanges.wake();
+  }
   return row;
 }

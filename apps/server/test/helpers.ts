@@ -134,3 +134,12 @@ export function announce(db: Db, contracts: unknown[], now: Date): void {
 }
 
 export const tokenIdOf = (db: Db, name: string): string => db.select({ id: tokens.id }).from(tokens).where(eq(tokens.name, name)).get()!.id;
+
+/** Poll until `fn` holds; fail after `ms`. */
+export async function until(fn: () => boolean, ms = 5000): Promise<void> {
+  const end = Date.now() + ms;
+  while (!fn()) {
+    if (Date.now() > end) throw new Error('timed out waiting for a condition');
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}

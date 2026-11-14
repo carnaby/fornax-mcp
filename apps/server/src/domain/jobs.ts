@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { extname } from 'node:path';
 import { validateParams } from '@fornax/protocol';
 import { and, count, desc, eq, gt, inArray, lt, or } from 'drizzle-orm';
@@ -8,7 +9,7 @@ import { files, type JobState, jobs, jobTypes } from '../db/schema.js';
 import { conflict, notFound, tooMany, unprocessable } from './errors.js';
 import { finishJob } from './finish.js';
 import { getOfferedType, isOffered } from './job-types.js';
-import { jobSignal } from './signal.js';
+import { jobChanges, jobSignal } from './signal.js';
 import { callbackAllowed } from './webhooks.js';
 
 export { callbackAllowed };
@@ -69,6 +70,7 @@ export function submitJob(db: Db, config: Config, owner: string, input: SubmitIn
     const ids = Object.values(inputs);
     if (ids.length) tx.update(files).set({ jobId: row.id }).where(inArray(files.id, ids)).run();
     jobSignal.wake();
+    jobChanges.wake();
     return row;
   });
 }
@@ -114,8 +116,19 @@ export function queuePosition(db: Db, row: JobRow): number | null {
 
 const iso = (d: Date | null) => d?.toISOString() ?? null;
 
+type Watched = {
+  state: string; started_at: string | null; finished_at: string | null; position: number | null;
+  progress: number | null; progress_message: string | null; attempts: number;
+};
+
+/** Spec 05a 5.1: 16 hex digits of a SHA-256 over what a waiting client watches; it changes exactly when one of them does. */
+export function jobChange(v: Watched): string {
+  const watched = [v.state, v.started_at, v.finished_at, v.position, v.progress, v.progress_message, v.attempts];
+  return createHash('sha256').update(JSON.stringify(watched)).digest('hex').slice(0, 16);
+}
+
 export function jobView(db: Db, row: JobRow) {
-  return {
+  const view = {
     id: row.id,
     type: row.type,
     state: row.state,
@@ -135,4 +148,5 @@ export function jobView(db: Db, row: JobRow) {
     started_at: iso(row.startedAt),
     finished_at: iso(row.finishedAt),
   };
+  return { ...view, change: jobChange(view) };
 }

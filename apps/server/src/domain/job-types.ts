@@ -3,7 +3,7 @@ import { and, eq, notInArray } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { jobTypes } from '../db/schema.js';
 import { badRequest } from './errors.js';
-import { jobSignal } from './signal.js';
+import { jobChanges, jobSignal } from './signal.js';
 
 /** The worker's announcement is the truth: exactly these types are offered from now on. */
 export function announceTypes(db: Db, contracts: JobTypeContract[], now: Date): { offered: string[] } {
@@ -18,6 +18,7 @@ export function announceTypes(db: Db, contracts: JobTypeContract[], now: Date): 
     tx.update(jobTypes).set({ offered: false, lastOfferedAt: now }).where(withdrawn).run();
   });
   jobSignal.wake();
+  jobChanges.wake();
   return { offered: [...names].sort() };
 }
 
