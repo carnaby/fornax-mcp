@@ -18,7 +18,19 @@ function paths(yaml?: string) {
 describe('worker.yaml', () => {
   test('server and tools', () => {
     const p = paths('server: https://fornax.example.com/\ntools:\n  blender: /opt/blender/blender\n  python: python\n');
-    expect(readWorkerConfig(p)).toEqual({ server: 'https://fornax.example.com', tools: { blender: '/opt/blender/blender', python: 'python' } });
+    expect(readWorkerConfig(p)).toEqual({ server: 'https://fornax.example.com', tools: { blender: '/opt/blender/blender', python: 'python' }, gpu: { maxUsedMib: null } });
+  });
+
+  test('gpu.max_used_mib: optional; whole MiB from 256 to 1048576; no section means no card check', () => {
+    const base = 'server: https://fornax.example.com\n';
+    expect(readWorkerConfig(paths(`${base}gpu:\n  max_used_mib: 2048\n`)).gpu).toEqual({ maxUsedMib: 2048 });
+    expect(readWorkerConfig(paths(base)).gpu).toEqual({ maxUsedMib: null });
+    expect(readWorkerConfig(paths(`${base}gpu:\n`)).gpu).toEqual({ maxUsedMib: null });
+    expect(readWorkerConfig(paths(`${base}gpu: {}\n`)).gpu).toEqual({ maxUsedMib: null });
+    for (const bad of ['255', '1048577', '2048.5', '"2048"', '-1']) {
+      expect(() => readWorkerConfig(paths(`${base}gpu:\n  max_used_mib: ${bad}\n`)), bad).toThrow(/max_used_mib/);
+    }
+    expect(() => readWorkerConfig(paths(`${base}gpu:\n  max_used: 2048\n`))).toThrow(/max_used/);
   });
 
   test('tools may be empty', () => {
@@ -57,13 +69,13 @@ describe('worker.yaml', () => {
     const p = paths('# tools on this PC\nserver: https://old.example.com\ntools:\n  blender: /opt/blender/blender\n');
     saveServer(p, 'https://fornax.example.com');
     expect(readFileSync(p.configFile, 'utf8')).toContain('# tools on this PC');
-    expect(readWorkerConfig(p)).toEqual({ server: 'https://fornax.example.com', tools: { blender: '/opt/blender/blender' } });
+    expect(readWorkerConfig(p)).toEqual({ server: 'https://fornax.example.com', tools: { blender: '/opt/blender/blender' }, gpu: { maxUsedMib: null } });
   });
 
   test('saveServer creates the file and its directory', () => {
     const p = paths();
     saveServer(p, 'https://fornax.example.com');
-    expect(readWorkerConfig(p)).toEqual({ server: 'https://fornax.example.com', tools: {} });
+    expect(readWorkerConfig(p)).toEqual({ server: 'https://fornax.example.com', tools: {}, gpu: { maxUsedMib: null } });
   });
 });
 

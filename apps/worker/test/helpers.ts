@@ -37,6 +37,9 @@ export function writeTypeYaml(packDir: string, doc: Record<string, unknown>): vo
 
 export const FAKE_TOOL = fileURLToPath(new URL('./fixtures/fake-tool.mjs', import.meta.url));
 
+/** A stand-in for nvidia-smi: run as [process.execPath, FAKE_SMI, '<mode>'] (see the fixture for the modes). */
+export const FAKE_SMI = fileURLToPath(new URL('./fixtures/fake-smi.mjs', import.meta.url));
+
 /** Whether a process with this pid still exists. */
 export function isAlive(pid: number): boolean {
   try {

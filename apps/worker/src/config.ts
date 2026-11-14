@@ -33,6 +33,9 @@ export function serverWarning(server: string): string | null {
   return `warning: ${server} is plain http: the token and the job files cross the network not encrypted; use https unless this network is trusted`;
 }
 
+/** Spec 05a 2.1: the card's whole memory in use (all programs) above which the worker takes no job. No key: no check. */
+const gpuYaml = z.strictObject({ max_used_mib: z.number().int().min(256).max(1_048_576).nullish() });
+
 const workerYaml = z.strictObject({
   server: z.url({ protocol: /^https?$/, error: 'server must be an http(s) URL' }).superRefine((v, ctx) => {
     const problem = serverUrlProblem(v);
@@ -42,9 +45,10 @@ const workerYaml = z.strictObject({
     .record(z.string().regex(TOOL_NAME, 'tool names are a-z, 0-9 and "_", starting with a letter'), z.string().min(1))
     .nullish()
     .transform((v) => v ?? {}),
+  gpu: gpuYaml.nullish(),
 });
 
-export type WorkerConfig = { server: string; tools: Record<string, string> };
+export type WorkerConfig = { server: string; tools: Record<string, string>; gpu: { maxUsedMib: number | null } };
 
 export function readWorkerConfig(paths: Paths): WorkerConfig {
   if (!existsSync(paths.configFile)) {
@@ -58,7 +62,7 @@ export function readWorkerConfig(paths: Paths): WorkerConfig {
   }
   const r = workerYaml.safeParse(raw);
   if (!r.success) throw new ConfigError(`invalid ${paths.configFile}: ${z.prettifyError(r.error)}`);
-  return { server: r.data.server.replace(/\/+$/, ''), tools: r.data.tools };
+  return { server: r.data.server.replace(/\/+$/, ''), tools: r.data.tools, gpu: { maxUsedMib: r.data.gpu?.max_used_mib ?? null } };
 }
 
 /**
