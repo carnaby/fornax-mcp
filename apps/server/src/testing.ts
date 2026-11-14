@@ -1,15 +1,19 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { generateToken, type TokenRole } from '@fornax/protocol';
+import { generateToken, type JobTypeContract, type TokenRole } from '@fornax/protocol';
 import type { FastifyInstance } from 'fastify';
 import type { Config } from './config.js';
 import { type Db, openDb } from './db/client.js';
+import { announceTypes } from './domain/job-types.js';
 import { approveToken, createInvite, resolveToken } from './domain/tokens.js';
 import { startWebhookLoop } from './domain/webhooks.js';
 import { buildApp } from './http/app.js';
 
-/** A real server on a free local port over a fresh temp data directory: for other packages' integration tests. */
+/**
+ * A real server on a free local port (or `config.port` when a test asks for one) over a fresh temp data directory: for
+ * other packages' integration tests.
+ */
 export type TestServer = {
   url: string;
   app: FastifyInstance;
@@ -18,8 +22,10 @@ export type TestServer = {
   /** Every log line of the server. Only errors also go to stdout: other packages' fixtures (e.g. a fake JPEG) provoke
    * expected warnings that would flood the test output. */
   logs: string[];
-  /** An active token, through the real invite → first use → approve path. */
-  issueToken(name: string, role?: TokenRole): string;
+  /** An active token, through the real invite → first use → approve path; `raw` makes it a token the test already holds. */
+  issueToken(name: string, role?: TokenRole, raw?: string): string;
+  /** What a worker's announce does, without a worker. */
+  announce(contracts: JobTypeContract[]): void;
   /** What `fornax-admin tokens invite <name> [--worker]` does. */
   invite(name: string, role: TokenRole): void;
   /** What `fornax-admin tokens approve <name>` does. */
@@ -54,7 +60,7 @@ export async function startTestServer(overrides: Partial<Config> = {}): Promise<
     },
   };
   const app = await buildApp({ config, db, logStream });
-  await app.listen({ port: 0, host: '127.0.0.1' });
+  await app.listen({ port: config.port, host: '127.0.0.1' });
   const { port } = app.server.address() as { port: number };
   const url = `http://127.0.0.1:${port}`;
   // The app holds this same object: links it makes point at the real port.
@@ -67,12 +73,14 @@ export async function startTestServer(overrides: Partial<Config> = {}): Promise<
     db,
     config,
     logs,
-    issueToken(name, role = 'client') {
+    issueToken(name, role = 'client', raw = generateToken(name)) {
       createInvite(db, { name, role }, new Date());
-      const raw = generateToken(name);
       resolveToken(db, raw, new Date());
       approveToken(db, name, new Date());
       return raw;
+    },
+    announce(contracts) {
+      announceTypes(db, contracts, new Date());
     },
     invite(name, role) {
       createInvite(db, { name, role }, new Date());

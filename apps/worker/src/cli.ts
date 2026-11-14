@@ -6,7 +6,7 @@ import { FORNAX_VERSION } from '@fornax/protocol';
 import { ApiError, NetworkError } from './api.js';
 import type { Ctx } from './commands/context.js';
 import { doctor } from './commands/doctor.js';
-import { leaseToken } from './commands/lease-token.js';
+import { LEASE_FORMS, leaseCommand, usageText } from './commands/lease.js';
 import { pair } from './commands/pair.js';
 import { typesAdd, typesInstall, typesList } from './commands/types.js';
 import { queueCommand, workerCommand } from './commands/worker.js';
@@ -15,17 +15,17 @@ import { PackError } from './pack.js';
 import { resolvePaths } from './paths.js';
 import { hasRunning, killRunning } from './process.js';
 
-export const USAGE = [
-  'usage: fornax worker pair --server <url> --name <name> [--force]',
-  '       fornax worker [--once]',
-  '       fornax worker queue',
-  '       fornax doctor [type]',
-  '       fornax types list',
-  '       fornax types install <name> [--from <dir>]',
-  '       fornax types add <name>',
-  '       fornax lease token       (reads a client token from standard input)',
-  '       fornax --version',
-].join('\n');
+export const USAGE = usageText([
+  'fornax worker pair --server <url> --name <name> [--force]',
+  'fornax worker [--once]',
+  'fornax worker queue',
+  'fornax doctor [type]',
+  'fornax types list',
+  'fornax types install <name> [--from <dir>]',
+  'fornax types add <name>',
+  ...LEASE_FORMS,
+  'fornax --version',
+]);
 
 type Flags = { server?: string; name?: string; force?: boolean; from?: string; once?: boolean; help?: boolean; version?: boolean };
 
@@ -40,11 +40,12 @@ export function reportError(e: unknown, say: (line: string) => void): number {
   return 1;
 }
 
-/** Parse and dispatch. 0 done, 1 failed (the message says why), 2 usage. */
+/** Parse and dispatch. 0 done, 1 failed (the message says why), 2 usage; fornax lease has exit codes of its own. */
 export async function runCli(argv: string[], ctx: Ctx): Promise<number> {
-  if (argv[0] === 'lease' && argv[1] === 'token' && argv.length === 2) {
+  // fornax lease has options of its own (its usage errors are 120) and hands everything after -- to the program untouched.
+  if (argv[0] === 'lease') {
     try {
-      return await leaseToken(ctx);
+      return await leaseCommand(argv.slice(1), ctx);
     } catch (e) {
       return reportError(e, ctx.err ?? ctx.out);
     }
@@ -102,7 +103,8 @@ export async function runCli(argv: string[], ctx: Ctx): Promise<number> {
 }
 
 type SignalDeps = {
-  abort: () => void;
+  /** The signal's name becomes the stop's reason: fornax lease passes it on to its program. */
+  abort: (signal?: NodeJS.Signals) => void;
   killRunning: () => Promise<void>;
   hasRunning: () => boolean;
   exit: (code: number) => void;
@@ -110,16 +112,16 @@ type SignalDeps = {
 };
 
 /** First signal: stop gracefully. Second: kill the running tool tree, then exit 130 (a hard quit must not orphan the tool). Later ones are ignored. */
-export function makeSignalHandler(d: SignalDeps): () => void {
+export function makeSignalHandler(d: SignalDeps): (signal?: NodeJS.Signals) => void {
   let signals = 0;
-  return () => {
+  return (signal) => {
     if (++signals === 1) {
       d.say(
         d.hasRunning()
           ? 'stopping: the running job is stopped and given back (Ctrl+C again quits at once)'
           : 'stopping (Ctrl+C again quits at once)',
       );
-      d.abort();
+      d.abort(signal);
     } else if (signals === 2) {
       void d.killRunning().finally(() => d.exit(130));
     }
@@ -157,8 +159,8 @@ export function consoleWriter(stream: NodeJS.WritableStream): (text: string) => 
 /** The signals that stop the worker. SIGHUP: the terminal or SSH session closed (Linux), the console window closed (Windows). */
 export const STOP_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const;
 
-/** Wire `handler` to every stop signal; returns the unwiring. */
-export function wireSignals(target: Pick<NodeJS.EventEmitter, 'on' | 'off'>, handler: () => void): () => void {
+/** Wire `handler` to every stop signal (Node calls it with the signal's name); returns the unwiring. */
+export function wireSignals(target: Pick<NodeJS.EventEmitter, 'on' | 'off'>, handler: (signal?: NodeJS.Signals) => void): () => void {
   for (const s of STOP_SIGNALS) target.on(s, handler);
   return () => {
     for (const s of STOP_SIGNALS) target.off(s, handler);
@@ -179,12 +181,15 @@ if (isMainModule()) {
   // Every line the worker prints goes through these: a hung-up terminal must not crash it (see consoleWriter).
   const out = consoleWriter(process.stdout);
   const err = consoleWriter(process.stderr);
+  // fornax lease says itself what a stop does (it cancels the job or stops its program). SIGHUP stops it as SIGTERM
+  // does: on Linux the program runs in a session of its own, so a closed terminal reaches the program only this way.
+  const leasing = process.argv[2] === 'lease' && process.argv[3] !== 'token';
   const onSignal = makeSignalHandler({
-    abort: () => stop.abort(),
+    abort: (signal) => stop.abort(signal),
     killRunning: () => killRunning(2000),
     hasRunning,
     exit: (c) => process.exit(c),
-    say: (t) => err(`${t}\n`),
+    say: leasing ? () => {} : (t) => err(`${t}\n`),
   });
   const unwire = wireSignals(process, onSignal);
   const ctx: Ctx = { paths: resolvePaths(), out: (l) => out(`${l}\n`), err: (l) => err(`${l}\n`), write: out, signal: stop.signal };

@@ -1,5 +1,6 @@
 import { WorkerApi } from '../api.js';
 import { ConfigError, readToken, readWorkerConfig, serverWarning, type WorkerConfig } from '../config.js';
+import type { LeaseTimings } from '../lease/run.js';
 import type { LoopOptions } from '../loop.js';
 import type { Paths } from '../paths.js';
 
@@ -23,6 +24,8 @@ export type Ctx = {
   env?: NodeJS.ProcessEnv;
   /** Test seam: the first line of standard input. */
   readStdin?: () => Promise<string>;
+  /** Test seam: shorter clocks for fornax lease. */
+  leaseTimings?: Partial<LeaseTimings>;
 };
 
 export const apiFor = (ctx: Ctx, server: string, token: string): WorkerApi =>

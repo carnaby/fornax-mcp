@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { Writable } from 'node:stream';
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { FORNAX_VERSION, fingerprint, generateToken } from '@fornax/protocol';
 import { startTestServer, type TestServer } from '@fornax/server/testing';
@@ -63,6 +63,51 @@ describe('fornax CLI', () => {
     ctx.readStdin = async () => 'not a token';
     expect((await run('lease', 'token')).code).toBe(1);
     expect(readClientToken(ctx.paths, {})).toBe(client);
+  });
+
+  test('fornax lease: usage errors are 120, a missing client token 121, both before any job', async () => {
+    const { ctx, run } = cli();
+    mkdirSync(ctx.paths.configDir, { recursive: true });
+    writeFileSync(ctx.paths.configFile, 'server: https://fornax.example.com\n');
+    ctx.env = {};
+    for (const argv of [
+      ['lease'],
+      ['lease', process.execPath],
+      ['lease', '--minutes', '5', process.execPath],
+      ['lease', '--'],
+      ['lease', '--minutes', '0', '--', process.execPath],
+      ['lease', '--minutes', '721', '--', process.execPath],
+      ['lease', '--minutes', '1.5', '--', process.execPath],
+      ['lease', '--wait-minutes', '0', '--', process.execPath],
+      ['lease', '--priority', 'urgent', '--', process.execPath],
+      ['lease', '--label', 'a;b', '--', process.execPath],
+      ['lease', '--bogus', '--', process.execPath],
+      ['lease', 'extra', '--', process.execPath],
+      ['lease', 'token', 'extra'],
+      ['lease', 'token', '--bogus'],
+      ['lease', '--rerun', 'token'],
+    ]) {
+      const r = await run(...argv);
+      expect(r.code, argv.join(' ')).toBe(120);
+      expect(r.text, argv.join(' ')).toContain('usage: fornax lease');
+    }
+    const none = await run('lease', '--', process.execPath);
+    expect(none.code).toBe(121);
+    expect(none.text).toBe('fornax lease: no client token: store one with fornax lease token (or set FORNAX_CLIENT_TOKEN)');
+    rmSync(ctx.paths.configFile);
+    ctx.env = { FORNAX_CLIENT_TOKEN: generateToken('alice') };
+    const unpaired = await run('lease', '--', process.execPath);
+    expect(unpaired.code).toBe(121);
+    expect(unpaired.text).toMatch(/^fornax lease: .* does not exist; pair this PC first/);
+  });
+
+  test('the usage of fornax and of fornax lease share the lease lines', async () => {
+    const { run } = cli();
+    const general = (await run('--help')).text;
+    const lease = (await run('lease')).text;
+    for (const line of lease.split('\n').filter((l) => l.includes('fornax lease '))) {
+      expect(general).toContain(line.replace(/^usage: /, '       '));
+    }
   });
 
   test('doctor names the client token, or says fornax lease cannot run without one', async () => {
@@ -316,7 +361,7 @@ describe('signal handling', () => {
   const wire = (running: boolean) => {
     const events: string[] = [];
     const handler = makeSignalHandler({
-      abort: () => events.push('abort'),
+      abort: (s) => events.push(s ? `abort ${s}` : 'abort'),
       killRunning: async () => void events.push('kill'),
       hasRunning: () => running,
       exit: (c) => events.push(`exit ${c}`),
@@ -337,6 +382,14 @@ describe('signal handling', () => {
     handler();
     await tick();
     expect(events.filter((e) => e === 'kill')).toHaveLength(1);
+  });
+
+  test("the signal's name reaches the stop (fornax lease passes it on to its program); SIGHUP stops as SIGTERM does", () => {
+    for (const s of ['SIGTERM', 'SIGHUP'] as const) {
+      const { handler, events } = wire(false);
+      handler(s);
+      expect(events).toContain(`abort ${s}`);
+    }
   });
 
   test('the first message is neutral when no job runs', () => {

@@ -286,6 +286,21 @@ describe('runLease', () => {
     expect(readFileSync(join(l.dir, 'done'), 'utf8')).toBe(STARTED);
   });
 
+  test('SIGTERM and SIGHUP (a closed terminal) while the program runs: it is stopped as on Ctrl+C, done, 130', async () => {
+    for (const signal of ['SIGTERM', 'SIGHUP']) {
+      const s = fakeServer();
+      const stop = new AbortController();
+      const pids = join(tmp(), 'pids.json');
+      const l = lease(s, ['--tree', pids, '--forever'], {}, { signal: stop.signal });
+      s.set({ state: 'running', started_at: STARTED });
+      const { parent, child } = await waitFor(() => readPids(pids), 10_000, 'the program');
+      stop.abort(signal);
+      expect(await l.run, signal).toBe(130);
+      await waitFor(() => !isAlive(parent) && !isAlive(child), 5000, 'the tree to die');
+      expect(readFileSync(join(l.dir, 'done'), 'utf8')).toBe(STARTED);
+    }
+  });
+
   test('nested: inside a running lease the program runs at once without a new job; inside one that ended: 123', async () => {
     const s = fakeServer();
     s.set({ state: 'running', started_at: STARTED });
