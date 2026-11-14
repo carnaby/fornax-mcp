@@ -93,7 +93,7 @@ export function startProgram(program: string, args: string[], o: StartOptions): 
     }
   };
   const exited = new Promise<ProgramExit>((resolve) => {
-    child.once('error', (e: NodeJS.ErrnoException) => {
+    child.on('error', (e: NodeJS.ErrnoException) => {
       // Only a failed start ends it here; other errors are followed by 'exit'.
       if (child.pid === undefined) resolve({ code: null, signal: null, spawnError: e.code ?? 'cannot start' });
     });
