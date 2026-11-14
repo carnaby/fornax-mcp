@@ -36,10 +36,10 @@ params:                      # a strict subset of JSON Schema, see below
 max_runtime: 6h              # 30s, 10m, 6h or 2d; at most 7 days
 tools: [blender]             # their paths come from worker.yaml on this PC
 # setup: [...]               # optional: installs into {pack}/env
-check: ["{tool.blender}", "-b", "--factory-startup", "--python", "{pack}/scripts/check.py"]
-run: ["{tool.blender}", "-b", "--disable-autoexec", "{input.scene}",
-      "--python", "{pack}/scripts/render.py", "--",
-      "--params", "{params_json}", "--out", "{out}"]
+check: ["{tool.blender}", "-b", "--factory-startup", "--python-exit-code", "1", "--python", "{pack}/scripts/check.py"]
+# --disable-autoexec: scripts inside the scene never run; render.py opens the scene itself, so it is not positional.
+run: ["{tool.blender}", "-b", "--factory-startup", "--disable-autoexec", "--python-exit-code", "1",
+      "--python", "{pack}/scripts/render.py", "--", "--params", "{params_json}", "--scene", "{input.scene}", "--out", "{out}"]
 ```
 
 The **contract** is `name`, `version`, `description`, `inputs`, `params` and `max_runtime`. The **implementation** is
