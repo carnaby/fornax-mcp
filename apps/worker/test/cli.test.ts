@@ -11,7 +11,7 @@ import { consoleWriter, makeSignalHandler, runCli, wireSignals } from '../src/cl
 import { hasRunning, killRunning, runProcess } from '../src/process.js';
 import type { Ctx } from '../src/commands/context.js';
 import { readToken, readWorkerConfig, saveToken } from '../src/config.js';
-import { testPaths, useTempDir, waitFor, writeEchoPack } from './helpers.js';
+import { FAKE_SMI, testPaths, useTempDir, waitFor, writeEchoPack } from './helpers.js';
 
 const tmp = useTempDir();
 const servers: TestServer[] = [];
@@ -33,6 +33,7 @@ function cli() {
     signal: new AbortController().signal,
     clipboard: () => null,
     loopOptions: { claimWaitS: 0, checkTimeoutMs: 10_000 },
+    nvidiaSmi: [process.execPath, FAKE_SMI, 'one'],
   };
   const run = async (...argv: string[]) => {
     lines.length = 0;
@@ -153,9 +154,19 @@ describe('fornax CLI', () => {
   test.runIf(process.platform !== 'win32')('doctor warns when the token file is readable by other users', async () => {
     const { ctx, run } = cli();
     saveToken(ctx.paths, generateToken('pc'));
-    expect((await run('doctor')).text).not.toMatch(/WARN/);
+    expect((await run('doctor')).text).not.toMatch(/WARN\s+token file/);
     chmodSync(ctx.paths.tokenFile, 0o644);
     expect((await run('doctor')).text).toMatch(/^WARN\s+token file .* can be read or changed by other users \(mode 0644\); run chmod 600 /m);
+  });
+
+  test('doctor shows the card as the worker sees it; a failed reading with a limit fails', async () => {
+    const { ctx, run } = cli();
+    mkdirSync(ctx.paths.configDir, { recursive: true });
+    writeFileSync(ctx.paths.configFile, 'server: https://fornax.example.com\ngpu:\n  max_used_mib: 2048\n');
+    expect((await run('doctor')).text).toMatch(/^ok\s+gpu: 1130 of 16311 MiB in use, limit 2048$/m);
+    ctx.nvidiaSmi = [process.execPath, FAKE_SMI, 'fail'];
+    const failed = await run('doctor');
+    expect(failed.text).toMatch(/^FAIL\s+gpu: nvidia-smi: exit code 9$/m);
   });
 
   test('commands that need pairing say how to pair', async () => {

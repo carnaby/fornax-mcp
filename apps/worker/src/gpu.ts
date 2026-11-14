@@ -65,3 +65,22 @@ export function readGpu(opts: { command?: string[]; timeoutMs?: number } = {}): 
     }, timeoutMs);
   });
 }
+
+/** fornax doctor's suggestion for gpu.max_used_mib: what is in use now plus 768 MiB, rounded up to a multiple of 256. */
+export const suggestedLimit = (usedMib: number): number => Math.ceil((usedMib + 768) / 256) * 256;
+
+export type DoctorLine = { level: 'ok' | 'WARN' | 'FAIL'; text: string };
+
+/** Spec 05a 2.5: the gpu lines of fornax doctor. A failed reading fails only when the worker relies on it (a limit). */
+export function doctorGpuLines(r: GpuReading, limit: number | null): DoctorLine[] {
+  if (!r.ok) return [{ level: limit === null ? 'WARN' : 'FAIL', text: `gpu: ${r.error}` }];
+  const use = `gpu: ${r.used_mib} of ${r.total_mib} MiB in use`;
+  const lines: DoctorLine[] =
+    limit === null
+      ? [{ level: 'WARN', text: `${use}; gpu.max_used_mib is not set, the worker does not check the card (suggested: ${suggestedLimit(r.used_mib)})` }]
+      : r.used_mib > limit
+        ? [{ level: 'WARN', text: `${use}, over the limit ${limit}: the worker waits now` }]
+        : [{ level: 'ok', text: `${use}, limit ${limit}` }];
+  if (r.cards > 1) lines.push({ level: 'WARN', text: `gpu: ${r.cards} cards found, only the first is checked` });
+  return lines;
+}

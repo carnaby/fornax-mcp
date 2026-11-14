@@ -1,7 +1,7 @@
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
-import { parseNvidiaSmi, readGpu } from '../src/gpu.js';
+import { doctorGpuLines, parseNvidiaSmi, readGpu, suggestedLimit } from '../src/gpu.js';
 import { FAKE_SMI } from './helpers.js';
 
 const smi = (mode: string) => [process.execPath, FAKE_SMI, mode];
@@ -40,5 +40,30 @@ describe('readGpu', () => {
     const t0 = Date.now();
     expect(await readGpu({ command: smi('stubborn'), timeoutMs: 500 })).toEqual({ ok: false, error: 'nvidia-smi: no answer within 0.5 s' });
     expect(Date.now() - t0).toBeLessThan(2500);
+  });
+});
+
+describe('fornax doctor: the gpu lines', () => {
+  const one = { ok: true as const, used_mib: 1130, total_mib: 16311, cards: 1 };
+
+  test('under the limit, no limit (with a suggestion), over the limit', () => {
+    expect(doctorGpuLines(one, 2048)).toEqual([{ level: 'ok', text: 'gpu: 1130 of 16311 MiB in use, limit 2048' }]);
+    expect(doctorGpuLines(one, null)).toEqual([
+      { level: 'WARN', text: 'gpu: 1130 of 16311 MiB in use; gpu.max_used_mib is not set, the worker does not check the card (suggested: 2048)' },
+    ]);
+    expect(doctorGpuLines({ ...one, used_mib: 5120 }, 2048)).toEqual([{ level: 'WARN', text: 'gpu: 5120 of 16311 MiB in use, over the limit 2048: the worker waits now' }]);
+  });
+
+  test('the suggestion is what is in use now plus 768 MiB, rounded up to a multiple of 256', () => {
+    expect([suggestedLimit(1130), suggestedLimit(1280), suggestedLimit(0), suggestedLimit(4500)]).toEqual([2048, 2048, 768, 5376]);
+  });
+
+  test('two cards: a warning; a failed reading fails only when a limit is set', () => {
+    expect(doctorGpuLines({ ...one, cards: 2 }, 2048)).toEqual([
+      { level: 'ok', text: 'gpu: 1130 of 16311 MiB in use, limit 2048' },
+      { level: 'WARN', text: 'gpu: 2 cards found, only the first is checked' },
+    ]);
+    expect(doctorGpuLines({ ok: false, error: 'nvidia-smi: not found' }, 2048)).toEqual([{ level: 'FAIL', text: 'gpu: nvidia-smi: not found' }]);
+    expect(doctorGpuLines({ ok: false, error: 'nvidia-smi: not found' }, null)).toEqual([{ level: 'WARN', text: 'gpu: nvidia-smi: not found' }]);
   });
 });

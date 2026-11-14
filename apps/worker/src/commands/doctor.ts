@@ -2,6 +2,7 @@ import { statSync } from 'node:fs';
 import { ApiError, NetworkError } from '../api.js';
 import { checkPack, findTool } from '../checks.js';
 import { ConfigError, readToken, readWorkerConfig, serverWarning, type WorkerConfig } from '../config.js';
+import { doctorGpuLines, readGpu } from '../gpu.js';
 import { loadPacks } from '../pack.js';
 import { apiFor, type Ctx } from './context.js';
 
@@ -54,6 +55,11 @@ export async function doctor(ctx: Ctx, only?: string): Promise<number> {
   for (const [name, path] of Object.entries(tools)) {
     const found = findTool(path);
     line(found !== null, `tool ${name}: ${found ?? `${path} was not found`}`);
+  }
+  // Spec 05a 2.5: the card as the worker's check before each job sees it.
+  for (const g of doctorGpuLines(await readGpu({ command: ctx.nvidiaSmi }), config?.gpu.maxUsedMib ?? null)) {
+    if (g.level === 'WARN') warn(g.text);
+    else line(g.level === 'ok', g.text);
   }
 
   const { packs, errors } = loadPacks(ctx.paths.typesDir);
