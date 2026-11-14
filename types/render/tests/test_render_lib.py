@@ -1,3 +1,5 @@
+import contextlib
+import io
 import json
 import sys
 import unittest
@@ -14,7 +16,7 @@ class ScriptArgs(unittest.TestCase):
         self.assertEqual((a.params, a.scene, a.out), ("p.json", "s.blend", "o"))
 
     def test_refuses_missing_arguments(self):
-        with self.assertRaises(SystemExit):
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
             script_args(["blender", "--", "--params", "p.json"])
 
 
