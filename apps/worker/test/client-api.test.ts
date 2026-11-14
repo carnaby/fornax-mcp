@@ -1,3 +1,5 @@
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { generateToken } from '@fornax/protocol';
 import { startTestServer, type TestServer } from '@fornax/server/testing';
 import { afterEach, describe, expect, test } from 'vitest';
@@ -43,5 +45,21 @@ describe('ClientApi', () => {
     const url = s.url;
     await servers.splice(0)[0]!.close();
     await expect(new ClientApi({ server: url, token: generateToken('alice') }).whoami()).rejects.toBeInstanceOf(NetworkError);
+  });
+
+  test('a job answer that is not JSON or not a job is a NetworkError (asking again is safe)', async () => {
+    const bodies = ['{"id": "x", "sta', '{"id": "x"}'];
+    const http = createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(bodies.shift());
+    });
+    await new Promise<void>((resolve) => http.listen(0, '127.0.0.1', resolve));
+    try {
+      const api = new ClientApi({ server: `http://127.0.0.1:${(http.address() as AddressInfo).port}`, token: generateToken('alice') });
+      await expect(api.job('x')).rejects.toBeInstanceOf(NetworkError);
+      await expect(api.job('x')).rejects.toBeInstanceOf(NetworkError);
+    } finally {
+      await new Promise((resolve) => http.close(resolve));
+    }
   });
 });

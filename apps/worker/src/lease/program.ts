@@ -54,28 +54,41 @@ export type StartOptions = {
   killGraceMs?: number;
   /** Runs after a hard quit (second Ctrl+C) killed the tree. */
   onHardQuit?: () => void;
+  /**
+   * Linux: a process group of its own (default). False keeps the program in the caller's group: a nested fornax lease
+   * runs in the outer program's group, which the outer wrapper ends as a whole, and the program must end with it.
+   */
+  ownGroup?: boolean;
 } & Pick<RunOptions, 'taskkillProgram' | 'signalGroup'>;
 
 export type Program = {
   readonly pid: number | undefined;
   /** Resolves once the program ended (Linux: and what it left in its group), never rejects. */
   readonly exited: Promise<ProgramExit>;
-  /** Linux: pass a signal on to the program's group (it does not get the terminal's Ctrl+C). Windows: nothing to do. */
+  /**
+   * Linux, in a group of its own: pass a signal on to the program's group (it does not get the terminal's Ctrl+C).
+   * Windows, or in the caller's group: nothing to do, the signal reached the program already.
+   */
   forward(signal: NodeJS.Signals): void;
-  /** End the whole tree (Windows: taskkill /T /F; Linux: SIGTERM to the group, SIGKILL after the grace). */
+  /**
+   * End the whole tree (Windows: taskkill /T /F; Linux: SIGTERM to the group, SIGKILL after the grace). Linux, in the
+   * caller's group: the program alone, the same way; the group's owner ends the rest.
+   */
   kill(): Promise<ProgramExit>;
 };
 
 /**
  * Start the program as fornax lease runs it (spec 05a 4.5 step 5): no shell, the caller's stdin, stdout and stderr,
- * on Linux in a process group of its own so its whole tree can be ended; registered for a hard quit.
+ * on Linux in a process group of its own (unless `ownGroup` is false) so its whole tree can be ended; registered for a
+ * hard quit.
  */
 export function startProgram(program: string, args: string[], o: StartOptions): Program {
   const seams = { taskkillProgram: o.taskkillProgram, signalGroup: o.signalGroup };
   const grace = o.killGraceMs ?? KILL_GRACE_MS;
+  const ownGroup = process.platform !== 'win32' && o.ownGroup !== false;
   let child: ChildProcess;
   try {
-    child = spawn(program, args, { cwd: o.cwd, env: o.env, stdio: 'inherit', shell: false, detached: process.platform !== 'win32' });
+    child = spawn(program, args, { cwd: o.cwd, env: o.env, stdio: 'inherit', shell: false, detached: ownGroup });
   } catch (e) {
     // Some failures are thrown instead of emitted, e.g. EINVAL for a batch file on Windows.
     const exited = Promise.resolve<ProgramExit>({ code: null, signal: null, spawnError: (e as NodeJS.ErrnoException).code ?? 'cannot start' });
@@ -104,7 +117,7 @@ export function startProgram(program: string, args: string[], o: StartOptions): 
         resolve({ code, signal, spawnError: null });
       };
       // Linux: the program ended, but something it started may live on in its group and hold the card: end the group.
-      if (process.platform !== 'win32' && !killing && groupAlive(child.pid!)) {
+      if (ownGroup && !killing && groupAlive(child.pid!)) {
         void killTree(child.pid!, grace, seams).catch(() => {}).then(finish);
       } else {
         finish();
@@ -116,7 +129,7 @@ export function startProgram(program: string, args: string[], o: StartOptions): 
     pid: child.pid,
     exited,
     forward(signal) {
-      if (exitedNow || child.pid === undefined || process.platform === 'win32') return;
+      if (exitedNow || child.pid === undefined || !ownGroup) return;
       try {
         (o.signalGroup ?? process.kill)(-child.pid, signal);
       } catch {
@@ -126,8 +139,13 @@ export function startProgram(program: string, args: string[], o: StartOptions): 
     async kill() {
       if (child.pid === undefined) return exited;
       killing = true;
-      // Windows: after the exit the pid may be reused; taskkill must not touch it.
-      if (!(exitedNow && process.platform === 'win32')) await killTree(child.pid, grace, seams).catch(() => {});
+      if (process.platform !== 'win32' && !ownGroup) {
+        // Linux, in the caller's group: only the program itself; whoever owns the group ends the rest of it.
+        if (!exitedNow) await endAlone(child, exited, grace);
+      } else if (!(exitedNow && process.platform === 'win32')) {
+        // Windows: after the exit the pid may be reused; taskkill must not touch it.
+        await killTree(child.pid, grace, seams).catch(() => {});
+      }
       if (!exitedNow) {
         try {
           child.kill('SIGKILL');
@@ -138,4 +156,16 @@ export function startProgram(program: string, args: string[], o: StartOptions): 
       return exited;
     },
   };
+}
+
+/** SIGTERM to one process, SIGKILL (by the caller) if it is still there after the grace. */
+async function endAlone(child: ChildProcess, exited: Promise<ProgramExit>, graceMs: number): Promise<void> {
+  try {
+    child.kill('SIGTERM');
+  } catch {
+    return;
+  }
+  let timer: NodeJS.Timeout | undefined;
+  await Promise.race([exited, new Promise<void>((resolve) => (timer = setTimeout(resolve, graceMs)))]);
+  clearTimeout(timer);
 }

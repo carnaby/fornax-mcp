@@ -4,7 +4,7 @@ import { describe, expect, test } from 'vitest';
 import { LeaseFiles, sweepLeases } from '../src/lease/files.js';
 import { defaultLabel, exitCodeOf, labelProblem, leaseEnv, programProblem, startProgram } from '../src/lease/program.js';
 import { killRunning } from '../src/process.js';
-import { isAlive, LEASE_PROGRAM, readJson, readPids, useTempDir, waitFor } from './helpers.js';
+import { isAlive, LEASE_PROGRAM, processGroupOf, readJson, readPids, useTempDir, waitFor } from './helpers.js';
 
 const tmp = useTempDir();
 const env = () => leaseEnv(process.env, 'JOB1');
@@ -70,6 +70,21 @@ describe('the program', () => {
     } else {
       await waitFor(() => !isAlive(child), 5000, 'the leftover to end');
     }
+  });
+
+  test('ownGroup false (a nested lease): Linux: it stays in the process group of the caller, which ends it; kill still ends it', async () => {
+    const reports = [join(tmp(), 'own.json'), join(tmp(), 'caller.json')];
+    const own = startProgram(process.execPath, [LEASE_PROGRAM, '--report', reports[0]!, '--forever'], { cwd: tmp(), env: env(), killGraceMs: 500 });
+    const inCaller = startProgram(process.execPath, [LEASE_PROGRAM, '--report', reports[1]!, '--forever'], {
+      cwd: tmp(), env: env(), killGraceMs: 500, ownGroup: false,
+    });
+    const [a, b] = await Promise.all(reports.map((r) => waitFor(() => readJson<{ pid: number }>(r), 10_000, 'the program')));
+    if (process.platform !== 'win32') {
+      expect(processGroupOf(a!.pid)).toBe(a!.pid);
+      expect(processGroupOf(b!.pid)).toBe(processGroupOf(process.pid));
+    }
+    await Promise.all([own.kill(), inCaller.kill()]);
+    await waitFor(() => !isAlive(a!.pid) && !isAlive(b!.pid), 5000, 'both to die');
   });
 
   test('a program that cannot be started says why, without throwing', async () => {

@@ -56,8 +56,12 @@ export type LeaseDeps = {
 
 /** The work was given up: the wrapper was interrupted, or (inside one run) the run is over. */
 class Stopped extends Error {}
+/** --wait-minutes ran out before the lease came, also while the server could not be reached (spec 05a 4.5 step 3). */
+class GaveUp extends Error {}
 
 const never = new Promise<never>(() => {});
+/** The longest delay a Node timer takes; a longer one would fire at once. */
+const MAX_TIMER_MS = 2_147_483_647;
 
 /** Resolves with `value` when `signal` aborts; the listener is removed when `until` aborts. */
 function onAbort<T>(signal: AbortSignal, value: T, until: AbortSignal): Promise<T> {
@@ -78,6 +82,19 @@ const endedText = (v: ClientJobView): string =>
 /** A program that looks ended by the same Ctrl+C as the wrapper. */
 const looksInterrupted = (e: ProgramExit): boolean => e.signal === 'SIGINT' || e.code === CONTROL_C_EXIT;
 
+/** A refusal every request of the flow reads the same way: the client token (401, 403) or a job that is gone (404). */
+type Refusal = 'token' | 'gone';
+const refusalOf = (e: unknown): Refusal | null => {
+  if (!(e instanceof ApiError)) return null;
+  if (e.status === 401 || e.status === 403) return 'token';
+  return e.status === 404 ? 'gone' : null;
+};
+const TOKEN_REFUSED = 'the client token was refused (store a new one with fornax lease token)';
+
+/** How a line ends after the job was to be canceled: `why` is null once it was canceled (or was over already). */
+const canceledText = (why: string | null): string =>
+  why === null ? 'the job was canceled' : `the job could not be canceled (${why}); a lease nobody uses ends itself within a minute`;
+
 type RunEnd =
   | { kind: 'exited'; exit: ProgramExit }
   | { kind: 'interrupt' }
@@ -93,23 +110,40 @@ type RunEnd =
 export async function runLease(req: LeaseRequest, d: LeaseDeps): Promise<number> {
   const t: LeaseTimings = { ...LEASE_TIMINGS, ...d.timings };
   const say = (line: string) => d.say(`fornax lease: ${line}`);
+  /** --wait-minutes counts for each wait for the lease: from before the submit, and again after every give-back. */
+  const waitDeadline = (): number => (req.waitMinutes === null ? Infinity : Date.now() + req.waitMinutes * t.minuteMs);
+  const gaveUpText = `gave up waiting after ${req.waitMinutes} min`;
 
-  /** Network errors and 5xx: again after a growing pause, a line at most once a minute. A lease is never skipped. */
-  const persist = async <T>(fn: () => Promise<T>, signal: AbortSignal, line = 'the server cannot be reached, retrying'): Promise<T> => {
+  /**
+   * Network errors, 5xx and unreadable answers: again after a growing pause, a line at most once a minute. A lease is
+   * never skipped; only `deadline` (--wait-minutes) ends the retries, with GaveUp. `fn` gets the signal to pass on.
+   */
+  const persist = async <T>(
+    fn: (signal: AbortSignal) => Promise<T>,
+    signal: AbortSignal,
+    o: { line?: string; deadline?: number } = {},
+  ): Promise<T> => {
+    const deadline = o.deadline ?? Infinity;
     let delay = t.backoff.baseMs;
     let saidAt = -Infinity;
     for (;;) {
+      if (signal.aborted) throw new Stopped();
+      const left = deadline - Date.now();
+      if (left <= 0) throw new GaveUp();
+      // A request that hangs must not outlast the deadline either (the timer of AbortSignal.timeout holds nothing open).
+      const late = left <= MAX_TIMER_MS ? AbortSignal.timeout(Math.ceil(left)) : null;
       try {
-        return await fn();
+        return await fn(late ? AbortSignal.any([signal, late]) : signal);
       } catch (e) {
         if (signal.aborted) throw new Stopped();
+        if (late?.aborted) throw new GaveUp();
         if (!isTransient(e)) throw e;
         if (Date.now() - saidAt >= t.noteMs) {
-          say(line);
+          say(o.line ?? 'the server cannot be reached, retrying');
           saidAt = Date.now();
         }
         try {
-          await sleep(delay, undefined, { signal });
+          await sleep(Math.min(delay, Math.max(0, deadline - Date.now())), undefined, { signal });
         } catch {
           throw new Stopped();
         }
@@ -118,35 +152,47 @@ export async function runLease(req: LeaseRequest, d: LeaseDeps): Promise<number>
     }
   };
 
-  const tokenRefused = (): number => {
-    say('the client token was refused (store a new one with fornax lease token)');
-    return LEASE_EXIT.noLease;
-  };
-
-  /** Cancel the job, best effort: a few tries, never interrupted (it also runs after Ctrl+C). */
-  const cancelQuietly = async (id: string): Promise<void> => {
+  /**
+   * Cancel the job, best effort: a few tries, never interrupted (it also runs after Ctrl+C). Null once the job is
+   * canceled, was over already or is gone; else why it could not be canceled.
+   */
+  const cancelJob = async (id: string): Promise<string | null> => {
+    let why = 'the server cannot be reached';
     for (let i = 0; i < 3; i++) {
+      if (i > 0) await sleep(t.backoff.baseMs);
       try {
         await d.api.cancel(id);
-        return;
+        return null;
       } catch (e) {
-        // Already over (409) or gone (404): nothing left to cancel.
-        if (e instanceof ApiError && e.status < 500) return;
-        await sleep(t.backoff.baseMs);
+        const refusal = refusalOf(e);
+        if (refusal === 'gone' || (e instanceof ApiError && e.status === 409)) return null;
+        if (refusal === 'token') return 'the client token was refused';
+        if (e instanceof ApiError && e.status < 500) return oneLine(e.message, 300);
+        // Unreachable, a 5xx, or an answer that cannot be read: try again.
+        why = e instanceof ApiError ? `the server answered ${e.status}` : 'the server cannot be reached';
       }
     }
-    say(`job ${id} could not be canceled (the server cannot be reached); a lease nobody uses ends itself within a minute`);
+    return why;
   };
 
-  const launch = (id: string, onHardQuit?: () => void): Program =>
+  const launch = (id: string, o: { nested?: boolean; onHardQuit?: () => void } = {}): Program =>
     startProgram(req.program, req.args, {
-      cwd: d.cwd, env: leaseEnv(d.env, id), killGraceMs: t.killGraceMs, taskkillProgram: d.taskkillProgram, signalGroup: d.signalGroup, onHardQuit,
+      cwd: d.cwd, env: leaseEnv(d.env, id), killGraceMs: t.killGraceMs, taskkillProgram: d.taskkillProgram, signalGroup: d.signalGroup,
+      onHardQuit: o.onHardQuit,
+      // Nested: in the outer program's group, so the outer wrapper's kill of that group reaches this program too.
+      ownGroup: !o.nested,
     });
 
   /** Ctrl+C reached the program too (Windows: the same console; Linux: passed on to its group): time to end, then the kill. */
   const stopGently = async (program: Program): Promise<void> => {
     program.forward(signalOf(d.signal));
-    const ended = await Promise.race([program.exited.then(() => true), sleep(t.interruptMs).then(() => false)]);
+    const pause = new AbortController();
+    const ended = await Promise.race([
+      program.exited.then(() => true),
+      sleep(t.interruptMs, false, { signal: pause.signal }).catch(() => false),
+    ]);
+    // The pause must not keep the wrapper alive once the program ended by itself.
+    pause.abort();
     if (!ended) await program.kill();
   };
 
@@ -158,21 +204,31 @@ export async function runLease(req: LeaseRequest, d: LeaseDeps): Promise<number>
     }
     let v: ClientJobView;
     try {
-      v = await persist(() => d.api.job(id, { signal: d.signal }), d.signal);
+      v = await persist((signal) => d.api.job(id, { signal }), d.signal);
     } catch (e) {
       if (e instanceof Stopped) return LEASE_EXIT.interrupted;
-      if (e instanceof ApiError && (e.status === 401 || e.status === 403)) return tokenRefused();
-      if (e instanceof ApiError && e.status === 404) {
+      const refusal = refusalOf(e);
+      if (refusal === 'token') {
+        say(TOKEN_REFUSED);
+        return LEASE_EXIT.noLease;
+      }
+      if (refusal === 'gone') {
         say(`the lease ${id} this runs in is not found (another client's, or gone)`);
         return LEASE_EXIT.lost;
       }
       throw e;
     }
+    // A running job of another type holds the card for its own tool, not for this program.
+    if (v.type !== LEASE_TYPE) {
+      say(`FORNAX_LEASE names job ${id}, which is not a lease`);
+      return LEASE_EXIT.lost;
+    }
     if (v.state !== 'running') {
       say(`the lease ${id} this runs in is ${v.state}`);
       return LEASE_EXIT.lost;
     }
-    const program = launch(id);
+    if (d.signal.aborted) return LEASE_EXIT.interrupted;
+    const program = launch(id, { nested: true });
     const over = new AbortController();
     try {
       const end = await Promise.race([
@@ -193,9 +249,8 @@ export async function runLease(req: LeaseRequest, d: LeaseDeps): Promise<number>
     }
   };
 
-  /** Spec 05a 4.5 step 3: wait in the queue. The job once it runs, or the exit code. */
-  const waitForLease = async (id: string, first: ClientJobView): Promise<ClientJobView | number> => {
-    const deadline = req.waitMinutes === null ? Infinity : Date.now() + req.waitMinutes * t.minuteMs;
+  /** Spec 05a 4.5 step 3: wait in the queue until `deadline`. The job once it runs, or the exit code. */
+  const waitForLease = async (id: string, first: ClientJobView, deadline: number): Promise<ClientJobView | number> => {
     let shown: string | null = null;
     let shownAt = -Infinity;
     let v = first;
@@ -213,26 +268,33 @@ export async function runLease(req: LeaseRequest, d: LeaseDeps): Promise<number>
           shownAt = Date.now();
         }
         const left = deadline - Date.now();
-        if (left <= 0) {
-          await cancelQuietly(id);
-          say(`gave up waiting after ${req.waitMinutes} min; the job was canceled`);
-          return LEASE_EXIT.gaveUp;
-        }
+        if (left <= 0) throw new GaveUp();
+        // A note shown is shown again after noteMs even when nothing changes: the wait ends in time to do it.
+        const untilNote = shown === null ? Infinity : shownAt + t.noteMs - Date.now();
+        const waitS = Math.max(1, Math.min(t.pollS, Math.ceil(left / 1000), Math.ceil(untilNote / 1000)));
         const change = v.change;
-        const waitS = Math.max(1, Math.min(t.pollS, Math.ceil(left / 1000)));
-        v = await persist(() => d.api.job(id, { wait: waitS, change, signal: d.signal }), d.signal);
+        v = await persist((signal) => d.api.job(id, { wait: waitS, change, signal }), d.signal, { deadline });
       }
     } catch (e) {
       if (e instanceof Stopped) {
-        await cancelQuietly(id);
-        say('interrupted; the job was canceled');
+        say(`interrupted; ${canceledText(await cancelJob(id))}`);
         return LEASE_EXIT.interrupted;
       }
-      if (e instanceof ApiError && (e.status === 401 || e.status === 403)) return tokenRefused();
-      if (e instanceof ApiError && e.status === 404) {
-        say(`job ${id} is gone`);
+      if (e instanceof GaveUp) {
+        say(`${gaveUpText}; ${canceledText(await cancelJob(id))}`);
+        return LEASE_EXIT.gaveUp;
+      }
+      const refusal = refusalOf(e);
+      if (refusal === 'token') {
+        say(TOKEN_REFUSED);
+        return LEASE_EXIT.noLease;
+      }
+      if (refusal === 'gone') {
+        say(`the lease ended before the program started: job ${id} is gone`);
         return LEASE_EXIT.lost;
       }
+      // Unexpected: no job may be left waiting for a wrapper that is gone.
+      await cancelJob(id);
       throw e;
     }
   };
@@ -243,7 +305,9 @@ export async function runLease(req: LeaseRequest, d: LeaseDeps): Promise<number>
     try {
       for (;;) {
         const change = v.change;
-        v = await persist(() => d.api.job(id, { wait: t.pollS, change, signal }), signal, 'the server cannot be reached; the program goes on, retrying');
+        v = await persist((s) => d.api.job(id, { wait: t.pollS, change, signal: s }), signal, {
+          line: 'the server cannot be reached; the program goes on, retrying',
+        });
         // Given back (the worker stopped or restarted), and maybe already taken again: another claim, not this run's.
         if (v.state === 'queued' || (v.state === 'running' && v.started_at !== running.started_at)) return { kind: 'given_back', view: v };
         if (v.state !== 'running') return { kind: 'ended', view: v };
@@ -251,8 +315,8 @@ export async function runLease(req: LeaseRequest, d: LeaseDeps): Promise<number>
     } catch (e) {
       // The run is over and the race has its answer.
       if (e instanceof Stopped) return never;
-      if (e instanceof ApiError && (e.status === 401 || e.status === 403)) return { kind: 'refused', why: 'the client token was refused' };
-      if (e instanceof ApiError && e.status === 404) return { kind: 'refused', why: `job ${id} is gone` };
+      const refusal = refusalOf(e);
+      if (refusal) return { kind: 'refused', why: refusal === 'token' ? 'the client token was refused' : `job ${id} is gone` };
       throw e;
     }
   };
@@ -260,9 +324,18 @@ export async function runLease(req: LeaseRequest, d: LeaseDeps): Promise<number>
   /** Spec 05a 4.5 steps 4–8: one run of the program under the claim `running`; `again` when --rerun waits for the lease. */
   const runOnce = async (id: string, files: LeaseFiles, running: ClientJobView): Promise<number | { again: ClientJobView }> => {
     const startedAt = running.started_at ?? '';
-    files.alive(startedAt);
+    // Ctrl+C while the lease came back (--rerun): the program does not start again.
+    if (d.signal.aborted) {
+      say(`interrupted; ${canceledText(await cancelJob(id))}`);
+      return LEASE_EXIT.interrupted;
+    }
+    // Without alive the tool ends the lease within a minute: do not start a program it would not cover.
+    if (!files.alive(startedAt)) {
+      say(`the lease files cannot be written in ${files.dir}; ${canceledText(await cancelJob(id))}`);
+      return LEASE_EXIT.noLease;
+    }
     say(`the lease started (job ${id}); running ${req.program}`);
-    const program = launch(id, () => void files.done(startedAt));
+    const program = launch(id, { onHardQuit: () => void files.done(startedAt) });
     const over = new AbortController();
     const renew = setInterval(() => void files.alive(startedAt), t.aliveMs);
     try {
@@ -307,16 +380,17 @@ export async function runLease(req: LeaseRequest, d: LeaseDeps): Promise<number>
           files.done(startedAt);
           say(`the lease was lost: ${end.why}; the program was stopped`);
           return LEASE_EXIT.lost;
-        case 'given_back':
+        case 'given_back': {
           // No done: the job goes on, and a later claim of it must not end at once.
           await program.kill();
           if (req.rerun) {
             say('the worker gave the lease back; the program will start again when the lease returns');
             return { again: end.view };
           }
-          await cancelQuietly(id);
-          say('the lease was lost: the worker gave it back (it stopped or restarted); the program was stopped');
+          const why = await cancelJob(id);
+          say(`the lease was lost: the worker gave it back (it stopped or restarted); the program was stopped${why === null ? '' : `; ${canceledText(why)}`}`);
           return LEASE_EXIT.lost;
+        }
       }
     } catch (e) {
       await program.kill();
@@ -336,16 +410,24 @@ export async function runLease(req: LeaseRequest, d: LeaseDeps): Promise<number>
   const outer = d.env.FORNAX_LEASE;
   if (outer !== undefined) return nested(outer);
 
+  let deadline = waitDeadline();
   let view: ClientJobView;
   try {
     const params = { minutes: req.minutes, ...(req.label ? { label: req.label } : {}) };
-    view = await persist(() => d.api.submit({ type: LEASE_TYPE, params, priority: req.priority }, d.signal), d.signal);
+    view = await persist((signal) => d.api.submit({ type: LEASE_TYPE, params, priority: req.priority }, signal), d.signal, { deadline });
   } catch (e) {
     if (e instanceof Stopped) {
       say('interrupted before a lease was asked for');
       return LEASE_EXIT.interrupted;
     }
-    if (e instanceof ApiError && (e.status === 401 || e.status === 403)) return tokenRefused();
+    if (e instanceof GaveUp) {
+      say(`${gaveUpText}; the server cannot be reached`);
+      return LEASE_EXIT.gaveUp;
+    }
+    if (refusalOf(e) === 'token') {
+      say(TOKEN_REFUSED);
+      return LEASE_EXIT.noLease;
+    }
     if (e instanceof ApiError && e.status === 422 && /not offered/.test(e.message)) {
       say('the worker does not offer the job type lease: run fornax types install lease on the worker PC, then restart the worker');
       return LEASE_EXIT.noLease;
@@ -360,10 +442,11 @@ export async function runLease(req: LeaseRequest, d: LeaseDeps): Promise<number>
   sweepLeases(d.leasesDir);
   const files = new LeaseFiles(d.leasesDir, id);
   for (;;) {
-    const got = await waitForLease(id, view);
+    const got = await waitForLease(id, view, deadline);
     if (typeof got === 'number') return got;
     const r = await runOnce(id, files, got);
     if (typeof r === 'number') return r;
     view = r.again;
+    deadline = waitDeadline();
   }
 }

@@ -72,6 +72,10 @@ export function readPids(file: string): { parent: number; child: number } | null
 
 export const LEASE_PROGRAM = fileURLToPath(new URL('./fixtures/lease-program.mjs', import.meta.url));
 
+/** Linux: the process group of a process (the fifth field of /proc/<pid>/stat; the name in parentheses may hold spaces). */
+export const processGroupOf = (pid: number): number =>
+  Number(readFileSync(join('/proc', String(pid), 'stat'), 'utf8').replace(/^.*\) /s, '').split(' ')[2]);
+
 /** A JSON file a program wrote, once it is complete; null before. */
 export function readJson<T = any>(file: string): T | null {
   try {

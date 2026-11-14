@@ -1,15 +1,17 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ClientJobView } from '@fornax/protocol';
 import { describe, expect, test } from 'vitest';
 import { ApiError, NetworkError } from '../src/api.js';
 import { type LeaseClient, type LeaseRequest, type LeaseTimings, runLease } from '../src/lease/run.js';
-import { isAlive, LEASE_PROGRAM, readJson, readPids, useTempDir, waitFor } from './helpers.js';
+import { isAlive, LEASE_PROGRAM, processGroupOf, readJson, readPids, useTempDir, waitFor } from './helpers.js';
 
 const tmp = useTempDir();
 const ID = '01JLEASERUN000000000000000';
 const STARTED = '2026-11-14T10:00:00.000Z';
 const LATER = '2026-11-14T10:05:00.000Z';
+const NESTED = { ...process.env, FORNAX_LEASE: ID };
+const NETWORK_DOWN = () => Array.from({ length: 1000 }, () => new NetworkError('cannot reach the server: ECONNREFUSED'));
 
 /** A stand-in for the client API: the test moves the job; a GET with ?wait answers on a change, as the server does. */
 function fakeServer() {
@@ -68,14 +70,20 @@ const fast: LeaseTimings = { pollS: 1, aliveMs: 50, noteMs: 60_000, interruptMs:
 /** runLease with the test program; `args` go to the program. */
 function lease(
   server: ReturnType<typeof fakeServer>, args: string[], o: Partial<LeaseRequest> = {},
-  extra: { env?: NodeJS.ProcessEnv; signal?: AbortSignal; timings?: Partial<LeaseTimings> } = {},
+  extra: {
+    env?: NodeJS.ProcessEnv; signal?: AbortSignal; timings?: Partial<LeaseTimings>; leasesDir?: string; onLine?: (line: string) => void;
+  } = {},
 ) {
   const lines: string[] = [];
-  const leasesDir = join(tmp(), 'leases');
+  const leasesDir = extra.leasesDir ?? join(tmp(), 'leases');
   const run = runLease(
     { minutes: 60, waitMinutes: null, rerun: false, priority: 'normal', label: null, program: process.execPath, args: [LEASE_PROGRAM, ...args], ...o },
     {
-      api: server.api, leasesDir, say: (l) => lines.push(l), signal: extra.signal ?? new AbortController().signal,
+      api: server.api, leasesDir, signal: extra.signal ?? new AbortController().signal,
+      say: (l) => {
+        lines.push(l);
+        extra.onLine?.(l);
+      },
       env: extra.env ?? process.env, cwd: tmp(), timings: { ...fast, ...extra.timings },
     },
   );
@@ -198,9 +206,11 @@ describe('runLease', () => {
     const pids = join(tmp(), 'pids.json');
     const l = lease(s, ['--tree', pids, '--forever']);
     s.set({ state: 'running', started_at: STARTED });
-    await waitFor(() => readPids(pids), 10_000, 'the program');
+    const { parent, child } = await waitFor(() => readPids(pids), 10_000, 'the program');
     s.set({ state: 'running', started_at: LATER });
     expect(await l.run).toBe(123);
+    await waitFor(() => !isAlive(parent) && !isAlive(child), 5000, 'the tree to die');
+    expect(existsSync(join(l.dir, 'done'))).toBe(false);
     expect(s.job.state).toBe('canceled');
   });
 
@@ -286,5 +296,176 @@ describe('runLease', () => {
     const ended = fakeServer();
     ended.set({ state: 'canceled' });
     expect(await lease(ended, ['--exit', '0'], {}, { env: { ...process.env, FORNAX_LEASE: ID } }).run).toBe(123);
+  });
+
+  test('--wait-minutes also ends a wait while the server cannot be reached: 122, the job canceled', async () => {
+    const s = fakeServer();
+    const l = lease(s, ['--exit', '0'], { waitMinutes: 1 }, { timings: { minuteMs: 1500 } });
+    await waitFor(() => s.calls.includes('job'), 5000, 'the wait');
+    s.failures.push(...NETWORK_DOWN());
+    s.set({ note: 'waiting, position 2; the worker takes the jobs ahead first' });
+    expect(await l.run).toBe(122);
+    expect(s.job.state).toBe('canceled');
+    expect(l.lines).toContain('fornax lease: the server cannot be reached, retrying');
+    expect(l.lines.at(-1)).toBe('fornax lease: gave up waiting after 1 min; the job was canceled');
+  });
+
+  test('--wait-minutes also ends the retries of the submit: 122, no job', async () => {
+    const s = fakeServer();
+    s.failures.push(...NETWORK_DOWN());
+    const l = lease(s, ['--exit', '0'], { waitMinutes: 1 }, { timings: { minuteMs: 300 } });
+    expect(await l.run).toBe(122);
+    expect(new Set(s.calls)).toEqual(new Set(['submit']));
+    expect(l.lines).toEqual(['fornax lease: the server cannot be reached, retrying', 'fornax lease: gave up waiting after 1 min; the server cannot be reached']);
+  });
+
+  test('a cancel that is refused is said so, never "the job was canceled"', async () => {
+    const s = fakeServer();
+    s.api.cancel = async () => {
+      throw new ApiError(401, 'unauthorized', 'unauthorized');
+    };
+    const l = lease(s, ['--exit', '0'], { waitMinutes: 2 }, { timings: { minuteMs: 100 } });
+    expect(await l.run).toBe(122);
+    expect(s.job.state).toBe('queued');
+    expect(l.lines.at(-1)).toBe(
+      'fornax lease: gave up waiting after 2 min; the job could not be canceled (the client token was refused); a lease nobody uses ends itself within a minute',
+    );
+  });
+
+  test('the queue note is shown again after noteMs while nothing changes: the long-poll waits no longer than that', async () => {
+    const s = fakeServer();
+    const l = lease(s, ['--exit', '0'], {}, { timings: { pollS: 25, noteMs: 1500 } });
+    await waitFor(() => l.lines.length >= 2, 6000, 'the note again');
+    expect(l.lines.slice(0, 2)).toEqual(Array(2).fill('fornax lease: waiting, position 1; the worker takes it next'));
+    s.set({ state: 'running', started_at: STARTED });
+    expect(await l.run).toBe(0);
+  });
+
+  test('the job gone while waiting: 123', async () => {
+    const s = fakeServer();
+    const l = lease(s, ['--exit', '0']);
+    await waitFor(() => s.calls.includes('job'), 5000, 'the wait');
+    s.failures.push(new ApiError(404, 'not_found', 'job not found'));
+    s.set({ note: 'waiting, position 2; the worker takes the jobs ahead first' });
+    expect(await l.run).toBe(123);
+    expect(l.lines.at(-1)).toBe(`fornax lease: the lease ended before the program started: job ${ID} is gone`);
+  });
+
+  test('an unexpected error while waiting cancels the job, then comes out', async () => {
+    const s = fakeServer();
+    const l = lease(s, ['--exit', '0']);
+    await waitFor(() => s.calls.includes('job'), 5000, 'the wait');
+    s.failures.push(new Error('something unexpected'));
+    s.set({ note: 'waiting, position 2; the worker takes the jobs ahead first' });
+    await expect(l.run).rejects.toThrow('something unexpected');
+    expect(s.job.state).toBe('canceled');
+  });
+
+  test('alive cannot be written: one line, the job canceled, 121, the program never runs', async () => {
+    const s = fakeServer();
+    const leasesDir = join(tmp(), 'leases');
+    writeFileSync(leasesDir, 'not a folder');
+    const report = join(tmp(), 'report.json');
+    const l = lease(s, ['--report', report], {}, { leasesDir });
+    s.set({ state: 'running', started_at: STARTED });
+    expect(await l.run).toBe(121);
+    expect(existsSync(report)).toBe(false);
+    expect(s.job.state).toBe('canceled');
+    expect(l.lines.at(-1)).toMatch(/^fornax lease: the lease files cannot be written in .+; the job was canceled$/);
+  });
+
+  test('failed while the program runs: the tree is killed, done is written, 123, the error in the line', async () => {
+    const s = fakeServer();
+    const pids = join(tmp(), 'pids.json');
+    const l = lease(s, ['--tree', pids, '--forever']);
+    s.set({ state: 'running', started_at: STARTED });
+    const { parent, child } = await waitFor(() => readPids(pids), 10_000, 'the program');
+    s.set({ state: 'failed', error: 'the lease tool ended: alive is missing' });
+    expect(await l.run).toBe(123);
+    await waitFor(() => !isAlive(parent) && !isAlive(child), 5000, 'the tree to die');
+    expect(readFileSync(join(l.dir, 'done'), 'utf8')).toBe(STARTED);
+    expect(l.lines.at(-1)).toBe('fornax lease: the lease was lost: the job failed (the lease tool ended: alive is missing); the program was stopped');
+  });
+
+  test('the token refused or the job gone while the program runs: the tree is killed, done is written, 123', async () => {
+    const cases: [ApiError, string][] = [
+      [new ApiError(401, 'unauthorized', 'unauthorized'), 'fornax lease: the lease was lost: the client token was refused; the program was stopped'],
+      [new ApiError(404, 'not_found', 'job not found'), `fornax lease: the lease was lost: job ${ID} is gone; the program was stopped`],
+    ];
+    for (const [error, text] of cases) {
+      const s = fakeServer();
+      const pids = join(tmp(), 'pids.json');
+      const l = lease(s, ['--tree', pids, '--forever']);
+      s.set({ state: 'running', started_at: STARTED });
+      const { parent, child } = await waitFor(() => readPids(pids), 10_000, 'the program');
+      s.failures.push(error);
+      // Wakes the long-poll; the next GET meets the error.
+      s.set({ note: null });
+      expect(await l.run).toBe(123);
+      await waitFor(() => !isAlive(parent) && !isAlive(child), 5000, 'the tree to die');
+      expect(readFileSync(join(l.dir, 'done'), 'utf8')).toBe(STARTED);
+      expect(l.lines.at(-1)).toBe(text);
+    }
+  });
+
+  test('Ctrl+C while the program runs and it ends in time by itself: the wrapper ends at once, no pause timer holds it open', async () => {
+    /** Timers that keep the process alive (unref'd ones are not listed). */
+    const timers = () => process.getActiveResourcesInfo().filter((r) => r === 'Timeout').length;
+    const s = fakeServer();
+    const stop = new AbortController();
+    const report = join(tmp(), 'report.json');
+    const l = lease(s, ['--report', report, '--sleep', '500', '--exit', '0'], {}, { signal: stop.signal, timings: { interruptMs: 60_000 } });
+    s.set({ state: 'running', started_at: STARTED });
+    await waitFor(() => readJson(report), 10_000, 'the program');
+    stop.abort('SIGINT');
+    const at = Date.now();
+    expect(await l.run).toBe(130);
+    expect(Date.now() - at).toBeLessThan(10_000);
+    // A pause of interruptMs left running would keep the wrapper alive for a minute; short timers end meanwhile.
+    await waitFor(() => timers() === 0, 3000, 'no timer left');
+  });
+
+  test('--rerun: a Ctrl+C while the lease comes back does not start the program again: 130, the job canceled, no done', async () => {
+    const s = fakeServer();
+    const stop = new AbortController();
+    const runs = join(tmp(), 'runs.txt');
+    const l = lease(s, ['--runs', runs, '--forever'], { rerun: true }, {
+      signal: stop.signal,
+      onLine: (line) => {
+        if (line.includes('gave the lease back')) stop.abort('SIGINT');
+      },
+    });
+    s.set({ state: 'running', started_at: STARTED });
+    await waitFor(() => existsSync(runs), 10_000, 'the first run');
+    s.set({ state: 'running', started_at: LATER });
+    expect(await l.run).toBe(130);
+    expect(readFileSync(runs, 'utf8').split('\n').filter((x) => x.includes(' start '))).toHaveLength(1);
+    expect(s.job.state).toBe('canceled');
+    expect(existsSync(join(l.dir, 'done'))).toBe(false);
+  });
+
+  test('nested: a lease that is not found, or a job that is not a lease: 123, the program never runs', async () => {
+    const report = join(tmp(), 'report.json');
+    const gone = fakeServer();
+    gone.failures.push(new ApiError(404, 'not_found', 'job not found'));
+    const a = lease(gone, ['--report', report], {}, { env: NESTED });
+    expect(await a.run).toBe(123);
+    expect(a.lines).toEqual([`fornax lease: the lease ${ID} this runs in is not found (another client's, or gone)`]);
+    const other = fakeServer();
+    other.set({ type: 'render', state: 'running', started_at: STARTED });
+    const b = lease(other, ['--report', report], {}, { env: NESTED });
+    expect(await b.run).toBe(123);
+    expect(b.lines).toEqual([`fornax lease: FORNAX_LEASE names job ${ID}, which is not a lease`]);
+    expect(existsSync(report)).toBe(false);
+  });
+
+  test('nested: Linux: the program stays in the process group of the wrapper, which the outer wrapper ends as a whole', async () => {
+    const s = fakeServer();
+    s.set({ state: 'running', started_at: STARTED });
+    const report = join(tmp(), 'report.json');
+    const l = lease(s, ['--report', report, '--sleep', '1000', '--exit', '0'], {}, { env: NESTED });
+    const { pid } = await waitFor(() => readJson<{ pid: number }>(report), 10_000, 'the program');
+    if (process.platform !== 'win32') expect(processGroupOf(pid)).toBe(processGroupOf(process.pid));
+    expect(await l.run).toBe(0);
   });
 });

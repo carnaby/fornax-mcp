@@ -1,5 +1,5 @@
 import { type ClientJobView, clientJobView, type Priority } from '@fornax/protocol';
-import { apiErrorOf, networkErrorOf } from './api.js';
+import { apiErrorOf, NetworkError, networkErrorOf } from './api.js';
 
 /** A long-poll answers within its wait; this much more is a server that does not answer. */
 const ANSWER_MARGIN_MS = 15_000;
@@ -44,7 +44,10 @@ export class ClientApi {
     return clientJobView.parse(await (await this.request('POST', '/jobs', { json: body, signal })).json());
   }
 
-  /** One job; with `wait`, the server answers when its change differs from `change`, at the latest after `wait` seconds. */
+  /**
+   * One job; with `wait`, the server answers when its change differs from `change`, at the latest after `wait` seconds.
+   * An answer that cannot be read whole or parsed is a NetworkError: asking again is safe.
+   */
   async job(id: string, opts: { wait?: number; change?: string; signal?: AbortSignal } = {}): Promise<ClientJobView> {
     const q = new URLSearchParams();
     if (opts.wait) q.set('wait', String(opts.wait));
@@ -54,7 +57,12 @@ export class ClientApi {
       signal: opts.signal,
       timeoutMs: (opts.wait ?? 0) * 1000 + ANSWER_MARGIN_MS,
     });
-    return clientJobView.parse(await res.json());
+    try {
+      return clientJobView.parse(await res.json());
+    } catch (e) {
+      if (opts.signal?.aborted) throw e;
+      throw new NetworkError('the server sent an answer that cannot be read', { cause: e });
+    }
   }
 
   async cancel(id: string, signal?: AbortSignal): Promise<ClientJobView> {
