@@ -15,6 +15,8 @@ export type Ctx = {
   loopOptions?: Pick<LoopOptions, 'claimWaitS' | 'checkTimeoutMs' | 'backoffMs' | 'jobOptions'>;
   /** Copy text to the clipboard; the program used, or null. */
   clipboard?: (text: string) => string | null;
+  /** Test seam: nvidia-smi as program and leading arguments (fornax doctor and the worker's card check). */
+  nvidiaSmi?: string[];
 };
 
 export const apiFor = (ctx: Ctx, server: string, token: string): WorkerApi =>

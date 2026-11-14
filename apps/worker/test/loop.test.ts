@@ -1,7 +1,9 @@
 import { join } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { startTestServer, type TestServer } from '@fornax/server/testing';
 import { afterEach, describe, expect, test } from 'vitest';
 import { ApiError, NetworkError, WorkerApi } from '../src/api.js';
+import type { GpuReading } from '../src/gpu.js';
 import { type LoopApi, runWorker } from '../src/loop.js';
 import { clientOf, isAlive, NODE_TOOLS, readPids, testPaths, useTempDir, waitFor, writeEchoPack } from './helpers.js';
 
@@ -169,5 +171,23 @@ describe('runWorker', () => {
     expect(line).toBeDefined();
     expect(line).not.toMatch(/[\r\n]/);
     expect(line.length).toBeLessThanOrEqual(prefix.length + 200);
+  });
+
+  test('a busy card keeps the job queued and shows why; once free, the job runs and the reason is gone', async () => {
+    const { paths, api, alice, say } = await setup();
+    let card: GpuReading = { ok: true, used_mib: 5120, total_mib: 16311, cards: 1 };
+    const stop = new AbortController();
+    const worker = runWorker({ api, paths, tools: NODE_TOOLS, out: say, signal: stop.signal, ...fast, gpu: { maxUsedMib: 2048, measure: async () => card, pollMs: 50 } });
+    await waitFor(async () => (await alice.call('GET', '/api/queue')).worker.waiting?.reason === 'gpu_busy', 10_000, 'the reason in the queue');
+    const job = await alice.submit('echo', { mode: 'ok' });
+    await sleep(300);
+    expect(await alice.job(job.id)).toMatchObject({
+      state: 'queued', note: 'waiting: 5120 MiB of 16311 MiB of the card in use by other programs, limit 2048 MiB',
+    });
+    card = { ok: true, used_mib: 1130, total_mib: 16311, cards: 1 };
+    await waitFor(async () => (await alice.job(job.id)).state === 'succeeded', 10_000, 'the job to run');
+    expect((await alice.call('GET', '/api/queue')).worker.waiting).toBeNull();
+    stop.abort();
+    expect(await worker).toBe(0);
   });
 });

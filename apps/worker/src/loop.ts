@@ -1,7 +1,9 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { ClaimedJob } from '@fornax/protocol';
 import { ApiError, isTransient, type WorkerApi } from './api.js';
+import { cardGate } from './card-gate.js';
 import { packsSignature, preparePacks } from './checks.js';
+import type { GpuReading } from './gpu.js';
 import type { Pack } from './pack.js';
 import type { Paths } from './paths.js';
 import { type JobApi, type JobDeps, runJob } from './run-job.js';
@@ -10,7 +12,7 @@ export const CLAIM_WAIT_S = 25;
 /** Spec 7.4 step 2: pauses while the server is unreachable grow from 1 s to at most 60 s. */
 export const BACKOFF = { baseMs: 1000, maxMs: 60_000 };
 
-export type LoopApi = JobApi & Pick<WorkerApi, 'announce' | 'claim'>;
+export type LoopApi = JobApi & Pick<WorkerApi, 'announce' | 'claim' | 'status'>;
 
 export type LoopOptions = {
   api: LoopApi;
@@ -25,6 +27,8 @@ export type LoopOptions = {
   backoffMs?: { baseMs: number; maxMs: number };
   checkTimeoutMs?: number;
   jobOptions?: Pick<JobDeps, 'heartbeatMs' | 'killGraceMs' | 'retryDelaysMs' | 'leaseMs' | 'leaseMarginMs'>;
+  /** Spec 05a 2: check the card before each claim (only when worker.yaml sets gpu.max_used_mib). */
+  gpu?: { maxUsedMib: number; measure: () => Promise<GpuReading>; pollMs?: number; resendMs?: number };
 };
 
 /** `fornax worker` (spec 7.4): announce the ready types, claim, run, repeat. Returns the process exit code. */
@@ -32,6 +36,7 @@ export async function runWorker(o: LoopOptions): Promise<number> {
   const backoff = o.backoffMs ?? BACKOFF;
   let offered = new Map<string, Pack>();
   let signature = '';
+  const gate = o.gpu ? cardGate({ ...o.gpu, report: (w) => o.api.status(w, o.signal), out: o.out, signal: o.signal }) : null;
 
   /** Retry what failed for network reasons, pausing longer each time, until it works or the worker stops. */
   const retrying = async <T>(fn: () => Promise<T>): Promise<T> => {
@@ -91,6 +96,8 @@ export async function runWorker(o: LoopOptions): Promise<number> {
     await refresh();
     while (!o.signal.aborted) {
       if (packsSignature(o.paths.typesDir) !== signature) await refresh();
+      // A card held by programs outside the queue keeps every job waiting (no claim: --once waits too).
+      if (gate && !(await gate.ready())) continue;
       const job = await retrying(() => o.api.claim(o.claimWaitS ?? CLAIM_WAIT_S, o.signal));
       if (job) await handle(job);
       if (o.once) break;

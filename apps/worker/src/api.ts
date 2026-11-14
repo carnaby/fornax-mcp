@@ -5,7 +5,7 @@ import { hostname } from 'node:os';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { ReadableStream as WebReadableStream } from 'node:stream/web';
-import { type ClaimedJob, claimedJob, type JobTypeContract, type OutputsJson, type ReleaseReason, WORKER_HEADERS } from '@fornax/protocol';
+import { type ClaimedJob, claimedJob, type JobTypeContract, type OutputsJson, type ReleaseReason, WORKER_HEADERS, type WorkerWaiting } from '@fornax/protocol';
 import { WORKER_VERSION } from './version.js';
 
 /** The server answered with an error status. */
@@ -118,6 +118,11 @@ export class WorkerApi {
   async announce(types: JobTypeContract[]): Promise<string[]> {
     const res = await this.request('PUT', '/types', { json: { types } });
     return ((await res.json()) as { offered: string[] }).offered;
+  }
+
+  /** Spec 05a 2.4: why the worker takes no job now, or null when it takes jobs. */
+  async status(waiting: WorkerWaiting | null, signal?: AbortSignal): Promise<void> {
+    await this.send('PUT', '/status', { json: { waiting }, signal });
   }
 
   /** Long-poll for a job; null when none came within `wait` seconds. */

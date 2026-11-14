@@ -1,3 +1,4 @@
+import { readGpu } from '../gpu.js';
 import { lockWorker, sweepJobs } from '../instance.js';
 import { runWorker } from '../loop.js';
 import { connect, type Ctx } from './context.js';
@@ -20,7 +21,10 @@ export async function workerCommand(ctx: Ctx, once: boolean): Promise<number> {
     if (swept.failed) {
       ctx.out(`${swept.failed} leftover job ${swept.failed === 1 ? 'directory' : 'directories'} could not be removed (${swept.code}); a process of an earlier run may still hold a file`);
     }
-    return await runWorker({ api, paths: ctx.paths, tools: config.tools, out: ctx.out, signal: ctx.signal, once, ...ctx.loopOptions });
+    const limit = config.gpu.maxUsedMib;
+    const gpu = limit === null ? undefined : { maxUsedMib: limit, measure: () => readGpu({ command: ctx.nvidiaSmi }) };
+    if (gpu) ctx.out(`the card is checked before each job: no job while more than ${limit} MiB of it are in use`);
+    return await runWorker({ api, paths: ctx.paths, tools: config.tools, out: ctx.out, signal: ctx.signal, once, gpu, ...ctx.loopOptions });
   } finally {
     process.off('exit', onExit);
     lock.release();
