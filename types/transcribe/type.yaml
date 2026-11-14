@@ -1,0 +1,41 @@
+name: transcribe
+version: 1
+description: >-
+  Transcribe speech in an audio or video file with Whisper (faster-whisper) on the GPU, optionally with speaker
+  labels (pyannote). The output transcript.json holds timed segments.
+inputs:
+  audio:
+    extensions: [.wav, .mp3, .m4a, .aac, .flac, .ogg, .oga, .opus, .wma, .webm, .mp4, .m4v, .mkv, .mov, .avi]
+    max_mb: 4096
+params:
+  type: object
+  additionalProperties: false
+  properties:
+    language:
+      type: string
+      pattern: "[a-z]{2,3}"
+      maxLength: 3
+      description: Language code such as en or sk; detected when left out.
+    model:
+      enum: [large-v3, large-v3-turbo, medium, small, base, tiny]
+      default: large-v3
+      description: The Whisper model; models other than large-v3 are downloaded on first use.
+    diarize:
+      type: boolean
+      default: false
+      description: Label segments with speakers S1, S2 ...
+    speakers:
+      type: integer
+      minimum: 1
+      maximum: 20
+      description: The number of speakers, when known (used with diarize).
+    initial_prompt:
+      type: string
+      maxLength: 1000
+      description: Words and names Whisper should expect, e.g. a project name.
+max_runtime: 4h
+tools: [python, ffmpeg]
+setup: ["{tool.python}", "{pack}/scripts/setup.py"]
+check: ["{python}", "{pack}/scripts/check.py", "--ffmpeg", "{tool.ffmpeg}"]
+run: ["{python}", "{pack}/scripts/run.py", "--params", "{params_json}", "--audio", "{input.audio}",
+      "--ffmpeg", "{tool.ffmpeg}", "--out", "{out}", "--work", "{work}"]

@@ -9,3 +9,6 @@ coverage/
 docs/
 .superpowers/
 .nx/
+# Python caches and the environments a type pack's setup creates.
+__pycache__/
+types/*/env/
