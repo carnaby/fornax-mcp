@@ -30,7 +30,7 @@ describe('loadConfig', () => {
     const c = loadConfig(
       env({
         PUBLIC_URL: 'https://fornax.example.com',
-        DATA_DIR: '/srv/data',
+        DATA_DIR: '/var/lib/fornax-test',
         PORT: '8080',
         HOST: '127.0.0.1',
         TRUST_PROXY: '1',
@@ -47,7 +47,7 @@ describe('loadConfig', () => {
     );
     expect(c.publicUrl).toBe('https://fornax.example.com');
     expect(c.publicUrlConfigured).toBe(true);
-    expect(c.dbFile).toBe(join('/srv/data', 'fornax.db'));
+    expect(c.dbFile).toBe(join('/var/lib/fornax-test', 'fornax.db'));
     expect([c.port, c.host, c.trustProxy]).toEqual([8080, '127.0.0.1', 1]);
     expect(c.limits).toEqual({ maxUploadBytes: 10 * MB, maxOutputBytes: 20 * MB, maxQueuedPerToken: 5 });
     expect(c.retention).toEqual({ finishedMs: 2 * DAY, orphanUploadMs: HOUR / 2, unavailableTypeMs: 3 * DAY, pendingTokenMs: DAY });

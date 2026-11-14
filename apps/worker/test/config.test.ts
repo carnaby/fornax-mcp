@@ -49,7 +49,7 @@ describe('worker.yaml', () => {
   test('plain http is warned about unless the server is on this PC', () => {
     expect(serverWarning('https://fornax.example.com')).toBeNull();
     expect(serverWarning('http://fornax.example.com')).toMatch(/not encrypted/);
-    expect(serverWarning('http://192.168.1.10:8080')).toMatch(/not encrypted/);
+    expect(serverWarning('http://192.0.2.10:8080')).toMatch(/not encrypted/);
     for (const local of ['http://localhost:8080', 'http://127.0.0.1:8080', 'http://[::1]:8080']) expect(serverWarning(local), local).toBeNull();
   });
 
