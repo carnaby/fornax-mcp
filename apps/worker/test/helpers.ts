@@ -70,6 +70,16 @@ export function readPids(file: string): { parent: number; child: number } | null
   }
 }
 
+export const LEASE_PROGRAM = fileURLToPath(new URL('./fixtures/lease-program.mjs', import.meta.url));
+
+/** A JSON file a program wrote, once it is complete; null before. */
+export function readJson<T = any>(file: string): T | null {
+  try {
+    return JSON.parse(readFileSync(file, 'utf8')) as T;
+  } catch {
+    return null;
+  }
+}
 
 /** A client of a test server over real HTTP, as an app would use the REST API. */
 export function clientOf(s: TestServer, token: string) {

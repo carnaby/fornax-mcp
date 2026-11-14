@@ -144,12 +144,37 @@ export async function killTree(
   group('SIGKILL');
 }
 
+/** A process tree a hard quit must end; `afterKill` runs once it was killed that way. */
+type LiveTree = { pid: number; seams: Pick<RunOptions, 'taskkillProgram' | 'signalGroup'>; afterKill?: () => void };
 /** Tool processes alive right now (Linux: also a group still being ended after the tool's exit), so a hard quit (second Ctrl+C) can end their trees. */
-const live = new Set<{ pid: number; seams: Pick<RunOptions, 'taskkillProgram' | 'signalGroup'> }>();
+const live = new Set<LiveTree>();
 export const hasRunning = (): boolean => live.size > 0;
+
+/**
+ * Register a process tree started elsewhere (the program of fornax lease), so a hard quit ends it too; `afterKill`
+ * runs after it was killed that way (fornax lease writes `done` there). Returns the unregistering.
+ */
+export function trackTree(pid: number, seams: Pick<RunOptions, 'taskkillProgram' | 'signalGroup'> = {}, afterKill?: () => void): () => void {
+  const entry: LiveTree = { pid, seams, afterKill };
+  live.add(entry);
+  return () => {
+    live.delete(entry);
+  };
+}
+
 /** Kill every running tool tree, best effort, waiting at most `waitMs`. Never rejects. */
 export async function killRunning(waitMs = 2000): Promise<void> {
-  const all = [...live].map((c) => killTree(c.pid, Math.max(100, waitMs - 500), c.seams).catch(() => {}));
+  const all = [...live].map((c) =>
+    killTree(c.pid, Math.max(100, waitMs - 500), c.seams)
+      .catch(() => {})
+      .then(() => {
+        try {
+          c.afterKill?.();
+        } catch {
+          // Best effort on the way out.
+        }
+      }),
+  );
   await Promise.race([Promise.all(all), new Promise((r) => setTimeout(r, waitMs))]);
 }
 
