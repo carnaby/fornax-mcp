@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, utimesSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { describe, expect, test } from 'vitest';
@@ -28,8 +28,14 @@ function tool(pack: string, params: object, o: { graceMs?: number; minuteMs?: nu
   const err: string[] = [];
   child.stdout.on('data', (b: Buffer) => out.push(String(b)));
   child.stderr.on('data', (b: Buffer) => err.push(String(b)));
-  const code = new Promise<number | null>((resolve) => child.on('close', (c) => resolve(c)));
-  return { code, out, err };
+  let exited = false;
+  const code = new Promise<number | null>((resolve) =>
+    child.on('close', (c) => {
+      exited = true;
+      resolve(c);
+    }),
+  );
+  return { code, out, err, running: () => !exited };
 }
 
 describe('the lease tool', () => {
@@ -83,23 +89,26 @@ describe('the lease tool', () => {
     expect(await run.code).toBe(0);
   });
 
-  test('a done of an earlier claim does not end this one; the done of this claim does', async () => {
+  test('a done of an earlier claim does not end this one and stays untouched; the done of this claim ends it', async () => {
     const { pack, dir } = install();
     const run = tool(pack, { minutes: 5 }, { graceMs: 3000 });
     await waitFor(() => existsSync(dir), 5000, 'the lease folder');
     writeFileSync(join(dir, 'alive'), 'S2');
     writeFileSync(join(dir, 'done'), 'S1');
-    await waitFor(() => !existsSync(join(dir, 'done')), 5000, 'the earlier done to be removed');
+    await sleep(500);
+    expect(run.running()).toBe(true);
+    expect(readFileSync(join(dir, 'done'), 'utf8')).toBe('S1');
     writeFileSync(join(dir, 'done'), 'S2');
     expect(await run.code).toBe(0);
   });
 
-  test('a done with no alive is removed and does not end the lease', async () => {
+  test('a done with no alive does not end the lease', async () => {
     const { pack, dir } = install();
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'done'), 'S1');
     const run = tool(pack, { minutes: 5 }, { graceMs: 3000 });
-    await waitFor(() => !existsSync(join(dir, 'done')), 5000, 'the done to be removed');
+    await sleep(500);
+    expect(run.running()).toBe(true);
     writeFileSync(join(dir, 'alive'), 'S2');
     writeFileSync(join(dir, 'done'), 'S2');
     expect(await run.code).toBe(0);

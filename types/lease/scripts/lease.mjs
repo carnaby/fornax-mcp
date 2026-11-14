@@ -108,21 +108,14 @@ function end(code, message) {
 let shownMinute = -1;
 function tick() {
   const now = Date.now();
-  // done before alive: fornax lease writes alive before done, so with a done on disk its alive is there too.
+  // done before alive: fornax lease writes alive before done, so a done seen here meets its alive in the same tick.
   const d = read(done);
   const a = read(alive);
-  // Only the done of the claim alive names ends the lease; a done of an earlier claim, or one with no alive, is removed
-  // and ignored. An empty done or alive is being written: that is decided on the next tick.
-  if (d && d.text) {
-    if (a && a.text === d.text) return end(0);
-    if (!a || a.text) {
-      try {
-        rmSync(done, { force: true });
-      } catch {
-        // Held for a moment: the next tick tries again.
-      }
-    }
-  }
+  // Only the done of the claim alive names ends the lease. A done of an earlier claim, or one with no alive, is only
+  // ignored, never removed: removing it could race fornax lease writing the matching one. A stale done is harmless
+  // (the next done overwrites it, the sweep removes leftovers). An empty done or alive is still being written: the
+  // next tick decides.
+  if (d && d.text && a && a.text === d.text) return end(0);
   const elapsed = now - start;
   if (elapsed >= minutes * MINUTE_MS) return end(4, 'the lease time ran out');
   if (!a) {
