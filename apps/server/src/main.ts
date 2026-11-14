@@ -34,10 +34,26 @@ const timer = setInterval(tick, 60_000);
 const webhooks = startWebhookLoop({ config, db, clock: () => new Date() }, app.log);
 void tick();
 
+// app.close() waits for requests in flight; a large upload would hold SIGTERM until the runtime sends SIGKILL.
+const SHUTDOWN_LIMIT_MS = 8_000;
+
+const closeDb = () => {
+  try {
+    close();
+  } catch (e) {
+    app.log.error({ err: { message: (e as Error).message, stack: (e as Error).stack } }, 'closing the database failed');
+  }
+};
+
 let closing = false;
 const shutdown = async () => {
   if (closing) return;
   closing = true;
+  setTimeout(() => {
+    app.log.warn({ limitMs: SHUTDOWN_LIMIT_MS }, 'shutdown took too long: requests still in flight were cut off');
+    closeDb();
+    process.exit(0);
+  }, SHUTDOWN_LIMIT_MS).unref();
   clearInterval(timer);
   await webhooks.stop();
   try {
@@ -45,11 +61,7 @@ const shutdown = async () => {
   } catch (e) {
     app.log.error({ err: { message: (e as Error).message, stack: (e as Error).stack } }, 'closing the HTTP server failed');
   }
-  try {
-    close();
-  } catch (e) {
-    app.log.error({ err: { message: (e as Error).message, stack: (e as Error).stack } }, 'closing the database failed');
-  }
+  closeDb();
   process.exit(0);
 };
 process.on('SIGTERM', shutdown);
