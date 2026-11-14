@@ -163,6 +163,11 @@ On the PC with the GPU (Windows or Linux, Node.js 22 or newer):
    `fornax doctor`. The `render` pack needs scenes that are self-contained (File > External Data > Pack Resources).
 5. Start it: `fornax worker`. Ctrl+C gives the running job back; a second Ctrl+C kills the tool.
 
+### Your own job types
+
+`fornax types add <name>` creates an empty pack and copies a prompt for Claude Code that builds the rest with you;
+the format is in [types/README.md](types/README.md).
+
 ### The GPU belongs to the queue
 
 **Check the card before each job.** With `gpu.max_used_mib` in `worker.yaml` the worker reads the whole card's memory
@@ -177,9 +182,15 @@ gpu:
 ```
 
 **Lease the card for a program on this PC.** `fornax types install lease`, then store a client token (the worker
-token cannot submit jobs): the admin runs `fornax-admin tokens invite <name>`, you make the token on the pairing page,
-and `fornax lease token` reads it from standard input (paste it, or pipe it in) and checks it. `FORNAX_CLIENT_TOKEN`
-wins over the stored file. Then:
+token cannot submit jobs):
+
+1. The admin runs `fornax-admin tokens invite <name>`; you make the token on the pairing page.
+2. `fornax lease token` reads it from standard input (paste it, or pipe it in) and checks it with the server. A new
+   token waits for approval, so this first check only registers it and nothing is saved.
+3. The admin compares the fingerprint (`fornax-admin tokens pending`) and runs `fornax-admin tokens approve <name>`.
+4. Run `fornax lease token` again: now the token is saved.
+
+`FORNAX_CLIENT_TOKEN` wins over the stored file. Then:
 
 ```
 fornax lease [--minutes N] [--wait-minutes N] [--rerun] [--priority low|normal|high] [--label TEXT] -- <program> [args…]
@@ -191,34 +202,45 @@ environment (plus `FORNAX_LEASE=<job id>`, without the client token), and gives 
 program itself, not a `.cmd`/`.bat` launcher (there is no shell); a launcher or a program that is not found ends
 `fornax lease` before any job is made. `--minutes` (default 60, at most 720) is the longest one run may take;
 `--wait-minutes` gives up waiting for the card; `--label` names the lease in the queue (default: the program's file
-name); `fornax lease --help` prints the usage. `fornax lease` inside a lease runs its program at once, under the outer
-lease. Its own lines go to stderr, starting with `fornax lease:`; stdout is the program's.
+name). Its own lines go to stderr and start with `fornax lease:` (a usage error is followed by the usage);
+`fornax lease --help` prints the usage to stdout. Everything else on stdout is the program's.
 
-On Linux the program runs in a session of its own (so that its whole process tree can be ended): it has no controlling
-terminal, so interactive prompts and `/dev/tty` do not work; piped standard input works. A nested `fornax lease` runs
-its program in the caller's process group instead.
+`fornax lease` inside a lease runs its program at once, under the outer lease. It needs the stored client token
+(`fornax lease token`): `FORNAX_CLIENT_TOKEN` is removed from the program's environment, so it does not reach a nested
+`fornax lease` either.
+
+On Windows, `fornax.cmd` passes the arguments through `cmd`, which interprets unquoted `&`, `|`, `<`, `>` and `^`, and
+a Ctrl+C there asks "Terminate batch job (Y/N)?". In scripts, and for arguments with such characters, call Node
+directly: `node <folder>\fornax.mjs lease -- …`.
+
+On Linux the program runs in a session of its own (so that its whole process tree can be ended), so it has no
+controlling terminal: whatever opens `/dev/tty` (password prompts of `sudo`, `ssh` or `getpass`), job control
+(Ctrl+Z) and terminal resize signals do not work; reading the standard input it inherits works. A nested
+`fornax lease` runs its program in the caller's process group instead. If `fornax lease` itself is killed on Linux
+(`kill -9`, the out-of-memory killer), its program goes on running, and the lease ends about 60 s later while the
+program may still use the card.
 
 | Exit code | Meaning | The program |
 |---|---|---|
 | 120 | usage error, or the program cannot start (not found, `.cmd`/`.bat`) | not started |
-| 121 | no lease: no client token, the token was refused, `lease` is not offered, the submit was refused | not started |
+| 121 | no lease: no client token, a bad `FORNAX_CLIENT_TOKEN`, a missing or invalid `worker.yaml`, the token was refused, `lease` is not offered, the submit was refused, the lease files cannot be written | not started |
 | 122 | gave up waiting (`--wait-minutes`) | not started |
 | 123 | the lease was lost: canceled, failed, `--minutes` ran out; without `--rerun` also a stop or restart of the worker | stopped or not started |
-| 130 | interrupted (Ctrl+C, `SIGTERM`, `SIGHUP`) | stopped |
+| 130 | interrupted (Ctrl+C, `SIGTERM`, `SIGHUP`, `SIGQUIT`) | stopped |
 | other | the program's own code (128 + the signal's number when a signal ended it) | finished |
 
-A stop of `fornax lease` (Ctrl+C, `SIGTERM`; `SIGHUP`, a closed terminal, counts as `SIGTERM`) is passed on to the
-program, which gets 10 s to end before it is killed; a second Ctrl+C kills it at once. A stop while waiting cancels
-the job.
+`fornax lease` stops on Ctrl+C, `SIGTERM`, `SIGHUP` (a closed terminal) and `SIGQUIT` (Ctrl+\) alike. On Linux the
+signal itself is passed on to the program (its session does not get the terminal's signals); on Windows the program
+gets Ctrl+C from the same console. The program has 10 s to end before it is killed; a second Ctrl+C kills it at once.
+A stop while waiting cancels the job (a second Ctrl+C then waits up to 3 s for that cancel).
 
 Stopping or restarting the worker stops a leased program. With `--rerun` (for a program that is safe to start again,
 e.g. one that continues after the frames it has) it starts again once the worker runs again; without it `fornax lease`
-ends with 123. A program never runs without a lease: while the server cannot be reached, `fornax lease` keeps trying
-and waits, and only `--wait-minutes` (122) or a stop (130) ends that wait. A program that already runs goes on while the server is
-unreachable.
-
-`fornax types add <name>` creates an empty pack and copies a prompt for Claude Code that builds the rest with you;
-the format is in [types/README.md](types/README.md).
+ends with 123. A program never starts without a lease: while the server cannot be reached, `fornax lease` keeps
+trying and waits, and only `--wait-minutes` (122) or a stop (130) ends that wait. A program that already runs goes on
+while the server is unreachable, but only for so long: after 10 minutes without the worker the server takes the job
+back (it returns to the queue, or fails), and once the server can be reached again `fornax lease` stops the program
+(123, or with `--rerun` it starts again when the lease returns).
 
 ### As a service
 
