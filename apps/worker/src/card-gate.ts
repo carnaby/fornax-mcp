@@ -1,6 +1,7 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { WorkerWaiting } from '@fornax/protocol';
 import { ApiError, isTransient } from './api.js';
+import { oneLine } from './checks.js';
 import type { GpuReading } from './gpu.js';
 
 /** Spec 05a 2.3: while the card is busy, measure again this often. */
@@ -46,9 +47,16 @@ export function cardGate(o: CardGateOptions): { ready(): Promise<boolean> } {
       told = waiting;
       toldAt = Date.now();
     } catch (e) {
+      // An older server (404) or one that refuses this status (any other 4xx but a refused token): sending it again
+      // would only be refused again, and the worker must go on checking the card rather than end.
       if (e instanceof ApiError && e.status === 404) {
         serverTakesStatus = false;
         o.out('the server does not take the worker status (it is older than this worker): the card is still checked, but queue_status cannot say why jobs wait');
+        return;
+      }
+      if (e instanceof ApiError && e.status >= 400 && e.status < 500 && e.status !== 401 && e.status !== 403) {
+        serverTakesStatus = false;
+        o.out(`the server refused the worker status (${e.status}: ${oneLine(e.message, 200)}): the card is still checked, but queue_status cannot say why jobs wait`);
         return;
       }
       // Unreachable now: the next pass tells it again.

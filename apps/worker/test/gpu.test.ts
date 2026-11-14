@@ -15,6 +15,11 @@ describe('parseNvidiaSmi', () => {
   test('nothing, or anything but two whole numbers per line, is unreadable', () => {
     for (const out of ['', '\n', '[N/A], [N/A]', '1130', '1130, 16311, 3', '1.5, 2', '1130, 16311\nfoo']) expect(parseNvidiaSmi(out), out).toBeNull();
   });
+
+  test('a figure above 16,777,216 MiB (the most the server takes) is unreadable too, on any card', () => {
+    expect(parseNvidiaSmi('16777216, 16777216')).toEqual({ used_mib: 16_777_216, total_mib: 16_777_216, cards: 1 });
+    for (const out of ['16777217, 16311', '1130, 999999999', '1130, 16311\n800, 16777217']) expect(parseNvidiaSmi(out), out).toBeNull();
+  });
 });
 
 describe('readGpu', () => {

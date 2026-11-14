@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { MAX_MIB } from '@fornax/protocol';
 
 /** Spec 05a 2.2: the whole card's memory (on Windows/WDDM nvidia-smi gives no per-process figures). */
 export const NVIDIA_SMI_ARGS = ['--query-gpu=memory.used,memory.total', '--format=csv,noheader,nounits'];
@@ -6,12 +7,15 @@ export const GPU_TIMEOUT_MS = 5000;
 
 export type GpuReading = { ok: true; used_mib: number; total_mib: number; cards: number } | { ok: false; error: string };
 
-/** One "used, total" line per card; card 0 counts (more cards are out of scope). Null for anything else. */
+/**
+ * One "used, total" line per card; card 0 counts (more cards are out of scope). Null for anything else, also for a
+ * figure above MAX_MIB: no real card has that much, and the server refuses such a status.
+ */
 export function parseNvidiaSmi(stdout: string): { used_mib: number; total_mib: number; cards: number } | null {
   const lines = stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   if (!lines.length) return null;
   const cards = lines.map((l) => /^(\d{1,9})\s*,\s*(\d{1,9})$/.exec(l));
-  if (cards.some((m) => m === null)) return null;
+  if (cards.some((m) => m === null || Number(m[1]) > MAX_MIB || Number(m[2]) > MAX_MIB)) return null;
   const first = cards[0]!;
   return { used_mib: Number(first[1]), total_mib: Number(first[2]), cards: lines.length };
 }

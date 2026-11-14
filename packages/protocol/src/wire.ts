@@ -54,7 +54,9 @@ export const completeBody = z.strictObject({
 });
 export type CompleteBody = z.infer<typeof completeBody>;
 
-const mib = z.number().int().min(0).max(16_777_216);
+/** The largest MiB figure the worker status takes (16 TiB): a reading above it is not a real card. */
+export const MAX_MIB = 16_777_216;
+const mib = z.number().int().min(0).max(MAX_MIB);
 
 /** Spec 05a 2.4: why the worker takes no job now. */
 export const workerWaiting = z.union([

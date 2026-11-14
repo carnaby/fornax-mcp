@@ -103,6 +103,22 @@ describe('the card check before a claim', () => {
     expect(w.events).not.toContain('claim');
   });
 
+  test('a status the server refuses (a 4xx other than a refused token): one line, no more tries, the worker goes on', async () => {
+    for (const status of [400, 422]) {
+      const w = start([busy], async () => {
+        throw new ApiError(status, 'invalid', 'waiting.used_mib: too big');
+      });
+      await waitFor(() => w.lines.some((l) => l.includes('refused the worker status')), 5000, 'the line');
+      await sleep(250);
+      expect(await w.stop()).toBe(0);
+      expect(w.sent).toHaveLength(1);
+      expect(w.lines.filter((l) => l.includes('refused the worker status'))).toEqual([
+        `the server refused the worker status (${status}: waiting.used_mib: too big): the card is still checked, but queue_status cannot say why jobs wait`,
+      ]);
+      expect(w.events).not.toContain('claim');
+    }
+  });
+
   test('an unreachable server is told again on the next pass', async () => {
     let fails = 1;
     const w = start([busy], async () => {
