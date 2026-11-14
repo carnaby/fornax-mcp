@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { loadPack } from '../src/pack.js';
-import { shippedPack } from '../src/shipped.js';
+import { shippedExamples, shippedPack } from '../src/shipped.js';
 import { expandArgv } from '../src/template.js';
 
 /** A job as run() expands it; POSIX paths and platform 'linux' keep the expected argv exact on both OSes. */
@@ -25,5 +25,24 @@ describe('built-in type packs', () => {
     ]);
     expect(expandArgv(pack.impl.setup!, { pack: '/p', tools, platform: 'linux' })).toEqual(['py', '/p/scripts/setup.py']);
     expect(expandArgv(pack.impl.check!, { pack: '/p', tools, platform: 'linux' })).toEqual(['/p/env/bin/python', '/p/scripts/check.py', '--ffmpeg', 'ff']);
+  });
+
+  test("render: Blender never runs the scene's scripts and is told which file the input is", () => {
+    const pack = loadPack(shippedPack('render')!);
+    expect(pack.contract).toMatchObject({ name: 'render', version: 1, max_runtime_s: 6 * 3600 });
+    expect(pack.contract.params.required).toEqual(['frame_start']);
+    expect(pack.impl.tools).toEqual(['blender']);
+    expect(pack.impl.setup).toBeUndefined();
+    expect(expandArgv(pack.impl.run, { pack: '/p', tools: { blender: 'b' }, job, platform: 'linux' })).toEqual([
+      'b', '-b', '--factory-startup', '--disable-autoexec', '--python-exit-code', '1', '/w/in/scene.blend',
+      '--python', '/p/scripts/render.py', '--', '--params', '/w/work/params.json', '--scene', '/w/in/scene.blend', '--out', '/w/out',
+    ]);
+    expect(expandArgv(pack.impl.check!, { pack: '/p', tools: { blender: 'b' }, platform: 'linux' })).toEqual([
+      'b', '-b', '--factory-startup', '--python-exit-code', '1', '--python', '/p/scripts/check.py',
+    ]);
+  });
+
+  test('the prompt for a new type gets both packs as examples', () => {
+    expect(shippedExamples().map((e) => e.name)).toEqual(['render', 'transcribe']);
   });
 });

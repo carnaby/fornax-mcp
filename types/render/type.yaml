@@ -1,0 +1,21 @@
+name: render
+version: 1
+description: >-
+  Render one frame or a frame range of a .blend scene with Blender Cycles on the GPU. Every frame is an output with a
+  JPEG preview; the scene's own scripts never run.
+inputs:
+  scene: { extensions: [.blend], max_mb: 2048 }
+params:
+  type: object
+  additionalProperties: false
+  required: [frame_start]
+  properties:
+    frame_start: { type: integer, minimum: 0, maximum: 1048574, description: The first frame to render. }
+    frame_end: { type: integer, minimum: 0, maximum: 1048574, description: The last frame (frame_start when left out). }
+    samples: { type: integer, minimum: 1, maximum: 4096, default: 128, description: Cycles samples per pixel. }
+    format: { enum: [png, jpg], default: png, description: The image format of the frames. }
+max_runtime: 6h
+tools: [blender]
+check: ["{tool.blender}", "-b", "--factory-startup", "--python-exit-code", "1", "--python", "{pack}/scripts/check.py"]
+run: ["{tool.blender}", "-b", "--factory-startup", "--disable-autoexec", "--python-exit-code", "1", "{input.scene}",
+      "--python", "{pack}/scripts/render.py", "--", "--params", "{params_json}", "--scene", "{input.scene}", "--out", "{out}"]
