@@ -40,7 +40,7 @@ def venv(path):
 
 
 def pip(path, packages, *extra):
-    step([str(venv_python(path)), "-m", "pip", "install", "--disable-pip-version-check", "--upgrade", *extra, *packages], f"installing {', '.join(packages)}")
+    step([str(venv_python(path)), "-m", "pip", "install", "--disable-pip-version-check", "--no-cache-dir", "--upgrade", *extra, *packages], f"installing {', '.join(packages)}")
 
 
 def hugging_face_steps():
