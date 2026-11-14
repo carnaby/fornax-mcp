@@ -58,6 +58,11 @@ describe('loadPack', () => {
     refused({ run: ['{tool.ffmpeg}'] }, /ffmpeg is not listed in tools/);
   });
 
+  test('{node} works in setup, check and run, without any tool', () => {
+    const p = loadPack(pack({ tools: [], setup: ['{node}', '{pack}/s.mjs'], check: ['{node}', '{pack}/c.mjs'], run: ['{node}', '{pack}/r.mjs', '{params_json}'] }));
+    expect(p.impl).toEqual({ tools: [], setup: ['{node}', '{pack}/s.mjs'], check: ['{node}', '{pack}/c.mjs'], run: ['{node}', '{pack}/r.mjs', '{params_json}'] });
+  });
+
   test('an optional parameter without a default reaches the tool only through {params_json}', () => {
     refused({ run: ['{tool.blender}', '--seed={params.seed}'] }, /only through \{params_json\}/);
   });

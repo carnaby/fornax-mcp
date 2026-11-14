@@ -9,14 +9,15 @@ export type TemplateSymbol =
   | { kind: 'out' }
   | { kind: 'work' }
   | { kind: 'pack' }
-  | { kind: 'python' };
+  | { kind: 'python' }
+  | { kind: 'node' };
 
 export class TemplateError extends Error {}
 
 /** Every `{…}` is a symbol; there is no escape for literal braces. */
 const ANY = /\{([^{}]*)\}/g;
 const NAMED = /^(params|input|tool)\.([a-z][a-z0-9_]{0,39})$/;
-const PLAIN = ['params_json', 'out', 'work', 'pack', 'python'] as const;
+const PLAIN = ['params_json', 'out', 'work', 'pack', 'python', 'node'] as const;
 
 function parseSymbol(text: string): TemplateSymbol {
   const m = NAMED.exec(text);
@@ -54,7 +55,14 @@ export type JobContext = {
 };
 
 /** `job` is present only for `run`; `setup` and `check` have no job. */
-export type ExpandContext = { pack: string; tools: Record<string, string>; job?: JobContext; platform?: NodeJS.Platform };
+export type ExpandContext = {
+  pack: string;
+  tools: Record<string, string>;
+  job?: JobContext;
+  platform?: NodeJS.Platform;
+  /** {node}: the Node the worker runs on (process.execPath); tests pass a fixed path. */
+  node?: string;
+};
 
 function text(v: unknown, what: string): string {
   if (typeof v === 'string') return v;
@@ -72,6 +80,8 @@ function valueOf(s: TemplateSymbol, ctx: ExpandContext): string | string[] {
       return ctx.pack;
     case 'python':
       return pythonPath(ctx.pack, ctx.platform);
+    case 'node':
+      return ctx.node ?? process.execPath;
     case 'tool':
       if (!Object.hasOwn(ctx.tools, s.name)) throw new TemplateError(`tool ${s.name} has no path in worker.yaml`);
       return ctx.tools[s.name]!;

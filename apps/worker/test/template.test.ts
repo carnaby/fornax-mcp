@@ -70,3 +70,11 @@ describe('expandArgv', () => {
     expect(() => expandArgv(['{tool.ffmpeg}'], ctx)).toThrow(/tool ffmpeg has no path/);
   });
 });
+
+describe('{node}', () => {
+  test('is the Node the worker runs on, or the one the context names', () => {
+    expect(symbolsOf('{node}')).toEqual([{ kind: 'node' }]);
+    expect(expandArgv(['{node}', '{pack}/scripts/x.mjs'], { pack: '/p/lease', tools: {} })).toEqual([process.execPath, '/p/lease/scripts/x.mjs']);
+    expect(expandArgv(['{node}'], { pack: '/p', tools: {}, node: '/opt/node/bin/node' })).toEqual(['/opt/node/bin/node']);
+  });
+});

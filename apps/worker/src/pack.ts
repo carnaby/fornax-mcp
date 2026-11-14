@@ -69,6 +69,7 @@ function symbolProblem(s: TemplateSymbol, whole: boolean, where: Where, impl: Pa
   switch (s.kind) {
     case 'pack':
     case 'python':
+    case 'node':
       return null;
     case 'tool':
       return impl.tools.includes(s.name) ? null : `${text}: ${s.name} is not listed in tools`;

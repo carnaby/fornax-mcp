@@ -80,6 +80,7 @@ U+2029). The server checks params when a job is submitted, and the worker checks
 | `{pack}` | the pack directory |
 | `{tool.<name>}` | the tool's path from `worker.yaml`; the tool must be listed in `tools` |
 | `{python}` | Python of `{pack}/env` (`Scripts\python.exe` on Windows, `bin/python` on Linux) |
+| `{node}` | the Node.js the worker itself runs on: a pack of Node scripts needs no tool in `worker.yaml` |
 
 Rules, checked when the pack loads:
 
@@ -89,7 +90,7 @@ Rules, checked when the pack loads:
   tool only through `{params_json}`.
 - A number that may be negative (no `minimum: 0`) cannot be a whole element, because `-1` would read as an option;
   embed it instead (`--offset={params.offset}`).
-- `setup` and `check` run without a job: only `{pack}`, `{tool.<name>}` and `{python}` work there.
+- `setup` and `check` run without a job: only `{pack}`, `{tool.<name>}`, `{python}` and `{node}` work there.
 - Input names must not be Windows device names (`con`, `nul`, `com1`, …).
 
 ## The tool's process
