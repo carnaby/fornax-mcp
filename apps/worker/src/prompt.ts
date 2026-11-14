@@ -49,7 +49,7 @@ export function buildTypePrompt(p: PromptInput): string {
     '- Keep parameter schemas strict: enums, bounded numbers, patterns and maxLength; nothing free-form that ends up on a command line.',
     '- Inputs reach the tool only through {input.<name>}; never build a file path from a parameter.',
     `- Install everything (venv, packages, models, downloads) only into ${env}; change nothing outside the pack directory.`,
-    '- Exit codes: 0 done, 1 the job failed (it may be retried), 2 invalid input (never retried), 3 broken environment (no GPU, missing model).',
+    '- Exit codes: 0 done, 1 the job failed (it may be retried), 2 invalid input (never retried), 3 broken environment (no GPU, missing model), 4 a failure a retry would not change (never retried; e.g. an inner time limit, or out of memory after every attempt the tool makes).',
     '',
     '## Steps',
     '',
