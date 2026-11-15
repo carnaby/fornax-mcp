@@ -7,6 +7,7 @@ import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { BetterSQLiteSession } from 'drizzle-orm/better-sqlite3/session';
 import type { MigrationConfig } from 'drizzle-orm/migrator';
 import { BaseSQLiteDatabase, SQLiteSyncDialect } from 'drizzle-orm/sqlite-core';
+import { repairQueueRanks } from '../domain/queue-order.js';
 import * as schema from './schema.js';
 import { SqliteDatabase } from './sqlite.js';
 
@@ -49,5 +50,7 @@ export function openDb(file: string) {
   sqlite.pragma('busy_timeout = 5000');
   const db = drizzleOver(sqlite);
   migrateDb(db, { migrationsFolder: MIGRATIONS });
+  // Spec 06 2.1: jobs that waited before the queue had an explicit order (or lost their place) get one.
+  repairQueueRanks(db);
   return { db, sqlite, close: () => sqlite.close() };
 }

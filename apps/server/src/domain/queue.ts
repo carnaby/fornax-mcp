@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { type ClaimedJob, contractHash, LEASE_MS, type ReleaseReason } from '@fornax/protocol';
-import { and, asc, desc, eq, inArray, isNull, lt, lte } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, lt, lte } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { files, type JobState, jobs, jobTypes, tokens } from '../db/schema.js';
 import { conflict, notFound } from './errors.js';
 import { finishJob } from './finish.js';
 import { isOffered } from './job-types.js';
 import type { JobRow } from './jobs.js';
+import { placeJob } from './queue-order.js';
 import { jobChanges, jobSignal } from './signal.js';
 
 export { LEASE_MS };
@@ -42,6 +43,7 @@ export function expireLeases(db: Db, now: Date): number {
         .set({ state: 'queued', error: LEASE_EXPIRED, leaseExpiresAt: null, runAfter: now, updatedAt: now })
         .where(and(eq(jobs.id, j.id), eq(jobs.state, 'running')))
         .run();
+      placeJob(db, j.id, 'top');
     }
   });
   if (expired.length) {
@@ -75,6 +77,7 @@ export function abandonRunning(db: Db, now: Date): number {
         .set({ ...values, leaseId: null, leaseExpiresAt: null, confirmedAt: null, runAfter: now, updatedAt: now })
         .where(and(eq(jobs.id, j.id), eq(jobs.state, 'running')))
         .run();
+      placeJob(db, j.id, 'top');
     }
   });
   jobSignal.wake();
@@ -93,7 +96,7 @@ export function claimJob(db: Db, now: Date): JobRow | null {
       // A job of a token that is no longer active (revoked) is never run.
       .innerJoin(tokens, and(eq(tokens.id, jobs.ownerTokenId), eq(tokens.status, 'active')))
       .where(and(eq(jobs.state, 'queued'), lte(jobs.runAfter, now)))
-      .orderBy(desc(jobs.priority), asc(jobs.createdAt), asc(jobs.id))
+      .orderBy(asc(jobs.queueRank), asc(jobs.id))
       .limit(1)
       .get();
     if (!next) return null;
@@ -165,6 +168,7 @@ export function failJob(
       .set({ state: 'queued', error, leaseId: null, leaseExpiresAt: null, runAfter: retryAt, finishedAt: null, updatedAt: now })
       .where(eq(jobs.id, id))
       .run();
+    placeJob(db, id, 'top');
     return { state: 'queued' as const, retryAt };
   });
   if (result.state === 'queued') jobSignal.wake();
@@ -190,6 +194,7 @@ export function releaseJob(db: Db, id: string, lease: string, now: Date, reason:
       })
       .where(eq(jobs.id, id))
       .run();
+    placeJob(db, id, 'top');
     return false;
   });
   if (again) return failJob(db, id, lease, { error: ENVIRONMENT_AGAIN, permanent: false }, now).state;

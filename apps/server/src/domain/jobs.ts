@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { extname } from 'node:path';
 import { JOB_STATES, PRIORITIES, type Priority, validateParams } from '@fornax/protocol';
-import { and, count, desc, eq, gt, inArray, lt, or } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, lt, or } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import type { Config } from '../config.js';
 import type { Db } from '../db/client.js';
@@ -9,6 +9,7 @@ import { files, type JobState, jobs, jobTypes } from '../db/schema.js';
 import { conflict, notFound, tooMany, unprocessable } from './errors.js';
 import { finishJob } from './finish.js';
 import { getOfferedType, isOffered } from './job-types.js';
+import { placeJob } from './queue-order.js';
 import { jobChanges, jobSignal } from './signal.js';
 import { callbackAllowed } from './webhooks.js';
 import { workerOnline, type WorkerView } from './worker-state.js';
@@ -64,13 +65,16 @@ export function submitJob(db: Db, config: Config, owner: string, input: SubmitIn
       priority: PRIORITIES.indexOf(input.priority ?? 'normal'), group: input.group ?? null, callbackUrl: callbackHref,
       state: 'queued', attempts: 0, envReleases: 0, runAfter: now, leaseId: null, leaseExpiresAt: null, confirmedAt: null, progress: null, progressMessage: null,
       error: null, manifest: null, createdAt: now, startedAt: null, finishedAt: null, updatedAt: now,
+      queueRank: null,
     };
     tx.insert(jobs).values(row).run();
     const ids = Object.values(inputs);
     if (ids.length) tx.update(files).set({ jobId: row.id }).where(inArray(files.id, ids)).run();
+    // Spec 06 2.1.2: a new job's place follows its priority; the answer carries it.
+    placeJob(db, row.id, 'priority');
     jobSignal.wake();
     jobChanges.wake();
-    return row;
+    return tx.select().from(jobs).where(eq(jobs.id, row.id)).get()!;
   });
 }
 
@@ -98,17 +102,13 @@ export function cancelJob(db: Db, owner: string, id: string, now: Date): JobRow 
 
 /** 1-based place in the queue among jobs of offered types; null when not waiting or its type is withdrawn. */
 export function queuePosition(db: Db, row: JobRow): number | null {
-  if (row.state !== 'queued' || !isOffered(db, row.type)) return null;
+  if (row.state !== 'queued' || row.queueRank === null || !isOffered(db, row.type)) return null;
+  const rank = row.queueRank;
   const ahead = db
     .select({ n: count() })
     .from(jobs)
     .innerJoin(jobTypes, and(eq(jobTypes.name, jobs.type), eq(jobTypes.offered, true)))
-    .where(
-      and(
-        eq(jobs.state, 'queued'),
-        or(gt(jobs.priority, row.priority), and(eq(jobs.priority, row.priority), lt(jobs.createdAt, row.createdAt)), and(eq(jobs.priority, row.priority), eq(jobs.createdAt, row.createdAt), lt(jobs.id, row.id))),
-      ),
-    )
+    .where(and(eq(jobs.state, 'queued'), or(lt(jobs.queueRank, rank), and(eq(jobs.queueRank, rank), lt(jobs.id, row.id)))))
     .get();
   return (ahead?.n ?? 0) + 1;
 }

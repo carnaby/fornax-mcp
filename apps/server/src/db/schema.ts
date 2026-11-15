@@ -100,8 +100,10 @@ export const jobs = sqliteTable(
     startedAt: ts('started_at'),
     finishedAt: ts('finished_at'),
     updatedAt: ts('updated_at').notNull(),
+    /** Spec 06 2.1: the place in the queue (lower runs first). Read only while the job is queued; every move into `queued` sets it. */
+    queueRank: integer('queue_rank'),
   },
-  (t) => [index('jobs_queue').on(t.state, t.priority, t.createdAt), index('jobs_owner').on(t.ownerTokenId), index('jobs_group').on(t.group)],
+  (t) => [index('jobs_queue').on(t.state, t.queueRank), index('jobs_owner').on(t.ownerTokenId), index('jobs_group').on(t.group)],
 );
 
 /** The one worker: one row with id 1. */
