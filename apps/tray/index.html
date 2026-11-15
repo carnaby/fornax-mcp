@@ -6,7 +6,45 @@
     <title>Fornax</title>
   </head>
   <body>
-    <main id="app"></main>
+    <main id="tray" class="tray">
+      <section class="card">
+        <div class="headline">
+          <span id="dot" class="dot" data-icon="stopped"></span>
+          <h1 id="headline">Fornax</h1>
+        </div>
+        <p id="server" class="server" hidden></p>
+        <p id="note" class="note" hidden></p>
+        <div class="buttons">
+          <button id="start" type="button" class="primary" disabled>Start worker</button>
+          <button id="stop" type="button" disabled>Stop worker</button>
+          <button id="pause" type="button" disabled>Pause queue</button>
+        </div>
+        <p id="pause-error" class="action-error" hidden></p>
+        <div id="quit" class="quit" hidden>
+          <p>Stop the worker and quit? The running job goes back to the queue.</p>
+          <div class="buttons">
+            <button id="quit-yes" type="button" class="primary">Quit</button>
+            <button id="quit-no" type="button">Keep running</button>
+          </div>
+        </div>
+      </section>
+      <section class="card queue">
+        <h2>Running</h2>
+        <div id="running"></div>
+      </section>
+      <section class="card queue">
+        <h2>Waiting (<span id="waiting-count">0</span>)</h2>
+        <ol id="waiting" class="jobs"></ol>
+      </section>
+      <section class="card queue">
+        <h2>Finished</h2>
+        <ol id="finished" class="jobs"></ol>
+      </section>
+      <details id="log-box" class="card">
+        <summary>Log</summary>
+        <ol id="log" class="log"></ol>
+      </details>
+    </main>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

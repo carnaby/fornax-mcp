@@ -1,0 +1,52 @@
+// What the Rust core sends (state.rs: Snapshot, JobView, LogLine; serde renames the fields to camelCase). A test in
+// state.rs (the_snapshot_keeps_the_names_types_ts_reads) pins the names.
+export type Icon = 'stopped' | 'attention' | 'idle' | 'busy' | 'paused' | 'error';
+
+export type LogLine = { atMs: number; text: string; error: boolean };
+
+export type JobView = {
+  id: string;
+  type: string;
+  owner: string;
+  what: string;
+  state: string;
+  priority: string;
+  typeUnavailable: boolean;
+  retryAtMs: number | null;
+  createdAtMs: number | null;
+  startedAtMs: number | null;
+  finishedAtMs: number | null;
+  progress: number | null;
+  progressMessage: string | null;
+  error: string | null;
+  resultUrl: string;
+  pending: boolean;
+  actionError: string | null;
+};
+
+export type Snapshot = {
+  icon: Icon;
+  tooltip: string;
+  headline: string;
+  note: string | null;
+  canStart: boolean;
+  canStop: boolean;
+  stopLabel: string;
+  canPause: boolean;
+  paused: boolean;
+  pauseLabel: string;
+  pauseError: string | null;
+  startWorker: boolean;
+  confirmQuit: boolean;
+  queueKnown: boolean;
+  queueNote: string | null;
+  serverDownSinceMs: number | null;
+  serverMessage: string | null;
+  /** The last failure was a refused worker token: serverMessage says so on its own line (spec 06 § 5). */
+  serverRefused: boolean;
+  offsetMs: number;
+  running: JobView | null;
+  queued: JobView[];
+  finished: JobView[];
+  log: LogLine[];
+};
