@@ -12,6 +12,7 @@ import { hasRunning, killRunning, runProcess } from '../src/process.js';
 import type { Ctx } from '../src/commands/context.js';
 import { LEASE_USAGE } from '../src/commands/lease.js';
 import { readClientToken, readToken, readWorkerConfig, saveToken } from '../src/config.js';
+import { writeWorkerDir } from './bundle-fixture.js';
 import { FAKE_SMI, testPaths, useTempDir, waitFor, writeEchoPack } from './helpers.js';
 
 const tmp = useTempDir();
@@ -248,10 +249,34 @@ describe('fornax CLI', () => {
     expect((await run('doctor')).text).toMatch(/^WARN\s+token file .* can be read or changed by other users \(mode 0644\); run chmod 600 /m);
   });
 
+  test('doctor: says whether this fornax is the installed copy and when the server offers another version (spec 05c 5.3)', async () => {
+    const zip = join(tmp(), 'fornax-worker.zip');
+    writeFileSync(zip, Buffer.from('PK\u0005\u0006fake'));
+    const s = await startTestServer({ workerZip: zip });
+    servers.push(s);
+    const { ctx, run } = cli();
+    mkdirSync(ctx.paths.configDir, { recursive: true });
+    writeFileSync(ctx.paths.configFile, `server: ${s.url}\n`);
+    saveToken(ctx.paths, s.issueToken('pc', 'worker'));
+    ctx.currentVersion = '0.0.1';
+    ctx.script = join(tmp(), 'fornax.mjs');
+    let r = await run('doctor');
+    expect(r.text).toContain('WARN  this fornax is not installed (fornax install)');
+    expect(r.text).toContain(`WARN  the server offers fornax ${FORNAX_VERSION} (you have 0.0.1): fornax update`);
+    writeWorkerDir(ctx.paths.appDir, { version: '0.0.1' });
+    ctx.script = join(ctx.paths.appDir, 'fornax.mjs');
+    r = await run('doctor');
+    expect(r.text).toContain(`ok    fornax 0.0.1 installed in ${ctx.paths.appDir}`);
+  });
+
   test('doctor shows the card as the worker sees it; a failed reading with a limit fails', async () => {
     const { ctx, run } = cli();
     mkdirSync(ctx.paths.configDir, { recursive: true });
     writeFileSync(ctx.paths.configFile, 'server: https://fornax.example.com\ngpu:\n  max_used_mib: 2048\n');
+    // No request to the example host: doctor asks the server for its bundle version.
+    ctx.fetch = async () => {
+      throw new TypeError('fetch failed');
+    };
     expect((await run('doctor')).text).toMatch(/^ok\s+gpu: 1130 of 16311 MiB in use, limit 2048$/m);
     ctx.nvidiaSmi = [process.execPath, FAKE_SMI, 'fail'];
     const failed = await run('doctor');

@@ -4,8 +4,11 @@ import { checkPack, findTool } from '../checks.js';
 import { ClientApi } from '../client-api.js';
 import { ConfigError, readClientToken, readToken, readWorkerConfig, serverWarning, type WorkerConfig } from '../config.js';
 import { doctorGpuLines, readGpu } from '../gpu.js';
+import { isInstalledCopy } from '../install/app.js';
+import { fetchBundleInfo } from '../install/bundle-info.js';
 import { loadPacks } from '../pack.js';
-import { apiFor, type Ctx } from './context.js';
+import { WORKER_VERSION } from '../version.js';
+import { apiFor, runningScript, type Ctx } from './context.js';
 
 /** `fornax doctor [type]`: configuration, server and token, tools, and each pack's check. Exit 0 only when all is well. */
 export async function doctor(ctx: Ctx, only?: string): Promise<number> {
@@ -49,6 +52,18 @@ export async function doctor(ctx: Ctx, only?: string): Promise<number> {
       else if (e instanceof ApiError && e.status === 401) line(false, `server ${config.server}: the token is refused (revoked, replaced or never registered)`);
       else if (e instanceof NetworkError) line(false, `server ${config.server}: unreachable (${e.message})`);
       else throw e;
+    }
+  }
+  // Spec 05c 5.3: where this program runs from, and whether the server offers another version.
+  const version = ctx.currentVersion ?? WORKER_VERSION;
+  if (isInstalledCopy(runningScript(ctx), ctx.paths)) line(true, `fornax ${version} installed in ${ctx.paths.appDir}`);
+  else warn('this fornax is not installed (fornax install)');
+  if (config) {
+    try {
+      const offered = (await fetchBundleInfo(config.server, ctx.signal, 5000, ctx.fetch)).version;
+      if (offered !== version) warn(`the server offers fornax ${offered} (you have ${version}): fornax update`);
+    } catch {
+      // Unreachable or no bundle: the server line above already says what matters.
     }
   }
   // Spec 05a 4.3: fornax lease submits with a client token of its own.
