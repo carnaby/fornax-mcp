@@ -48,6 +48,32 @@ describe('restartCheck', () => {
     expect(restartCheck(paths, { version: '0.3.0', installed: true, out: () => {} })()).toBe(false);
     expect(existsSync(paths.restartFile)).toBe(false);
   });
+
+  test('a restart file that cannot be removed never throws; a damaged one is tried again next round', () => {
+    const paths = testPaths(tmp());
+    mkdirSync(paths.dataDir, { recursive: true });
+    writeFileSync(paths.restartFile, 'not json');
+    let tries = 0;
+    const remove = () => {
+      tries++;
+      throw Object.assign(new Error('held'), { code: 'EPERM' });
+    };
+    const check = restartCheck(paths, { version: '0.3.0', installed: true, out: () => {}, remove });
+    expect(check()).toBe(false);
+    expect(check()).toBe(false);
+    expect(tries).toBe(2);
+  });
+
+  test('a request for another version restarts even when its file cannot be removed', () => {
+    const paths = testPaths(tmp());
+    const out: string[] = [];
+    writeRestartRequest(paths, '0.4.0');
+    const remove = () => {
+      throw Object.assign(new Error('held'), { code: 'EPERM' });
+    };
+    expect(restartCheck(paths, { version: '0.3.0', installed: true, out: (l) => out.push(l), remove })()).toBe(true);
+    expect(out).toEqual(['restarting for fornax 0.4.0']);
+  });
 });
 
 const closers: (() => Promise<void>)[] = [];

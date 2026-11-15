@@ -31,19 +31,29 @@ export function readRestartRequest(paths: Paths): string | null | undefined {
 /** The worker child's exit code for "start me again" (spec 05c 5.1); the supervisor runs it again. */
 export const RESTART_EXIT = 75;
 
-const remove = (file: string) => rmSync(file, { force: true });
-
 /**
  * Spec 05c 5.2: asked between jobs. True means restart now (the request is removed and the line printed). A request
  * for the version this worker is, or a damaged file, is removed; a copy outside app says once what to do and keeps it.
+ * A file that cannot be removed (held by another program) never stops the worker: the next round tries again, and
+ * after a restart the new child sees its own version and removes it.
  */
-export function restartCheck(paths: Paths, o: { version: string; installed: boolean; out: (line: string) => void }): () => boolean {
+export function restartCheck(
+  paths: Paths,
+  o: { version: string; installed: boolean; out: (line: string) => void; /** Test seam (default rmSync, force). */ remove?: (file: string) => void },
+): () => boolean {
+  const remove = () => {
+    try {
+      (o.remove ?? ((f: string) => rmSync(f, { force: true })))(paths.restartFile);
+    } catch {
+      // Tried again next round.
+    }
+  };
   let told = false;
   return () => {
     const v = readRestartRequest(paths);
     if (v === undefined) return false;
     if (v === null || v === o.version) {
-      remove(paths.restartFile);
+      remove();
       return false;
     }
     if (!o.installed) {
@@ -51,7 +61,7 @@ export function restartCheck(paths: Paths, o: { version: string; installed: bool
       told = true;
       return false;
     }
-    remove(paths.restartFile);
+    remove();
     o.out(`restarting for fornax ${v}`);
     return true;
   };
