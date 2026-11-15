@@ -1,10 +1,15 @@
+import { join } from 'node:path';
 import { readGpu } from '../gpu.js';
+import { isInstalledCopy } from '../install/app.js';
+import { syncShippedPacks } from '../install/packs.js';
 import { lockWorker, sweepJobs } from '../instance.js';
 import { runWorker } from '../loop.js';
-import { connect, type Ctx } from './context.js';
+import { restartCheck } from '../restart.js';
+import { WORKER_VERSION } from '../version.js';
+import { connect, type Ctx, runningScript } from './context.js';
 
-/** `fornax worker [--once]`: one per PC, under `<data>/worker.lock`. */
-export async function workerCommand(ctx: Ctx, once: boolean): Promise<number> {
+/** `fornax worker [--once]` (the real worker, run by the supervisor as `worker --child`): one per PC, under `<data>/worker.lock`. */
+export async function workerCommand(ctx: Ctx, once: boolean, opts: { child?: boolean; syncPacks?: typeof syncShippedPacks } = {}): Promise<number> {
   const { config, api } = connect(ctx);
   const lock = lockWorker(ctx.paths);
   if (!('release' in lock)) {
@@ -21,10 +26,20 @@ export async function workerCommand(ctx: Ctx, once: boolean): Promise<number> {
     if (swept.failed) {
       ctx.out(`${swept.failed} leftover job ${swept.failed === 1 ? 'directory' : 'directories'} could not be removed (${swept.code}); a process of an earlier run may still hold a file`);
     }
+    const installed = isInstalledCopy(runningScript(ctx), ctx.paths);
+    // Spec 05c 4.4: the installed copy brings the installed built-in packs up to its own before the first claim.
+    if (installed) {
+      try {
+        await (opts.syncPacks ?? syncShippedPacks)({ shippedDir: join(ctx.paths.appDir, 'types'), typesDir: ctx.paths.typesDir, tools: config.tools, out: ctx.out, write: ctx.write, signal: ctx.signal });
+      } catch (e) {
+        ctx.out(`WARN  the installed types could not be brought up to date (${(e as NodeJS.ErrnoException).code ?? (e as Error).constructor.name}); the worker starts with them as they are`);
+      }
+    }
+    const restart = opts.child ? restartCheck(ctx.paths, { version: ctx.currentVersion ?? WORKER_VERSION, installed, out: ctx.out }) : undefined;
     const limit = config.gpu.maxUsedMib;
     const gpu = limit === null ? undefined : { maxUsedMib: limit, measure: () => readGpu({ command: ctx.nvidiaSmi }) };
     if (gpu) ctx.out(`the card is checked before each job: no job while more than ${limit} MiB of it are in use`);
-    return await runWorker({ api, paths: ctx.paths, tools: config.tools, out: ctx.out, signal: ctx.signal, once, gpu, ...ctx.loopOptions });
+    return await runWorker({ api, paths: ctx.paths, tools: config.tools, out: ctx.out, signal: ctx.signal, once, gpu, restart, ...ctx.loopOptions });
   } finally {
     process.off('exit', onExit);
     lock.release();

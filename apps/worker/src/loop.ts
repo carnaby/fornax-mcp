@@ -6,6 +6,7 @@ import { packsSignature, preparePacks } from './checks.js';
 import type { GpuReading } from './gpu.js';
 import type { Pack } from './pack.js';
 import type { Paths } from './paths.js';
+import { RESTART_EXIT } from './restart.js';
 import { type JobApi, type JobDeps, runJob } from './run-job.js';
 
 export const CLAIM_WAIT_S = 25;
@@ -29,6 +30,8 @@ export type LoopOptions = {
   jobOptions?: Pick<JobDeps, 'heartbeatMs' | 'killGraceMs' | 'retryDelaysMs' | 'leaseMs' | 'leaseMarginMs'>;
   /** Spec 05a 2: check the card before each claim (only when worker.yaml sets gpu.max_used_mib). */
   gpu?: { maxUsedMib: number; measure: () => Promise<GpuReading>; pollMs?: number; resendMs?: number };
+  /** Spec 05c 5.2: asked at the start of every round (between jobs); true ends the loop with RESTART_EXIT. Not with `once`. */
+  restart?: () => boolean;
 };
 
 /** `fornax worker` (spec 7.4): announce the ready types, claim, run, repeat. Returns the process exit code. */
@@ -95,6 +98,7 @@ export async function runWorker(o: LoopOptions): Promise<number> {
   try {
     await refresh();
     while (!o.signal.aborted) {
+      if (!o.once && o.restart?.()) return RESTART_EXIT;
       if (packsSignature(o.paths.typesDir) !== signature) await refresh();
       // A card held by programs outside the queue keeps every job waiting (no claim: --once waits too).
       if (gate && !(await gate.ready())) continue;

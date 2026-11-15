@@ -26,6 +26,26 @@ async function setup(overrides: Parameters<typeof startTestServer>[0] = {}) {
 const fast = { claimWaitS: 10, jobOptions: { heartbeatMs: 200, killGraceMs: 500, retryDelaysMs: [10, 10] } };
 
 describe('runWorker', () => {
+  test('a restart request ends the loop with 75 between jobs, never during one', async () => {
+    const { paths, api, alice, say } = await setup();
+    let asked = 0;
+    let running = false;
+    let done = false;
+    const worker = runWorker({
+      api, paths, tools: NODE_TOOLS,
+      out: (l) => { say(l); if (l.includes(': echo, attempt')) running = true; if (/: succeeded/.test(l)) { running = false; done = true; } },
+      signal: new AbortController().signal, ...fast, claimWaitS: 1,
+      // Asked at the start of every round, never while the job runs; it says "restart" once the job is done.
+      restart: () => { asked++; expect(running).toBe(false); return done; },
+    });
+    // The server takes jobs only of offered types: submit once the worker offers echo.
+    await waitFor(async () => (await alice.offered()).includes('echo'), 10_000, 'echo to be offered');
+    const job = await alice.submit('echo', { mode: 'slow', ms: 1500 });
+    expect(await worker).toBe(75);
+    expect(asked).toBeGreaterThan(1);
+    expect((await alice.job(job.id)).state).toBe('succeeded');
+  });
+
   test('offers only packs whose check passes; a hanging check is cut off and the worker still starts', async () => {
     const { paths, api, alice, out, say } = await setup();
     writeEchoPack(paths.typesDir, { name: 'sick', check: ['{tool.node}', '-e', 'process.exit(1)'] });

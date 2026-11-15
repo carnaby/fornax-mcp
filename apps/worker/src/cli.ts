@@ -32,7 +32,7 @@ export const USAGE = usageText([
   'fornax --version',
 ]);
 
-type Flags = { server?: string; name?: string; force?: boolean; from?: string; once?: boolean; help?: boolean; version?: boolean };
+type Flags = { server?: string; name?: string; force?: boolean; from?: string; once?: boolean; child?: boolean; help?: boolean; version?: boolean };
 
 /** How a command's error ends: our own errors with their message, anything else only with its class (it may hold paths or tool output). */
 export function reportError(e: unknown, say: (line: string) => void): number {
@@ -68,6 +68,7 @@ export async function runCli(argv: string[], ctx: Ctx): Promise<number> {
         force: { type: 'boolean' },
         from: { type: 'string' },
         once: { type: 'boolean' },
+        child: { type: 'boolean' },
         help: { type: 'boolean', short: 'h' },
         version: { type: 'boolean', short: 'v' },
       },
@@ -96,7 +97,7 @@ export async function runCli(argv: string[], ctx: Ctx): Promise<number> {
     if (group === 'worker' && sub === 'pair' && shape(2, 'server', 'name', 'force') && flags.server && flags.name) {
       return await pair(ctx, { server: flags.server, name: flags.name, force: flags.force === true });
     }
-    if (group === 'worker' && sub === undefined && shape(1, 'once')) return await workerCommand(ctx, flags.once === true);
+    if (group === 'worker' && sub === undefined && shape(1, 'once', 'child')) return await workerCommand(ctx, flags.once === true, { child: flags.child === true });
     if (group === 'worker' && sub === 'queue' && shape(2)) return await queueCommand(ctx);
     if (group === 'doctor' && (shape(1) || shape(2))) return await doctor(ctx, sub);
     if (group === 'types' && sub === 'list' && shape(2)) return await typesList(ctx);
