@@ -117,9 +117,12 @@ def run(a, t0):
         raise Exit(ENVIRONMENT, str(e)) from None
     if not r.ok:
         shutil.rmtree(frames_root, ignore_errors=True)
-        for line in failure_lines(r, s.overlap):
+        # The worker reports the log's last line as the job's error: the summary and the tail first, the reason last.
+        reason, *rest = failure_lines(r, s.overlap)
+        say(f"no result (batches tried: {' -> '.join(map(str, r.tried))}, {r.seconds:.0f} s, peak VRAM {r.peak_mib} MiB)")
+        for line in rest:
             say(line)
-        raise Exit(REASON_CODES[r.reason], f"no result (batches tried: {' -> '.join(map(str, r.tried))}, {r.seconds:.0f} s, peak VRAM {r.peak_mib} MiB)")
+        raise Exit(REASON_CODES[r.reason], reason)
 
     stem = Path(a.video).stem
     folder = frames_root / stem

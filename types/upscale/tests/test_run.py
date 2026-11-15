@@ -16,6 +16,11 @@ FFPROBE = shutil.which("ffprobe")
 OK_BEHAVIOR = {"mode": "ok", "frames": 6, "width": 128, "height": 72}
 
 
+def last_line(log):
+    """The worker reports a failed job by the last non-empty line of its log."""
+    return [line for line in log.splitlines() if line.strip()][-1]
+
+
 @unittest.skipUnless(FFMPEG and FFPROBE, "ffmpeg and ffprobe are not on PATH")
 class RunTest(unittest.TestCase):
     def setUp(self):
@@ -85,12 +90,15 @@ class RunTest(unittest.TestCase):
         self.assertEqual(code, 4, err)
         self.assertEqual(len(self.calls()), 3)  # 21, 13, 9
         self.assertFalse((self.root / "out" / "upscaled.mp4").exists())
+        self.assertIn("no result (batches tried: 21 -> 13 -> 9", err)
+        self.assertIn("upscale: out of memory at batch 9 (tried 21 -> 13 -> 9), the end of the batch ladder", last_line(err))
 
     def test_an_early_out_of_memory_is_tried_again_later(self):
         code, _, err = self.run_job({**OK_BEHAVIOR, "mode": "early-oom"})
         self.assertEqual(code, 1, err)
         self.assertIn("before SeedVR2 began processing", err)
         self.assertEqual(len(self.calls()), 1)  # one attempt: no smaller batch is tried
+        self.assertIn("upscale: out of memory before SeedVR2 began processing: CUDA itself could not start", last_line(err))
 
     def test_a_wrong_frame_count_fails(self):
         code, _, err = self.run_job({**OK_BEHAVIOR, "mode": "few-frames"})
@@ -101,6 +109,7 @@ class RunTest(unittest.TestCase):
         code, _, err = self.run_job({**OK_BEHAVIOR, "mode": "hog"})
         self.assertEqual(code, 1, err)
         self.assertIn("killed by the VRAM watchdog: the card had 16000 MiB in use, over the limit of 15311", err)
+        self.assertIn("upscale: killed by the VRAM watchdog", last_line(err))
 
     def test_card_full_before_start_is_refused(self):
         self.pack = make_pack(self.root, OK_BEHAVIOR)
