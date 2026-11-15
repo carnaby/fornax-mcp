@@ -117,6 +117,13 @@ export const workerState = sqliteTable('worker', {
   waiting: text('waiting', { mode: 'json' }).$type<WorkerWaiting>(),
 });
 
+/** Spec 06 2.2: the operator's pause, one row with id 1; no row means "not paused". */
+export const queueControl = sqliteTable('queue_control', {
+  id: integer('id').primaryKey(),
+  paused: integer('paused', { mode: 'boolean' }).notNull(),
+  pausedAt: ts('paused_at'),
+});
+
 export type DeliveryStatus = 'pending' | 'sent' | 'failed';
 
 /** One webhook per finished job with a callback_url; the delivery loop sends it, at most three times. */

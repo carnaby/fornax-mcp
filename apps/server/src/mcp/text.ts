@@ -22,7 +22,7 @@ export const TOOL_DESCRIPTIONS = {
   list_jobs: 'Your jobs, newest first; filter by state or group.',
   cancel_job: 'Cancel one of your jobs. A queued job is canceled at once; a running one is stopped by the worker at its next heartbeat (within a few seconds).',
   queue_status:
-    'The whole queue: how many jobs wait and run, whether the worker is online, and the type, progress and start time of the running job. worker.waiting explains why nothing runs while jobs wait (e.g. other programs hold the GPU); its message says it in one sentence.',
+    "The whole queue: how many jobs wait and run, whether the worker is online, whether the worker's operator paused the queue (paused: the running job finishes, no other starts), and the type, progress and start time of the running job. worker.waiting explains why nothing runs while jobs wait (e.g. other programs hold the GPU); its message says it in one sentence.",
 } as const;
 
 /** Short names clients show for the tools. */

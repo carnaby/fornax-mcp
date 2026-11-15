@@ -7,6 +7,7 @@ import type { RouteDeps } from '../http/deps.js';
 import { deleteFiles } from './files.js';
 import { finishJob } from './finish.js';
 import { expireLeases } from './queue.js';
+import { queuePaused } from './queue-control.js';
 import { workerOnline } from './worker-state.js';
 
 export const TYPE_UNAVAILABLE = 'the worker has not offered this job type for too long';
@@ -129,6 +130,7 @@ export function queueStatus(db: Db, now: Date, viewer: string | null = null) {
   return {
     queued: counts.find((c) => c.state === 'queued')?.n ?? 0,
     running: counts.find((c) => c.state === 'running')?.n ?? 0,
+    paused: queuePaused(db),
     worker: workerOnline(db, now),
     current: running
       ? {

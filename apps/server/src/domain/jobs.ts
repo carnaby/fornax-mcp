@@ -9,6 +9,7 @@ import { files, type JobState, jobs, jobTypes } from '../db/schema.js';
 import { conflict, notFound, tooMany, unprocessable } from './errors.js';
 import { finishJob } from './finish.js';
 import { getOfferedType, isOffered } from './job-types.js';
+import { queuePaused } from './queue-control.js';
 import { placeJob } from './queue-order.js';
 import { jobChanges, jobSignal } from './signal.js';
 import { callbackAllowed } from './webhooks.js';
@@ -170,6 +171,7 @@ export function jobNote(db: Db, config: Config, row: JobRow, worker: WorkerView,
     const days = Math.round(config.retention.unavailableTypeMs / 86_400_000);
     return `waiting: the worker does not offer the type ${row.type} now; the job starts when it is offered again, or fails after ${days} days without it`;
   }
+  if (queuePaused(db)) return `waiting: the worker's operator paused the queue; the job waits until they resume it, ${AGAIN}`;
   if (worker.waiting) return worker.waiting.message;
   const retry = row.runAfter.getTime() > now.getTime() ? `; the next attempt starts at ${hhmm(row.runAfter)} at the earliest` : '';
   const running = db.select({ type: jobs.type, startedAt: jobs.startedAt }).from(jobs).where(eq(jobs.state, 'running')).get();

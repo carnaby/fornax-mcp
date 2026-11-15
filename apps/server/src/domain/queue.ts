@@ -7,6 +7,7 @@ import { conflict, notFound } from './errors.js';
 import { finishJob } from './finish.js';
 import { isOffered } from './job-types.js';
 import type { JobRow } from './jobs.js';
+import { queuePaused } from './queue-control.js';
 import { placeJob } from './queue-order.js';
 import { jobChanges, jobSignal } from './signal.js';
 
@@ -88,6 +89,8 @@ export function abandonRunning(db: Db, now: Date): number {
 /** The next due job of an offered type, under a fresh lease; null when there is none. */
 export function claimJob(db: Db, now: Date): JobRow | null {
   expireLeases(db, now);
+  // Spec 06 2.2: a paused queue gives no job; a resume wakes the waiting claims.
+  if (queuePaused(db)) return null;
   const row = db.transaction((tx) => {
     const next = tx
       .select({ id: jobs.id })
