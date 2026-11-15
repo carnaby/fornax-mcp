@@ -327,6 +327,32 @@ back (it returns to the queue, or fails), and once the server can be reached aga
 - **Windows:** a Task Scheduler task "At log on" running `%LOCALAPPDATA%\fornax\app\fornax.cmd worker`. Fornax ends a
   job's whole process tree when it stops; a process that detached from that tree (rare) survives a crash of the worker.
 
+## Tray app
+
+On the worker's PC the tray app starts the worker and shows the whole queue: the running job with its time and
+progress, the waiting jobs in the order they will run (drag them, or use ⤒ and ⤓), the finished ones with their
+result page and error. Pause queue lets the running job finish and starts no other; Stop worker gives the running job
+back to the queue. It tells you when a job fails, and when jobs wait while the worker is stopped or the queue is
+paused.
+
+1. Install `fornax` 0.5.0 or newer and pair this PC (see [Run the worker](#run-the-worker)); the tray runs the
+   installed `fornax.mjs` with Node.js 22 or newer.
+2. Download the installer from the GitHub release: `Fornax tray_<version>_x64_en-US.msi` on Windows (it is not
+   signed: SmartScreen asks, choose More info, Run anyway), the `.deb` or the `.AppImage` on Ubuntu (they need
+   `libwebkit2gtk-4.1-0` and `libayatana-appindicator3-1`; GNOME shows tray icons with the AppIndicator extension,
+   which Ubuntu enables).
+3. Start it once and tick Start at sign-in in its menu. At sign-in it starts without its window and starts the
+   worker. A worker you started yourself in a terminal shows as "Worker runs outside the tray"; stop it there if the
+   tray should own it.
+
+Settings, all optional, go in `tray.json` next to `worker.yaml` (`%APPDATA%\fornax\tray.json` on Windows,
+`~/.config/fornax/tray.json` on Linux): `{"node": "<path to node>", "start_worker": true}`. The menu item Start
+worker with the tray writes `start_worker`.
+
+Quit stops the worker first; its running job goes back to the queue. A tray started by the Windows installer starts
+itself once more through Explorer, so that tools installed through folder links (scoop) work for the worker. To remove
+the tray, uninstall Fornax tray in the Windows settings, or `sudo apt remove fornax-tray`.
+
 ## Security
 
 - Tokens are stored as SHA-256 hashes; a client token sees only its own jobs and files; a worker token cannot use the
@@ -343,10 +369,15 @@ pnpm install
 pnpm typecheck        # strict compiler checks double as the lint step
 pnpm test             # all packages, then the type packs' Python tests (needs Python 3.10+)
 pnpm bundle:worker    # dist/worker/fornax-worker-<version>.zip
+pnpm --filter @fornax/tray test:rust   # the tray's window build and Rust tests
 ```
 
-CI runs the tests on Ubuntu and Windows, builds and smoke-tests the Docker image, publishes it to GHCR from `main`,
-and attaches the worker zip to a release for every `v<version>` tag.
+`pnpm test` leaves the tray out; its check, `pnpm --filter @fornax/tray test:rust`, needs Rust 1.90+ and, on Linux,
+the Tauri packages listed in `.github/workflows/ci.yml`.
+
+CI runs the tests on Ubuntu and Windows, builds and smoke-tests the Docker image, tests the tray and builds its
+installers on Windows and Ubuntu 22.04, publishes the image to GHCR from `main`, and attaches the worker zip and the
+tray installers to a release for every `v<version>` tag.
 
 Related: [Tabula](https://github.com/carnaby/tabula-mcp), the memory server whose transcription worker Fornax grows out of.
 
