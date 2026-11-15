@@ -1,0 +1,16 @@
+# Direct dependencies of SeedVR2 (its requirements.txt at the pinned commit) and PyTorch with CUDA 12.8 (RTX 50xx).
+# The lock is requirements.txt; how to make it again is in its header.
+torch==2.11.0+cu128
+torchvision==0.26.0+cu128
+safetensors
+numpy
+tqdm
+psutil
+einops
+omegaconf>=2.3.0
+diffusers>=0.33.1
+peft>=0.17.0
+rotary_embedding_torch>=0.5.3
+opencv-python
+gguf
+matplotlib
