@@ -35,6 +35,9 @@ jobs:
       # Strict compiler checks are the lint step.
       - run: pnpm typecheck
       - run: pnpm build
+      # The upscale pack's encode tests need ffmpeg and ffprobe (they are skipped without them).
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       # Workspace tests, then the type packs' Python tests (the runners have Python 3).
       - run: pnpm test
 
