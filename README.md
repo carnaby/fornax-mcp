@@ -1,16 +1,16 @@
 # Fornax
 
 **A GPU job queue served over MCP.** One worker on a PC with a GPU owns the card; agents and apps on other machines
-send it jobs (transcription, rendering, and any type you add) and get the results back with a manifest.
+send it jobs (transcription, rendering, upscaling, and any type you add) and get the results back with a manifest.
 
 *Fornax* is Latin for an oven, and the name of a constellation.
 
-Status: an early release (0.3). The API may still change.
+Status: an early release (0.4). The API may still change.
 
 ```
 agent (MCP) ─┐                    ┌─ fornax worker on the GPU PC (pulls jobs; no open port)
              ├──► Fornax server ◄─┤
-app (REST) ──┘   queue, files,    └─ type packs: transcribe, render, your own
+app (REST) ──┘   queue, files,    └─ type packs: transcribe, render, upscale, your own
                  result pages
 ```
 
@@ -162,11 +162,13 @@ On the PC with the GPU (Windows or Linux, Node.js 22 or newer):
    tools:
      python: python3
      ffmpeg: ffmpeg
+     ffprobe: ffprobe
      blender: /usr/bin/blender
    ```
 
 4. Install job types and check them: `fornax types install transcribe`, `fornax types install render`,
-   `fornax doctor`. The `render` pack needs scenes that are self-contained (File > External Data > Pack Resources).
+   `fornax types install upscale` (needs ffprobe in `worker.yaml`), `fornax doctor`. The `render` pack needs scenes
+   that are self-contained (File > External Data > Pack Resources).
 5. Start it: `fornax worker`. Ctrl+C gives the running job back; a second Ctrl+C kills the tool.
 
 ### Updating
