@@ -165,25 +165,34 @@ export class WorkerApi {
     return (await (await this.request('GET', '/queue')).json()) as WorkerQueue;
   }
 
+  /** The JSON body of an answer; a body that breaks off or stalls is a NetworkError, as a failed request is. */
+  private async jsonOf<T>(res: Response, signal?: AbortSignal): Promise<T> {
+    try {
+      return (await res.json()) as T;
+    } catch (e) {
+      throw networkErrorOf(e, signal);
+    }
+  }
+
   /** Spec 06 2.3: the whole queue for the operator; with `change` and `wait` the server answers when it changes. */
   async operatorQueue(o: { wait?: number; change?: string; signal?: AbortSignal } = {}): Promise<OperatorQueue> {
     const q = new URLSearchParams();
     if (o.wait) q.set('wait', String(o.wait));
     if (o.change) q.set('change', o.change);
     const query = q.toString();
-    return (await (await this.request('GET', `/jobs${query ? `?${query}` : ''}`, { signal: o.signal })).json()) as OperatorQueue;
+    return this.jsonOf<OperatorQueue>(await this.request('GET', `/jobs${query ? `?${query}` : ''}`, { signal: o.signal }), o.signal);
   }
 
   async moveJob(id: string, target: MoveTarget): Promise<OperatorQueue> {
-    return (await (await this.request('POST', `/jobs/${enc(id)}/move`, { json: target })).json()) as OperatorQueue;
+    return this.jsonOf<OperatorQueue>(await this.request('POST', `/jobs/${enc(id)}/move`, { json: target }));
   }
 
   async cancelAnyJob(id: string): Promise<OperatorQueue> {
-    return (await (await this.request('POST', `/jobs/${enc(id)}/cancel`)).json()) as OperatorQueue;
+    return this.jsonOf<OperatorQueue>(await this.request('POST', `/jobs/${enc(id)}/cancel`));
   }
 
   async setPaused(paused: boolean): Promise<OperatorQueue> {
-    return (await (await this.request('PUT', '/pause', { json: { paused } })).json()) as OperatorQueue;
+    return this.jsonOf<OperatorQueue>(await this.request('PUT', '/pause', { json: { paused } }));
   }
 
   /** Stream an input to `dest`; size and SHA-256 must match the claim, else the file is removed. */

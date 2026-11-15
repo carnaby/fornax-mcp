@@ -169,15 +169,41 @@ describe('fornax queue --watch (spec 06 3.1)', () => {
     const { ctx, out } = await setup();
     const hanging = createServer(() => {});
     await new Promise<void>((r) => hanging.listen(0, '127.0.0.1', r));
-    const url = `http://127.0.0.1:${(hanging.address() as AddressInfo).port}`;
-    const stop = new AbortController();
-    const watching = queueWatch({ ...ctx, signal: stop.signal, makeApi: (_s, token) => new WorkerApi({ server: url, token }) }, { json: true, waitS: 0, retryMs: [50], requestTimeoutMs: 300 });
-    await waitForLines(out, 1, 5000);
-    expect(JSON.parse(out[0]!)).toMatchObject({ ok: false, error: 'network', message: 'the server did not answer in time' });
-    stop.abort();
-    expect(await watching).toBe(0);
-    hanging.closeAllConnections();
-    hanging.close();
+    try {
+      const url = `http://127.0.0.1:${(hanging.address() as AddressInfo).port}`;
+      const stop = new AbortController();
+      const watching = queueWatch({ ...ctx, signal: stop.signal, makeApi: (_s, token) => new WorkerApi({ server: url, token }) }, { json: true, waitS: 0, retryMs: [50], requestTimeoutMs: 300 });
+      await waitForLines(out, 1, 5000);
+      expect(JSON.parse(out[0]!)).toMatchObject({ ok: false, error: 'network', message: 'the server did not answer in time' });
+      stop.abort();
+      expect(await watching).toBe(0);
+    } finally {
+      hanging.closeAllConnections();
+      hanging.close();
+    }
+  });
+
+  test('an answer that breaks off mid-body counts as unreachable and is asked again', async () => {
+    const { ctx, out } = await setup();
+    const breaking = createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.write('{"ok":');
+      setTimeout(() => res.socket?.destroy(), 20);
+    });
+    await new Promise<void>((r) => breaking.listen(0, '127.0.0.1', r));
+    try {
+      const url = `http://127.0.0.1:${(breaking.address() as AddressInfo).port}`;
+      const stop = new AbortController();
+      const watching = queueWatch({ ...ctx, signal: stop.signal, makeApi: (_s, token) => new WorkerApi({ server: url, token }) }, { json: true, waitS: 0, retryMs: [50] });
+      await waitForLines(out, 2, 5000);
+      expect(JSON.parse(out[0]!)).toMatchObject({ ok: false, error: 'network' });
+      expect(JSON.parse(out[1]!)).toMatchObject({ ok: false, error: 'network' });
+      stop.abort();
+      expect(await watching).toBe(0);
+    } finally {
+      breaking.closeAllConnections();
+      breaking.close();
+    }
   });
 });
 
