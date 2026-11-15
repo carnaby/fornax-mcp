@@ -67,3 +67,6 @@ export type WorkerWaiting = z.infer<typeof workerWaiting>;
 
 /** PUT /api/worker/status: `waiting` is null when the worker takes jobs. */
 export const statusBody = z.strictObject({ waiting: workerWaiting.nullable() });
+
+/** GET /downloads/fornax-worker.json (spec 05c 6): what `fornax update` checks before it downloads the zip. */
+export type WorkerBundleInfo = { version: string; sha256: string; size: number };

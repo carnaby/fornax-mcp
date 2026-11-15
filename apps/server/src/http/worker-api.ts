@@ -31,9 +31,9 @@ const hostnameOf = (raw: unknown) => {
 };
 const versionOf = (raw: unknown) => (typeof raw === 'string' && /^[0-9A-Za-z.+-]{1,40}$/.test(raw) ? raw : null);
 
-/** What a worker of another version is told (spec 3); it never blocks jobs. */
+/** What a worker of another version is told (spec 3, 05c 5.3); it never blocks jobs. */
 export const versionWarning = (workerVersion: string, publicUrl: string): string =>
-  `this worker is ${workerVersion}, the server ${FORNAX_VERSION}; get the matching worker from ${publicUrl}/downloads/fornax-worker.zip`;
+  `this worker is ${workerVersion}, the server ${FORNAX_VERSION}; run fornax update (or get the worker from ${publicUrl}/downloads/fornax-worker.zip)`;
 
 /** /api/worker/*: the worker API. Only the worker token opens it. */
 export const workerRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps) => {
