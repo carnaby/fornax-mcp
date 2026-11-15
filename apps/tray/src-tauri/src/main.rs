@@ -55,15 +55,21 @@ fn cancel_job(id: String, ctl: State<'_, Controller>) {
     ctl.send(Input::Cancel { id });
 }
 
-/// A job's result page in the browser (only http and https links open).
+/// A job's result page in the browser (only http and https links open). A failure shows next to the job for 10 s,
+/// like a failed action, and in the log.
 #[tauri::command]
 fn open_result(id: String, app: AppHandle, ctl: State<'_, Controller>) -> Result<(), String> {
     let s = ctl.snapshot();
-    let url = s.running.iter().chain(&s.queued).chain(&s.finished).find(|j| j.id == id).map(|j| j.result_url.clone()).ok_or("the job is no longer listed")?;
-    if !is_web_url(&url) {
-        return Err(format!("not a web address: {url}"));
+    let url = s.running.iter().chain(&s.queued).chain(&s.finished).find(|j| j.id == id).map(|j| j.result_url.clone());
+    let opened = match url {
+        None => Err("the job is no longer listed".to_string()),
+        Some(url) if !is_web_url(&url) => Err(format!("not a web address: {url}")),
+        Some(url) => app.opener().open_url(url, None::<&str>).map_err(|e| format!("cannot open the result page: {e}")),
+    };
+    if let Err(message) = &opened {
+        ctl.send(Input::ActionDone { key: id, result: Err(message.clone()) });
     }
-    app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
+    opened
 }
 
 #[tauri::command]

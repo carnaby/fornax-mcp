@@ -142,12 +142,18 @@ function renderRunning(s: Snapshot): void {
   }
   const head = make('div', 'row');
   head.append(make('span', 'what', describe(j)), since(j.startedAtMs), ...cancelControls(j));
-  const bar = make('div', 'bar');
-  const fill = make('div');
-  fill.style.width = `${Math.round((j.progress ?? 0) * 100)}%`;
-  bar.append(fill);
+  // Spec 06 4.2: the bar, the percent and the message only if they exist (no progress is no "0 % done").
+  const parts: HTMLElement[] = [head];
+  if (j.progress !== null) {
+    const bar = make('div', 'bar');
+    const fill = make('div');
+    fill.style.width = `${Math.round(j.progress * 100)}%`;
+    bar.append(fill);
+    parts.push(bar);
+  }
   const meta = [j.progress === null ? '' : `${Math.round(j.progress * 100)} %`, j.progressMessage ?? ''].filter(Boolean).join('  ');
-  box.replaceChildren(head, bar, make('p', 'muted', meta), ...actionError(j));
+  if (meta) parts.push(make('p', 'muted', meta));
+  box.replaceChildren(...parts, ...actionError(j));
 }
 
 /** Whether the mouse is in the lower half of `row` (drop after it). */
@@ -222,7 +228,7 @@ function finishedRow(j: JobView): HTMLElement {
   if (took) line.append(make('span', 'muted', took));
   if (j.finishedAtMs !== null) line.append(make('span', 'muted', clock(j.finishedAtMs)));
   line.append(button(`${j.id} result`, 'Result', 'Open the result page', () => call('open_result', { id: j.id })));
-  row.append(line);
+  row.append(line, ...actionError(j));
   if (j.state === 'failed' && j.error) {
     const details = make('details', 'error');
     const summary = make('summary', undefined, 'error');
@@ -290,6 +296,15 @@ el('stop').addEventListener('click', () => call('stop_worker'));
 el('pause').addEventListener('click', () => call('set_paused', { paused: !(current?.paused ?? false) }));
 el('quit-yes').addEventListener('click', () => call('confirm_quit', { yes: true }));
 el('quit-no').addEventListener('click', () => call('confirm_quit', { yes: false }));
+// A closed log has no height, so it cannot follow the new lines: an opened one starts at its newest line, and
+// renderLog keeps it there while it is at the end.
+const logBox = el<HTMLDetailsElement>('log-box');
+logBox.addEventListener('toggle', () => {
+  if (logBox.open) {
+    const list = el('log');
+    list.scrollTop = list.scrollHeight;
+  }
+});
 setInterval(tickTimes, 1000);
 
 // The first paint asks for the snapshot; a state event that comes first is newer, and the answer must not undo it.
