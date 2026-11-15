@@ -18,6 +18,8 @@ request. About 2 minutes per second of video at 1080p on a 16 GB card. There is 
 
 - On Windows, the worker's data folder must have only ASCII characters in its path (SeedVR2 writes frames through
   OpenCV, which fails silently on other paths); `fornax doctor upscale` says so when it does not.
+- `gpu.max_used_mib` set in `worker.yaml` (`fornax doctor` suggests a value): the worker then waits for a free card
+  instead of using up a job's attempts on a busy one.
 
 ## Install
 
@@ -28,12 +30,15 @@ The setup puts everything inside this pack's `env/` folder: uv, CPython 3.13.18,
 commit, and the two models (7.3 GB), each checked by sha256. Nothing outside it changes (uv adds no Python to the
 `PATH` and no registry entry); deleting this folder removes everything.
 
+The 6.8 GB DiT model must download within one setup run (2 hours: about 8 Mbit/s or faster); files that finished
+downloading are kept when the setup runs again.
+
 When the models are already on the disk, point `SEEDVR2_MODELS_FROM` at their folder for that one command; they are
 checked, then hard-linked (same disk: no extra space) or copied. A missing or different file there stops the setup;
 it is never downloaded instead:
 
     # Windows PowerShell
-    $env:SEEDVR2_MODELS_FROM = "D:\models\SEEDVR2"; fornax types install upscale
+    $env:SEEDVR2_MODELS_FROM = "D:\models\SEEDVR2"; fornax types install upscale; Remove-Item Env:SEEDVR2_MODELS_FROM
     # Linux
     SEEDVR2_MODELS_FROM=/data/models/SEEDVR2 fornax types install upscale
 
@@ -94,5 +99,5 @@ A job never outlives its watcher: when `run.py` is gone, SeedVR2 ends too.
 | 0 | done | |
 | 1 | the watchdog killed it, the card was full at the start, out of memory before SeedVR2 began, SeedVR2 failed, the frame count or the encode was wrong | tried again later; the worker waits for a free card (`gpu.max_used_mib`) |
 | 2 | the clip cannot be read, colour other than BT.601, `overlap` not smaller than the batch, nothing to upscale, longer than the time limit | the job fails at once |
-| 3 | SeedVR2, a model, CUDA or nvidia-smi is missing, more than one card, a job folder outside ASCII on Windows | the worker stops offering the type until `fornax doctor upscale` passes |
-| 4 | the time limit, out of memory at the smallest batch | the job fails at once |
+| 3 | SeedVR2 or a model is missing, nvidia-smi is missing or lists more than one card, ffmpeg or ffprobe does not run, a job folder outside ASCII on Windows (a missing CUDA shows in `fornax doctor upscale`) | the worker stops offering the type until `fornax doctor upscale` passes and the worker restarts |
+| 4 | the time limit, out of memory with no smaller batch left to try | the job fails at once |
