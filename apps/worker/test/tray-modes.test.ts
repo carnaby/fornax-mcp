@@ -61,7 +61,8 @@ function start(args: string[], env: NodeJS.ProcessEnv) {
   const stderr: string[] = [];
   p.stderr.setEncoding('utf8');
   p.stderr.on('data', (d: string) => stderr.push(d));
-  const exited = new Promise<number | null>((r) => p.once('exit', (code) => r(code)));
+  // 'close', not 'exit': only then are stdout and stderr drained, so `lines` holds the last event.
+  const exited = new Promise<number | null>((r) => p.once('close', (code) => r(code)));
   return { p, lines, stderr, exited, events: () => lines.map((l) => JSON.parse(l) as { event: string; [k: string]: unknown }) };
 }
 
