@@ -67,6 +67,11 @@ describe('the worker bundle', () => {
     expect(entries.get('fornax-worker/types/render/type.yaml')!.data.toString('utf8')).toContain('name: render');
   });
 
+  test('the zip holds VERSION with the version on one line', () => {
+    const entries = readZip(readFileSync(join(out, `fornax-worker-${FORNAX_VERSION}.zip`)));
+    expect(entries.get('fornax-worker/VERSION')?.data.toString('utf8')).toBe(`${FORNAX_VERSION}\n`);
+  });
+
   test('the bundled CLI runs on its own and prints its version', () => {
     const r = spawnSync(process.execPath, [join(out, 'fornax-worker', 'fornax.mjs'), '--version'], { encoding: 'utf8' });
     expect(r.status, r.stderr).toBe(0);

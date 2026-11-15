@@ -38,6 +38,8 @@ export async function bundleWorker(outDir) {
   writeFileSync(join(stage, 'fornax.cmd'), '@echo off\r\nnode "%~dp0fornax.mjs" %*\r\n');
   writeFileSync(join(stage, 'fornax'), '#!/bin/sh\nexec node "$(dirname "$(readlink -f "$0")")/fornax.mjs" "$@"\n');
   chmodSync(join(stage, 'fornax'), 0o755);
+  // fornax install and fornax update read the version from here (spec 05c 4.1), never by running the program.
+  writeFileSync(join(stage, 'VERSION'), `${version}\n`);
 
   const entries = [];
   const walk = (dir) => {
