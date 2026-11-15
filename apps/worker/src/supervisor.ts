@@ -21,14 +21,18 @@ export type SuperviseOptions = {
 };
 
 const FORWARDED = ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGQUIT'] as const;
+/** The worker child does not handle SIGQUIT (Ctrl+\ would kill it mid-job): it gets SIGTERM, a graceful stop, instead. */
+const passedAs = (s: (typeof FORWARDED)[number]): NodeJS.Signals => (s === 'SIGQUIT' ? 'SIGTERM' : s);
 /** Windows: console events the child gets itself; the supervisor must only not die of them. */
 const IGNORED_ON_WINDOWS = ['SIGINT', 'SIGHUP', 'SIGBREAK'] as const;
 
 /**
  * `fornax worker` (spec 05c 5.1): run the worker as `worker --child`, start it again when it exits with RESTART_EXIT,
  * otherwise end with its exit code. Linux: the child has a process group of its own, so terminal and systemd signals
- * reach only the supervisor, which passes each one on once (the child counts them: first = stop, second = quit).
- * Windows: the child shares the console and gets Ctrl+C itself; the supervisor ignores it.
+ * reach only the supervisor, which passes each one on once (the child counts them: first = stop, second = quit;
+ * SIGQUIT goes on as SIGTERM).
+ * Windows: the child shares the console and gets Ctrl+C itself; the supervisor ignores it. A stop asked for while the
+ * worker was about to restart is kept: a following exit 75 ends the supervisor with 0 instead of starting it again.
  */
 export async function superviseWorker(o: SuperviseOptions): Promise<number> {
   const signals = o.signals ?? process;
@@ -37,14 +41,18 @@ export async function superviseWorker(o: SuperviseOptions): Promise<number> {
   const maxRestarts = o.maxRestarts ?? 3;
   const windowMs = o.windowMs ?? 60_000;
   let child: ChildProcess | null = null;
+  let stopRequested = false;
 
   const pass = (signal: NodeJS.Signals) => {
+    stopRequested = true;
     if (child && child.exitCode === null && child.signalCode === null) child.kill(signal);
   };
-  const ignore = () => {};
+  const ignore = () => {
+    stopRequested = true;
+  };
   const wired: [string, (s: NodeJS.Signals) => void][] = windows
     ? IGNORED_ON_WINDOWS.map((s) => [s, ignore])
-    : FORWARDED.map((s) => [s, () => pass(s)]);
+    : FORWARDED.map((s) => [s, () => pass(passedAs(s))]);
   for (const [s, h] of wired) signals.on(s, h);
 
   const restarts: number[] = [];
@@ -68,6 +76,7 @@ export async function superviseWorker(o: SuperviseOptions): Promise<number> {
       });
       child = null;
       if (code !== RESTART_EXIT) return code;
+      if (stopRequested) return 0;
       const t = now();
       restarts.push(t);
       while (restarts.length && t - restarts[0]! > windowMs) restarts.shift();
@@ -79,4 +88,21 @@ export async function superviseWorker(o: SuperviseOptions): Promise<number> {
   } finally {
     for (const [s, h] of wired) signals.off(s, h);
   }
+}
+
+/**
+ * `worker --child` on Linux runs in a process group of its own, so a supervisor that dies without passing a signal on
+ * (SIGKILL, a crash) would leave it running where Ctrl+C no longer reaches it. This polls the parent pid and calls
+ * `onGone` once when it changed (the child was re-parented). Returns the stop; the timer never keeps the process alive.
+ */
+export function watchParent(o: { getPpid?: () => number; intervalMs?: number; onGone: () => void }): () => void {
+  const getPpid = o.getPpid ?? (() => process.ppid);
+  const first = getPpid();
+  const timer = setInterval(() => {
+    if (getPpid() === first) return;
+    clearInterval(timer);
+    o.onGone();
+  }, o.intervalMs ?? 2000);
+  timer.unref();
+  return () => clearInterval(timer);
 }

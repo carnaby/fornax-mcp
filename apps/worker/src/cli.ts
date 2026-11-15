@@ -17,7 +17,7 @@ import { InstallError } from './install/errors.js';
 import { PackError } from './pack.js';
 import { resolvePaths } from './paths.js';
 import { hasRunning, killRunning } from './process.js';
-import { superviseWorker } from './supervisor.js';
+import { superviseWorker, watchParent } from './supervisor.js';
 
 export const USAGE = usageText([
   'fornax worker pair --server <url> --name <name> [--force]',
@@ -251,6 +251,11 @@ if (isMainModule()) {
       });
     },
   };
+  // Linux: the worker child has a process group of its own; a supervisor gone without passing a signal on (SIGKILL)
+  // must not leave it claiming jobs where Ctrl+C no longer reaches it. Its parent gone counts as a first stop.
+  const supervised = process.platform !== 'win32' && process.argv[2] === 'worker' && process.argv.slice(3).includes('--child');
+  const unwatch = supervised ? watchParent({ onGone: () => onSignal('SIGHUP') }) : () => {};
   process.exitCode = await runCli(process.argv.slice(2), ctx);
+  unwatch();
   unwire();
 }
