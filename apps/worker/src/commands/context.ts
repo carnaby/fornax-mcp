@@ -32,6 +32,10 @@ export type Ctx = {
   script?: string;
   /** Test seam: how fornax install puts fornax on PATH. */
   pathDeps?: PathDeps;
+  /** Test seam: the version this program is (default WORKER_VERSION). */
+  currentVersion?: string;
+  /** Test seam: fetch for fornax update's zip download (default globalThis.fetch). */
+  fetch?: typeof fetch;
 };
 
 export const apiFor = (ctx: Ctx, server: string, token: string): WorkerApi =>

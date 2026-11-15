@@ -10,6 +10,7 @@ import { installCommand } from './commands/install.js';
 import { LEASE_FORMS, leaseCommand, usageText } from './commands/lease.js';
 import { pair } from './commands/pair.js';
 import { typesAdd, typesInstall, typesList } from './commands/types.js';
+import { updateCommand } from './commands/update.js';
 import { queueCommand, workerCommand } from './commands/worker.js';
 import { ConfigError } from './config.js';
 import { InstallError } from './install/errors.js';
@@ -91,6 +92,7 @@ export async function runCli(argv: string[], ctx: Ctx): Promise<number> {
   const [group, sub, arg] = words;
   try {
     if (group === 'install' && shape(1)) return await installCommand(ctx);
+    if (group === 'update' && shape(1, 'force', 'server')) return await updateCommand(ctx, { force: flags.force === true, server: flags.server });
     if (group === 'worker' && sub === 'pair' && shape(2, 'server', 'name', 'force') && flags.server && flags.name) {
       return await pair(ctx, { server: flags.server, name: flags.name, force: flags.force === true });
     }
