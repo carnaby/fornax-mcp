@@ -122,6 +122,19 @@ All with `Authorization: Bearer <token>`:
 
 Another client's job or file answers `404`.
 
+The worker's token also opens the operator's routes, for whoever runs the worker (the tray uses them): they see and
+order the whole queue, every client's jobs included, and none of them counts as a sign of life of the worker.
+
+| Route | What it does |
+|---|---|
+| `GET /api/worker/jobs?wait=<0..30>&change=<hash>` | The paused flag, the worker, the running job, the waiting jobs in the order they run, the last 50 finished jobs. With `change` and `wait` it answers as soon as something changes. |
+| `POST /api/worker/jobs/<id>/move` | Body `{"to":"top"}`, `{"to":"bottom"}`, `{"before":"<id>"}` or `{"after":"<id>"}`; only waiting jobs move (409 otherwise). |
+| `POST /api/worker/jobs/<id>/cancel` | Cancels a job of any client. |
+| `PUT /api/worker/pause` | Body `{"paused":true}` or `{"paused":false}`. While paused the running job finishes and no other starts; `GET /api/queue` and `queue_status` show `paused`. |
+
+A new job joins the queue right after the last waiting job of its priority or higher, so without moves the order is
+priority first, then age. A job that ran and comes back (the worker stopped, an attempt failed) goes to the top.
+
 ### Webhooks
 
 With `callback_url` (allowed by `FORNAX_WEBHOOK_PREFIXES`), Fornax posts `{"job_id": "…", "state": "succeeded"}`

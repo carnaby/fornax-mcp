@@ -14,6 +14,7 @@ import { jobSignal } from '../domain/signal.js';
 import { setWorkerWaiting, touchWorker } from '../domain/worker-state.js';
 import { requireRole } from './auth.js';
 import type { RouteDeps } from './deps.js';
+import { operatorRoutes } from './operator-api.js';
 import { parse } from './parse.js';
 import { rawBody, refuseOversized } from './uploads.js';
 
@@ -71,6 +72,10 @@ export const workerRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps) => 
   app.addHook('preClose', async () => closing.abort());
 
   app.get('/queue', { config: { quiet: true } }, async () => workerQueue(deps.db));
+
+  // Spec 06 2.3: the operator's routes (the tray); a child plugin inherits the token check and the quiet rule above.
+  // Only the deps are passed on: this plugin's own options also carry its prefix, which would apply twice.
+  await app.register(operatorRoutes, { config: deps.config, db: deps.db, store: deps.store, clock: deps.clock });
 
   app.post('/jobs/claim', async (req, reply) => {
     const { wait } = parse(claimBody, req.body ?? {});
