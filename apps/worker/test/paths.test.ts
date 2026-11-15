@@ -14,7 +14,14 @@ describe('resolvePaths', () => {
       typesDir: 'C:\\Users\\u\\AppData\\Local\\fornax\\types',
       jobsDir: 'C:\\Users\\u\\AppData\\Local\\fornax\\jobs',
       leasesDir: 'C:\\Users\\u\\AppData\\Local\\fornax\\leases',
+      appDir: 'C:\\Users\\u\\AppData\\Local\\fornax\\app',
+      restartFile: 'C:\\Users\\u\\AppData\\Local\\fornax\\restart',
     });
+  });
+
+  test('the app folder and the restart request live in the data directory (spec 05c 2)', () => {
+    const p = resolvePaths({}, 'linux', '/home/u');
+    expect([p.appDir, p.restartFile]).toEqual(['/home/u/.local/share/fornax/app', '/home/u/.local/share/fornax/restart']);
   });
 
   test('Windows without the variables falls back to the profile', () => {

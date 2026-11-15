@@ -15,6 +15,10 @@ export type Paths = {
   jobsDir: string;
   /** Spec 05a 4.2: <data>/leases, where fornax lease and the lease tool talk through files. */
   leasesDir: string;
+  /** Spec 05c 2: the installed program (fornax install, fornax update). Other projects rely on this place. */
+  appDir: string;
+  /** Spec 05c 5.2: fornax update asks the running worker to restart through this file. */
+  restartFile: string;
 };
 
 export type JobDirs = { root: string; in: string; out: string; work: string };
@@ -46,6 +50,8 @@ export function resolvePaths(env: NodeJS.ProcessEnv = process.env, platform: Nod
     typesDir: p.join(dataDir, 'types'),
     jobsDir: p.join(dataDir, 'jobs'),
     leasesDir: p.join(dataDir, 'leases'),
+    appDir: p.join(dataDir, 'app'),
+    restartFile: p.join(dataDir, 'restart'),
   };
 }
 
