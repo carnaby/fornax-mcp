@@ -3,11 +3,11 @@ import { z } from 'zod';
 import { createUploadLink, fileView, getOwnFile, saveFile, uploadLinkView } from '../domain/files.js';
 import { cancelJob, getOwnJob, GROUP, JOB_STATES, jobDetail, jobView, listJobs, PRIORITIES, submitJob } from '../domain/jobs.js';
 import { offeredTypes, typeView } from '../domain/job-types.js';
-import { MAX_JOB_WAIT_S, waitForJobChange } from '../domain/job-wait.js';
 import { queueStatus } from '../domain/maintenance.js';
 import { workerOnline } from '../domain/worker-state.js';
 import { requireRole } from './auth.js';
 import type { RouteDeps } from './deps.js';
+import { answerWhenChanged, waitQuery } from './long-poll.js';
 import { parse } from './parse.js';
 import { rawBody, refuseOversized } from './uploads.js';
 
@@ -69,29 +69,12 @@ export const clientRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps) => 
     return { jobs: listJobs(deps.db, req.identity!.tokenId, q).map((r) => jobView(deps.db, r)) };
   });
 
-  const jobQuery = z.object({
-    wait: z.coerce.number().int().min(0).max(MAX_JOB_WAIT_S).optional(),
-    change: z.string().max(64).optional(),
-  });
-
   // Spec 05a 5.1: with `wait`, answer when the job's change differs from `change`, at the latest after `wait` seconds.
   app.get<{ Params: { id: string } }>('/jobs/:id', async (req, reply) => {
-    const q = parse(jobQuery, req.query);
+    const q = parse(waitQuery, req.query);
     const owner = req.identity!.tokenId;
     const read = () => jobDetail(deps.db, deps.config, getOwnJob(deps.db, owner, req.params.id), deps.clock());
-    if (!q.wait) return read();
-    const stop = new AbortController();
-    const hangUp = () => stop.abort();
-    // A client that hangs up (or a server that closes) ends the wait: no timer stays behind.
-    reply.raw.on('close', hangUp);
-    closing.signal.addEventListener('abort', hangUp, { once: true });
-    if (req.raw.socket?.destroyed === true || closing.signal.aborted) stop.abort();
-    try {
-      return await waitForJobChange(read, q.change, q.wait * 1000, stop.signal);
-    } finally {
-      reply.raw.off('close', hangUp);
-      closing.signal.removeEventListener('abort', hangUp);
-    }
+    return answerWhenChanged(req, reply, closing.signal, read, q);
   });
 
   app.post<{ Params: { id: string } }>('/jobs/:id/cancel', async (req) =>

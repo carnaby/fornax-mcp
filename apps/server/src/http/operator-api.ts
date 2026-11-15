@@ -1,19 +1,13 @@
 import { moveBody, pauseBody } from '@fornax/protocol';
 import type { FastifyPluginAsync } from 'fastify';
-import { z } from 'zod';
 import { cancelAnyJob } from '../domain/jobs.js';
-import { MAX_JOB_WAIT_S, waitForJobChange } from '../domain/job-wait.js';
 import { operatorQueue } from '../domain/operator.js';
 import { setQueuePaused } from '../domain/queue-control.js';
 import { moveJob } from '../domain/queue-order.js';
 import type { RouteDeps } from './deps.js';
 import { resultUrl } from './links.js';
+import { answerWhenChanged, waitQuery } from './long-poll.js';
 import { parse } from './parse.js';
-
-const query = z.object({
-  wait: z.coerce.number().int().min(0).max(MAX_JOB_WAIT_S).optional(),
-  change: z.string().max(64).optional(),
-});
 
 /**
  * Spec 06 2.3: the operator's view and control of the whole queue, under /api/worker with the worker token. Registered
@@ -26,21 +20,9 @@ export const operatorRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps) =
   app.addHook('preClose', async () => closing.abort());
   const view = () => operatorQueue(deps.db, deps.clock(), (job) => resultUrl(deps, job));
 
-  app.get('/jobs', { config: { quiet: true } }, async (req, reply) => {
-    const q = parse(query, req.query);
-    if (!q.wait) return view();
-    const stop = new AbortController();
-    const hangUp = () => stop.abort();
-    reply.raw.on('close', hangUp);
-    closing.signal.addEventListener('abort', hangUp, { once: true });
-    if (req.raw.socket?.destroyed === true || closing.signal.aborted) stop.abort();
-    try {
-      return await waitForJobChange(view, q.change, q.wait * 1000, stop.signal);
-    } finally {
-      reply.raw.off('close', hangUp);
-      closing.signal.removeEventListener('abort', hangUp);
-    }
-  });
+  app.get('/jobs', { config: { quiet: true } }, async (req, reply) =>
+    answerWhenChanged(req, reply, closing.signal, view, parse(waitQuery, req.query)),
+  );
 
   app.post<{ Params: { id: string } }>('/jobs/:id/move', { config: { quiet: true } }, async (req) => {
     moveJob(deps.db, req.params.id, parse(moveBody, req.body));
