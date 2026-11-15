@@ -7,6 +7,7 @@ pub mod process;
 pub mod protocol;
 pub mod relaunch;
 pub mod state;
+pub mod tray;
 
 #[cfg(test)]
 mod conf_tests {
