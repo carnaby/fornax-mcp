@@ -2,6 +2,7 @@
 
 pub mod config;
 pub mod lock;
+pub mod process;
 pub mod protocol;
 pub mod relaunch;
 
