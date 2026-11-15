@@ -5,7 +5,7 @@ send it jobs (transcription, rendering, and any type you add) and get the result
 
 *Fornax* is Latin for an oven, and the name of a constellation.
 
-Status: an early release (0.2). The API may still change.
+Status: an early release (0.3). The API may still change.
 
 ```
 agent (MCP) ─┐                    ┌─ fornax worker on the GPU PC (pulls jobs; no open port)
@@ -146,7 +146,13 @@ followed): deduplicate on `job_id`, and read the job's state from the API instea
 On the PC with the GPU (Windows or Linux, Node.js 22 or newer):
 
 1. Download the worker from your server (`https://fornax.example.com/downloads/fornax-worker.zip`) or from the
-   GitHub releases, and unzip it. Run it as `fornax` (Linux) or `fornax.cmd` (Windows), or `node fornax.mjs`.
+   GitHub releases, unzip it and install it: `node fornax-worker/fornax.mjs install`. It goes to
+   `%LOCALAPPDATA%\fornax\app` (Linux: `~/.local/share/fornax/app`, with the command `~/.local/bin/fornax`) and
+   `fornax` is put on your PATH: open a new terminal. The unzipped folder can be deleted.
+
+   On Windows the folder is added to your user Path, which keeps its registry kind (`REG_EXPAND_SZ`) and its `%VAR%`
+   entries as they were. On Linux `~/.local/bin/fornax` is a link to the installed `fornax`; when `~/.local/bin` is
+   not on your PATH yet, `install` says how to add it.
 2. The admin runs `fornax-admin tokens invite pc --worker`, which prints the command to run on the PC:
    `fornax worker pair --server https://fornax.example.com --name pc`. Approve its fingerprint on the server.
 3. Put the tool paths into `worker.yaml` (`%APPDATA%\fornax\` on Windows, `~/.config/fornax/` on Linux):
@@ -162,6 +168,23 @@ On the PC with the GPU (Windows or Linux, Node.js 22 or newer):
 4. Install job types and check them: `fornax types install transcribe`, `fornax types install render`,
    `fornax doctor`. The `render` pack needs scenes that are self-contained (File > External Data > Pack Resources).
 5. Start it: `fornax worker`. Ctrl+C gives the running job back; a second Ctrl+C kills the tool.
+
+### Updating
+
+`fornax update` installs the version your server offers (`fornax doctor` and the worker say when it differs). It
+checks the download's size and SHA-256 against what the server announces; on a mismatch nothing is changed. It
+brings the installed built-in types up to date (their `env/` stays; a type's setup runs again only when the type
+changed what it installs) and mentions new built-in types (`fornax types install <name>`); types installed with
+`--from` are left alone. A running `fornax worker` finishes its job and restarts on the new version in the same
+window: it restarts between jobs, so a running job or lease finishes first, and an idle worker restarts within about
+25 s.
+
+`--force` installs the offered version again even when you have it (the worker does not restart for the same
+version); `--server <url>` asks that server instead of the one in `worker.yaml`. `fornax update` refuses a version
+older than 0.3.0, which could not restart into a newer one: install such a version by hand from
+`<server>/downloads/fornax-worker.zip`.
+
+To uninstall, delete the `app` folder and remove it from your Path (Linux: `~/.local/bin/fornax`).
 
 ### Your own job types
 
@@ -211,7 +234,7 @@ name). Its own lines go to stderr and start with `fornax lease:` (a usage error 
 
 On Windows, `fornax.cmd` passes the arguments through `cmd`, which interprets unquoted `&`, `|`, `<`, `>` and `^`, and
 a Ctrl+C there asks "Terminate batch job (Y/N)?". In scripts, and for arguments with such characters, call Node
-directly: `node <folder>\fornax.mjs lease -- …`.
+directly: `node %LOCALAPPDATA%\fornax\app\fornax.mjs lease -- …`.
 
 On Linux the program runs in a session of its own (so that its whole process tree can be ended), so it has no
 controlling terminal: whatever opens `/dev/tty` (password prompts of `sudo`, `ssh` or `getpass`), job control
@@ -252,18 +275,23 @@ back (it returns to the queue, or fails), and once the server can be reached aga
   After=network-online.target
 
   [Service]
-  ExecStart=/opt/fornax-worker/fornax worker
+  ExecStart=%h/.local/bin/fornax worker
   Restart=on-failure
-  # Stop every process of the job with the worker, also ones a tool left behind.
-  KillMode=control-group
+  KillMode=mixed
   TimeoutStopSec=30
 
   [Install]
   WantedBy=default.target
   ```
 
-  then `systemctl --user enable --now fornax-worker` (and `loginctl enable-linger <user>` to run without a login).
-- **Windows:** a Task Scheduler task "At log on" running `fornax.cmd worker` in the unzipped folder. Fornax ends a
+  `KillMode=mixed`: systemd sends SIGTERM to `fornax worker` only, which passes it on to the worker once (with
+  `control-group` the worker would get it twice and quit at once instead of giving its job back); whatever is still
+  running after the stop timeout is killed. The same holds outside systemd: a signal sent to both processes at once
+  (`killall`, `pkill -f fornax`) counts as two stops and quits at once. When `fornax worker` itself is killed, the
+  worker stops by itself as after a first Ctrl+C.
+
+  Then `systemctl --user enable --now fornax-worker` (and `loginctl enable-linger <user>` to run without a login).
+- **Windows:** a Task Scheduler task "At log on" running `%LOCALAPPDATA%\fornax\app\fornax.cmd worker`. Fornax ends a
   job's whole process tree when it stops; a process that detached from that tree (rare) survives a crash of the worker.
 
 ## Security
