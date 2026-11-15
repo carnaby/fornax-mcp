@@ -501,11 +501,12 @@ def failure_lines(r, overlap, limit_s=TIME_LIMIT_S):
             f"shorter clip; a job that crawls means the card is shared ({FREE_THE_CARD})"
         ]
     if r.reason == "oom":
-        lower = next_batch(r.tried[0], overlap)
+        # A smaller overlap helps only when the ladder has a lower step that the overlap kept it from taking.
+        blocked = next_batch(r.batch, overlap) is None and any(b < r.batch for b in BATCH_LADDER)
         return [
             f"out of memory at batch {r.batch} (tried {tried}), the end of the batch ladder at overlap {overlap}: PyTorch "
             f"is capped at the card's free memory minus the margin, and that was not enough; nothing spilled; "
-            f"{FREE_THE_CARD}" + ("" if lower else "; or a smaller overlap")
+            f"{FREE_THE_CARD}" + ("; or a smaller overlap" if blocked else "")
         ]
     if r.reason == "refused":
         return [f"not started: {last.refused or 'the launcher found no free memory beyond the margin'}"]

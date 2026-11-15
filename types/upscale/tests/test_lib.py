@@ -285,6 +285,14 @@ class FailureTest(unittest.TestCase):
         bad = lib.Attempt(code=11, tail=["[capped] UPSCALE_FREE_MIB='x' is not a number"])
         self.assertRegex(lib.failure_lines(self.result("bad-env", bad), 3)[0], r"a bug in this pack")
 
+    def test_a_smaller_overlap_only_when_the_overlap_stopped_the_ladder(self):
+        blocked = lib.failure_lines(self.result("oom", tried=(29, 21, 13)), 10)[0]
+        self.assertTrue(blocked.endswith("; or a smaller overlap"), blocked)
+        for tried in ((9,), (21, 13, 9)):
+            with self.subTest(tried=tried):
+                line = lib.failure_lines(self.result("oom", tried=tried), 3)[0]
+                self.assertNotIn("smaller overlap", line)
+
 
 if __name__ == "__main__":
     unittest.main()
