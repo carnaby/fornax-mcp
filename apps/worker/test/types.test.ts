@@ -157,6 +157,20 @@ describe('fornax types', () => {
     }
   });
 
+  test('while the setup runs the marker says it is pending: an install cut short is not taken for a ready pack', async () => {
+    const { ctx, run } = cli();
+    const src = source();
+    // The setup keeps what the marker said while it ran (its working directory is the pack).
+    writeFileSync(
+      join(src, 'scripts', 'setup.mjs'),
+      "import { mkdirSync, copyFileSync } from 'node:fs';\nmkdirSync('env', { recursive: true });\ncopyFileSync('.fornax-pack.json', 'env/marker-during-setup.json');\n",
+    );
+    expect((await run('types', 'install', 'echo', '--from', src)).code).toBe(0);
+    const dest = join(ctx.paths.typesDir, 'echo');
+    expect(JSON.parse(readFileSync(join(dest, 'env', 'marker-during-setup.json'), 'utf8'))).toEqual({ source: 'dir', setup: 'pending' });
+    expect(JSON.parse(readFileSync(join(dest, '.fornax-pack.json'), 'utf8'))).toEqual({ source: 'dir' });
+  });
+
   test('types install marks where the pack came from (spec 05c 4.4)', async () => {
     const { ctx, run } = cli();
     // Built-in: the repo's lease pack (no setup, no tools).

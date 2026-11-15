@@ -109,12 +109,16 @@ export async function typesInstall(
   try {
     // env/ is made by setup on this PC; a copied one would belong to another machine.
     (deps.copy ?? cpSync)(source, dest, { recursive: true, filter: (src) => relative(source, src).split(sep)[0] !== 'env' });
+    const origin = from !== undefined ? 'dir' : 'shipped';
     if (pack.impl.setup) {
+      // Pending until the setup succeeds: an install killed meanwhile leaves a pack that is not taken for a ready one
+      // (a shipped one gets its setup again at the next sync; a --from one is never marked shipped).
+      writeOrigin(dest, origin, true);
       ctx.out(`running the setup of ${name}…`);
       const why = await runPackSetup({ pack, dir: dest, tools, signal: ctx.signal, write: ctx.write });
       if (why) failure = `the setup of ${name} failed (${why.split(': ')[0]})${why.includes(': ') ? `: ${why.slice(why.indexOf(': ') + 2)}` : ''}`;
     }
-    if (failure === null) writeOrigin(dest, from !== undefined ? 'dir' : 'shipped');
+    if (failure === null) writeOrigin(dest, origin);
     installed = failure === null;
   } catch (e) {
     // Only the class and code: the message may carry local paths or tool output.
