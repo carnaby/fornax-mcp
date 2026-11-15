@@ -108,9 +108,10 @@ jobs:
           if-no-files-found: error
 
   image:
-    # Only from main, and only after every test job is green: a published image is deployed automatically.
+    # Only from main, and only after the tests and the docker build are green: a published image is deployed
+    # automatically. Not after the tray: the server image does not contain it (pull requests gate the tray).
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [test, docker, tray]
+    needs: [test, docker]
     runs-on: ubuntu-latest
     permissions:
       contents: read
