@@ -43,7 +43,7 @@ describe('fornax update', () => {
     expect(r.code).toBe(0);
     expect(r.text).toContain(`updated fornax 0.0.1 → ${FORNAX_VERSION}`);
     expect(readFileSync(join(paths.appDir, 'VERSION'), 'utf8')).toBe(`${FORNAX_VERSION}\n`);
-    expect(readRestartRequest(paths)).toBeUndefined();
+    expect(readRestartRequest(paths)).toEqual({ kind: 'none' });
   });
 
   test('the same version: "is current" and nothing else; --force installs it again', async () => {
@@ -69,7 +69,7 @@ describe('fornax update', () => {
       expect(r.text).toContain('the worker restarts between jobs (after its running job, if any)');
       expect(r.text).not.toContain('updated type echo');
       expect(readFileSync(join(paths.typesDir, 'echo', 'scripts', 'tool.mjs'), 'utf8')).toBe(readFileSync(JOB_TOOL, 'utf8'));
-      expect(readRestartRequest(paths)).toBe(FORNAX_VERSION);
+      expect(readRestartRequest(paths)).toEqual({ kind: 'request', version: FORNAX_VERSION });
     } finally {
       writeFileSync(lock.file, String(process.pid));
       lock.release();
@@ -85,7 +85,7 @@ describe('fornax update', () => {
       const r = await run('update', '--force');
       expect(r.code).toBe(0);
       expect(r.text).toBe(`reinstalled fornax ${FORNAX_VERSION}`);
-      expect(readRestartRequest(paths)).toBeUndefined();
+      expect(readRestartRequest(paths)).toEqual({ kind: 'none' });
     } finally {
       writeFileSync(lock.file, String(process.pid));
       lock.release();
@@ -99,6 +99,25 @@ describe('fornax update', () => {
     expect(r.text).toMatch(/not the fornax worker .* the server announced/);
     expect(readFileSync(join(paths.appDir, 'VERSION'), 'utf8')).toBe('0.0.1\n');
     expect(existsSync(`${paths.appDir}.new`)).toBe(false);
+  });
+
+  test('a version older than 0.3.0 (no restart support) is refused before any download; nothing changes', async () => {
+    const { ctx, paths, run, s } = await setup(workerZip({ version: '0.2.0' }));
+    const asked: string[] = [];
+    ctx.fetch = async (url, init) => {
+      asked.push(String(url));
+      if (!String(url).endsWith('.json')) return fetch(url, init);
+      return Response.json({ version: '0.2.0', sha256: 'a'.repeat(64), size: 1000 });
+    };
+    const r = await run('update');
+    expect(r.code).toBe(1);
+    expect(r.text).toBe(
+      `the server offers fornax 0.2.0, older than 0.3.0: fornax update cannot install it (the worker could not restart into it); install that version by hand from ${s.url}/downloads/fornax-worker.zip`,
+    );
+    expect(asked.some((u) => u.endsWith('.zip'))).toBe(false);
+    expect(readFileSync(join(paths.appDir, 'VERSION'), 'utf8')).toBe('0.0.1\n');
+    expect(existsSync(`${paths.appDir}.new`)).toBe(false);
+    expect(readRestartRequest(paths)).toEqual({ kind: 'none' });
   });
 
   test('bytes that do not match the announced checksum change nothing', async () => {

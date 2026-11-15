@@ -13,6 +13,9 @@ import { WORKER_VERSION } from '../version.js';
 import { type Ctx, runningScript } from './context.js';
 import { localTools } from './types.js';
 
+/** The oldest worker fornax update installs: the first with fornax update and the restart between jobs (spec 05c 5). */
+const MIN_UPDATE_VERSION = '0.3.0';
+
 /** GET <server>/downloads/fornax-worker.zip, read in chunks and stopped once it is clearly larger than announced. */
 async function downloadZip(ctx: Ctx, base: string, size: number): Promise<Buffer> {
   const signal = AbortSignal.any([ctx.signal, AbortSignal.timeout(300_000)]);
@@ -58,7 +61,13 @@ export async function updateCommand(ctx: Ctx, opts: { force: boolean; server?: s
   }
   const base = server.replace(/\/+$/, '');
   const current = ctx.currentVersion ?? WORKER_VERSION;
-  const info = await fetchBundleInfo(base, ctx.signal);
+  const info = await fetchBundleInfo(base, ctx.signal, undefined, ctx.fetch);
+  // An older worker has no restart support: once swapped in, the supervisor could never restart into a newer one.
+  if (compareVersions(info.version, MIN_UPDATE_VERSION) < 0) {
+    throw new InstallError(
+      `the server offers fornax ${info.version}, older than ${MIN_UPDATE_VERSION}: fornax update cannot install it (the worker could not restart into it); install that version by hand from ${base}/downloads/fornax-worker.zip`,
+    );
+  }
   if (info.version === current && !opts.force) {
     ctx.out(`fornax ${current} is current`);
     return 0;

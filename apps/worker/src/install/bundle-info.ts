@@ -6,12 +6,15 @@ import { InstallError } from './errors.js';
 /** The largest bundle fornax update accepts (the real one is ~240 kB). */
 export const MAX_BUNDLE_BYTES = 256 * 1024 * 1024;
 
-/** GET <server>/downloads/fornax-worker.json (spec 05c 6). NetworkError when unreachable, InstallError otherwise. */
-export async function fetchBundleInfo(server: string, signal?: AbortSignal, timeoutMs = 15_000): Promise<WorkerBundleInfo> {
+/**
+ * GET <server>/downloads/fornax-worker.json (spec 05c 6). NetworkError when unreachable, InstallError otherwise.
+ * `fetchImpl` is a test seam (default globalThis.fetch).
+ */
+export async function fetchBundleInfo(server: string, signal?: AbortSignal, timeoutMs = 15_000, fetchImpl: typeof fetch = fetch): Promise<WorkerBundleInfo> {
   const s = signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs);
   let res: Response;
   try {
-    res = await fetch(`${server.replace(/\/+$/, '')}/downloads/fornax-worker.json`, { signal: s });
+    res = await fetchImpl(`${server.replace(/\/+$/, '')}/downloads/fornax-worker.json`, { signal: s });
   } catch (e) {
     throw networkErrorOf(e, s);
   }

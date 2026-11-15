@@ -91,8 +91,8 @@ export type SyncOptions = {
 };
 
 /** The error code, else the error's class: never the message, which may hold local paths. */
-const errorName = (e: unknown): string => {
-  const code = (e as NodeJS.ErrnoException).code;
+export const errorName =(e: unknown): string => {
+  const code = (e as NodeJS.ErrnoException | null | undefined)?.code;
   return typeof code === 'string' ? code : e instanceof Error ? e.constructor.name : typeof e;
 };
 

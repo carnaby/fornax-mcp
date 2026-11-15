@@ -11,20 +11,25 @@ export function writeRestartRequest(paths: Paths, version: string): void {
   renameSync(tmp, paths.restartFile);
 }
 
-/** The requested version; undefined without a request, null for a file that is no request (damaged, written by hand). */
-export function readRestartRequest(paths: Paths): string | null | undefined {
+/**
+ * What the restart file holds: none (no file); unreadable (a read error such as a file held by another program: read
+ * again later, never removed); damaged (content that is no request, e.g. written by hand); or a request.
+ */
+export type RestartRequest = { kind: 'none' } | { kind: 'unreadable' } | { kind: 'damaged' } | { kind: 'request'; version: string };
+
+/** Read the restart file; never throws. */
+export function readRestartRequest(paths: Paths): RestartRequest {
   let text: string;
   try {
     text = readFileSync(paths.restartFile, 'utf8');
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
-    return null;
+    return (e as NodeJS.ErrnoException | null)?.code === 'ENOENT' ? { kind: 'none' } : { kind: 'unreadable' };
   }
   try {
     const v = (JSON.parse(text) as { version?: unknown }).version;
-    return typeof v === 'string' && VERSION_TEXT.test(v) ? v : null;
+    return typeof v === 'string' && VERSION_TEXT.test(v) ? { kind: 'request', version: v } : { kind: 'damaged' };
   } catch {
-    return null;
+    return { kind: 'damaged' };
   }
 }
 
@@ -33,13 +38,21 @@ export const RESTART_EXIT = 75;
 
 /**
  * Spec 05c 5.2: asked between jobs. True means restart now (the request is removed and the line printed). A request
- * for the version this worker is, or a damaged file, is removed; a copy outside app says once what to do and keeps it.
- * A file that cannot be removed (held by another program) never stops the worker: the next round tries again, and
- * after a restart the new child sees its own version and removes it.
+ * for the version this worker is, or a damaged file, is removed; a copy outside app (running from `runsFrom`) says
+ * once what to do and keeps it. A file that cannot be read or removed (held by another program) never stops the
+ * worker: the next round tries again, and after a restart the new child sees its own version and removes it.
  */
 export function restartCheck(
   paths: Paths,
-  o: { version: string; installed: boolean; out: (line: string) => void; /** Test seam (default rmSync, force). */ remove?: (file: string) => void },
+  o: {
+    version: string;
+    installed: boolean;
+    /** The folder of the running fornax.mjs. */
+    runsFrom: string;
+    out: (line: string) => void;
+    /** Test seam (default rmSync, force). */
+    remove?: (file: string) => void;
+  },
 ): () => boolean {
   const remove = () => {
     try {
@@ -50,19 +63,19 @@ export function restartCheck(
   };
   let told = false;
   return () => {
-    const v = readRestartRequest(paths);
-    if (v === undefined) return false;
-    if (v === null || v === o.version) {
+    const r = readRestartRequest(paths);
+    if (r.kind === 'none' || r.kind === 'unreadable') return false;
+    if (r.kind === 'damaged' || r.version === o.version) {
       remove();
       return false;
     }
     if (!o.installed) {
-      if (!told) o.out(`fornax ${v} is installed in ${paths.appDir}; this worker runs from another folder: stop it and run fornax worker`);
+      if (!told) o.out(`fornax ${r.version} is installed in ${paths.appDir}; this worker runs from ${o.runsFrom}: stop it and run fornax worker`);
       told = true;
       return false;
     }
     remove();
-    o.out(`restarting for fornax ${v}`);
+    o.out(`restarting for fornax ${r.version}`);
     return true;
   };
 }
