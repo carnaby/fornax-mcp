@@ -2,6 +2,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -58,7 +59,7 @@ class EncodeTest(unittest.TestCase):
     def test_a_flat_colour_comes_back_within_2_of_255(self):
         out = self.dir / "upscaled.mp4"
         encode.encode_frames(FFMPEG, FFPROBE, self.frames(), self.src, out)
-        raw = subprocess.run([FFMPEG, "-v", "error", "-i", str(out), "-vf", "scale=in_color_matrix=bt601:in_range=tv,format=rgb24", "-frames:v", "1", "-f", "rawvideo", "-"], capture_output=True, check=True, timeout=60).stdout
+        raw = subprocess.run([FFMPEG, "-v", "error", "-i", str(out), "-vf", "scale=in_color_matrix=bt601:in_range=tv:flags=accurate_rnd+full_chroma_int,format=rgb24", "-frames:v", "1", "-f", "rawvideo", "-"], capture_output=True, check=True, timeout=60).stdout
         self.assertEqual(len(raw), 128 * 72 * 3)
         for channel, want in enumerate(COLOUR):
             mean = sum(raw[channel::3]) / (128 * 72)
@@ -89,6 +90,43 @@ class EncodeTest(unittest.TestCase):
         frames[3].write_bytes(b"not a png")
         with self.assertRaises(encode.EncodeError):
             encode.encode_frames(FFMPEG, FFPROBE, frames, self.src, out)
+        self.assertFalse(out.exists())
+        self.assertFalse((self.dir / "upscaled.part.mp4").exists())
+
+    def test_the_temporary_file_is_removed_when_the_read_back_cannot_run(self):
+        out = self.dir / "upscaled.mp4"
+        with self.assertRaises(encode.ToolError):
+            encode.encode_frames(FFMPEG, str(self.dir / "no-ffprobe-here"), self.frames(), self.src, out)
+        self.assertFalse(out.exists())
+        self.assertFalse((self.dir / "upscaled.part.mp4").exists())
+
+    def test_the_temporary_file_is_removed_when_the_feed_is_interrupted(self):
+        class Stop(Exception):
+            pass
+
+        part = self.dir / "upscaled.part.mp4"
+        seen = []
+
+        def stop(done, total):
+            # Interrupt once ffmpeg has created the temporary file: it does so only when x264 puts out its first
+            # packets (after some 150 frames), and the feed runs ahead of ffmpeg, so let it catch up a little.
+            deadline = time.monotonic() + 0.5
+            while not part.exists() and time.monotonic() < deadline:
+                time.sleep(0.05)
+            if part.exists():
+                seen.append(done)
+                raise Stop()
+
+        # Noise frames, larger than the pipe's write buffer, so the feed reaches ffmpeg frame by frame.
+        noise = self.dir / "noise.png"
+        ffmpeg("-f", "lavfi", "-i", "nullsrc=s=320x180,geq=lum=random(1)*255:cb=128:cr=128", "-frames:v", "1", str(noise))
+        frames = self.frames(n=480)
+        for frame in frames:
+            shutil.copyfile(noise, frame)
+        out = self.dir / "upscaled.mp4"
+        with self.assertRaises(Stop):
+            encode.encode_frames(FFMPEG, FFPROBE, frames, self.src, out, on_progress=stop)
+        self.assertEqual(len(seen), 1)
         self.assertFalse(out.exists())
         self.assertFalse((self.dir / "upscaled.part.mp4").exists())
 

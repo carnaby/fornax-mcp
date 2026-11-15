@@ -58,35 +58,44 @@ def encode_frames(ffmpeg, ffprobe, frames, src, out, audio_source=None, audio=No
     reader = threading.Thread(target=lambda: err.append(p.stderr.read()), daemon=True)
     reader.start()
     try:
-        for i, frame in enumerate(frames):
-            try:
-                p.stdin.write(Path(frame).read_bytes())
-            except OSError:
-                break  # the encoder ended early: its exit code says why
-            if on_progress and (i + 1) % 24 == 0:
-                on_progress(i + 1, len(frames))
         try:
-            p.stdin.close()
-        except OSError:
-            pass
-        code = p.wait()
+            for i, frame in enumerate(frames):
+                try:
+                    p.stdin.write(Path(frame).read_bytes())
+                except OSError:
+                    break  # the encoder ended early: its exit code says why
+                if on_progress and (i + 1) % 24 == 0:
+                    on_progress(i + 1, len(frames))
+            try:
+                p.stdin.close()
+            except OSError:
+                pass
+            code = p.wait()
+        except BaseException:
+            p.kill()
+            p.wait()
+            try:
+                p.stdin.close()
+            except OSError:
+                pass
+            raise
+        finally:
+            reader.join(10)
+            if not reader.is_alive():
+                p.stderr.close()
+        if code != 0:
+            lines = b"".join(err).decode("utf-8", "replace").strip().splitlines()
+            raise EncodeError(f"ffmpeg could not encode the frames (exit {code}){': ' + lines[-1] if lines else ''}")
+        try:
+            written = probe(ffprobe, tmp)
+        except Rejected as e:
+            raise EncodeError(f"the encoded file could not be read back ({e})") from None
+        if written.frames != len(frames):
+            raise EncodeError(f"the encoded file has {written.frames} frames, {len(frames)} went in")
+        os.replace(tmp, out)
     except BaseException:
-        p.kill()
+        tmp.unlink(missing_ok=True)
         raise
-    reader.join(10)
-    if code != 0:
-        tmp.unlink(missing_ok=True)
-        lines = b"".join(err).decode("utf-8", "replace").strip().splitlines()
-        raise EncodeError(f"ffmpeg could not encode the frames (exit {code}){': ' + lines[-1] if lines else ''}")
-    try:
-        written = probe(ffprobe, tmp)
-    except Rejected as e:
-        tmp.unlink(missing_ok=True)
-        raise EncodeError(f"the encoded file could not be read back ({e})") from None
-    if written.frames != len(frames):
-        tmp.unlink(missing_ok=True)
-        raise EncodeError(f"the encoded file has {written.frames} frames, {len(frames)} went in")
-    os.replace(tmp, out)
     return written
 
 
