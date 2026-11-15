@@ -24,14 +24,16 @@ async function setup(opts: { paired?: boolean } = {}) {
   const root = tmp();
   const paths = testPaths(root);
   s.announce([loadPack(writeEchoPack(paths.typesDir)).contract]);
+  // The raw worker token: a test that starts the server again gives it back to the new one.
+  const workerToken = opts.paired !== false ? s.issueToken('pc', 'worker') : '';
   if (opts.paired !== false) {
     saveServer(paths, s.url);
-    saveToken(paths, s.issueToken('pc', 'worker'));
+    saveToken(paths, workerToken);
   }
   const out: string[] = [];
   const err: string[] = [];
   const ctx: Ctx = { paths, out: (l) => out.push(l), err: (l) => err.push(l), env: {}, signal: new AbortController().signal };
-  return { s, ctx, out, err, client: clientOf(s, s.issueToken('alice')) };
+  return { s, ctx, out, err, workerToken, client: clientOf(s, s.issueToken('alice')) };
 }
 
 const view = (over: Partial<OperatorQueue> = {}): OperatorQueue => ({
@@ -149,18 +151,37 @@ describe('fornax queue --watch (spec 06 3.1)', () => {
   });
 
   test('an unreachable server: an error line, then the queue once it answers again', async () => {
-    const { s, ctx, out } = await setup();
+    const { s, ctx, out, workerToken } = await setup();
     const port = Number(new URL(s.url).port);
     await s.close();
     servers.splice(0);
     const stop = new AbortController();
-    const watching = queueWatch({ ...ctx, signal: stop.signal }, { json: true, waitS: 1, retryMs: [50] });
+    // authRetryMs: should a read reach the new server before it knows the token, the watch asks again soon.
+    const watching = queueWatch({ ...ctx, signal: stop.signal }, { json: true, waitS: 1, retryMs: [50], authRetryMs: 50 });
     await waitForLines(out, 1);
     expect(JSON.parse(out[0]!)).toMatchObject({ ok: false, error: 'network' });
+    // The same server again: a fresh database, given the worker token this PC holds.
     const again = await startTestServer({ port });
     servers.push(again);
-    // The new server does not know the old worker token: 401 is an "auth" line.
-    await waitFor(() => out.some((l) => JSON.parse(l).error === 'auth'));
+    again.issueToken('pc', 'worker', workerToken);
+    await waitFor(() => out.some((l) => JSON.parse(l).ok === true), 10_000, 'the queue after the failure');
+    const ok = out.findIndex((l) => JSON.parse(l).ok === true);
+    expect(ok).toBeGreaterThan(0);
+    expect(JSON.parse(out[ok]!)).toMatchObject({ ok: true, paused: false, running: null, queued: [] });
+    stop.abort();
+    expect(await watching).toBe(0);
+  });
+
+  test('a server that does not know the token: an auth line, asked again later', async () => {
+    const { ctx, out } = await setup();
+    const other = await startTestServer();
+    servers.push(other);
+    saveServer(ctx.paths, other.url);
+    const stop = new AbortController();
+    const watching = queueWatch({ ...ctx, signal: stop.signal }, { json: true, waitS: 1, retryMs: [50], authRetryMs: 50 });
+    await waitForLines(out, 2);
+    expect(JSON.parse(out[0]!)).toMatchObject({ ok: false, error: 'auth' });
+    expect(JSON.parse(out[1]!)).toMatchObject({ ok: false, error: 'auth' });
     stop.abort();
     expect(await watching).toBe(0);
   });
