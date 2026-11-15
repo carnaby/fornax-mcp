@@ -1,5 +1,6 @@
 import type { WorkerBundleInfo } from '@fornax/protocol';
 import { networkErrorOf } from '../api.js';
+import { VERSION_TEXT } from './app.js';
 import { InstallError } from './errors.js';
 
 /** The largest bundle fornax update accepts (the real one is ~240 kB). */
@@ -15,10 +16,21 @@ export async function fetchBundleInfo(server: string, signal?: AbortSignal, time
     throw networkErrorOf(e, s);
   }
   if (!res.ok) throw new InstallError(`the server has no worker bundle (HTTP ${res.status})`);
-  const b = (await res.json().catch(() => null)) as Partial<WorkerBundleInfo> | null;
+  let text: string;
+  try {
+    text = await res.text();
+  } catch (e) {
+    throw networkErrorOf(e, s);
+  }
+  let b: Partial<WorkerBundleInfo> | null;
+  try {
+    b = JSON.parse(text) as Partial<WorkerBundleInfo> | null;
+  } catch {
+    b = null;
+  }
   const ok =
     b !== null &&
-    typeof b.version === 'string' && /^[0-9A-Za-z.+-]{1,40}$/.test(b.version) &&
+    typeof b.version === 'string' && VERSION_TEXT.test(b.version) &&
     typeof b.sha256 === 'string' && /^[0-9a-f]{64}$/.test(b.sha256) &&
     Number.isInteger(b.size) && b.size! > 0 && b.size! <= MAX_BUNDLE_BYTES;
   if (!ok) throw new InstallError('the server answered something else than the worker bundle info');

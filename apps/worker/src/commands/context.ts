@@ -1,6 +1,7 @@
 import { realpathSync } from 'node:fs';
 import { WorkerApi } from '../api.js';
 import { ConfigError, readToken, readWorkerConfig, serverWarning, type WorkerConfig } from '../config.js';
+import type { SwapDeps } from '../install/app.js';
 import type { PathDeps } from '../install/path-entry.js';
 import type { LeaseTimings } from '../lease/run.js';
 import type { LoopOptions } from '../loop.js';
@@ -36,6 +37,8 @@ export type Ctx = {
   currentVersion?: string;
   /** Test seam: fetch for fornax update's zip download (default globalThis.fetch). */
   fetch?: typeof fetch;
+  /** Test seam: the renames of fornax update's swap of <data>/app. */
+  swapDeps?: SwapDeps;
 };
 
 export const apiFor = (ctx: Ctx, server: string, token: string): WorkerApi =>

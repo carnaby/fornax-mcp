@@ -5,7 +5,8 @@ import { InstallError } from './errors.js';
 
 /** Never part of an installed program or pack: environments a setup made, Python caches, tests. */
 export const SKIP_PARTS = new Set(['env', '__pycache__', 'tests']);
-const VERSION_TEXT = /^[0-9A-Za-z.+-]{1,40}$/;
+/** A version as VERSION, the bundle info and the restart request hold it. */
+export const VERSION_TEXT = /^[0-9A-Za-z.+-]{1,40}$/;
 /** Rename errors that mean "someone holds a file in there for a moment" (Windows: antivirus, indexer, a terminal). */
 const BUSY = new Set(['EBUSY', 'EPERM', 'EACCES']);
 

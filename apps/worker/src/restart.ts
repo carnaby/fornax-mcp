@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { VERSION_TEXT } from './install/app.js';
 import type { Paths } from './paths.js';
 
 /** Spec 05c 5.2: fornax update asks the running worker to restart on this version. */
@@ -21,7 +22,7 @@ export function readRestartRequest(paths: Paths): string | null | undefined {
   }
   try {
     const v = (JSON.parse(text) as { version?: unknown }).version;
-    return typeof v === 'string' && /^[0-9A-Za-z.+-]{1,40}$/.test(v) ? v : null;
+    return typeof v === 'string' && VERSION_TEXT.test(v) ? v : null;
   } catch {
     return null;
   }

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { FORNAX_VERSION } from '@fornax/protocol';
 import { startTestServer, type TestServer } from '@fornax/server/testing';
@@ -9,7 +9,7 @@ import { compareVersions } from '../src/install/bundle-info.js';
 import { lockWorker } from '../src/instance.js';
 import { readRestartRequest } from '../src/restart.js';
 import { workerZip, writeWorkerDir } from './bundle-fixture.js';
-import { testPaths, useTempDir } from './helpers.js';
+import { JOB_TOOL, testPaths, useTempDir, writeEchoPack } from './helpers.js';
 
 const tmp = useTempDir();
 const servers: TestServer[] = [];
@@ -47,24 +47,49 @@ describe('fornax update', () => {
   });
 
   test('the same version: "is current" and nothing else; --force installs it again', async () => {
-    const { ctx, run } = await setup(workerZip({ version: FORNAX_VERSION }), FORNAX_VERSION);
-    expect((await run('update')).text).toBe(`fornax ${FORNAX_VERSION} is current`);
-    ctx.currentVersion = FORNAX_VERSION;
+    const { run } = await setup(workerZip({ version: FORNAX_VERSION }), FORNAX_VERSION);
+    const current = await run('update');
+    expect(current.code).toBe(0);
+    expect(current.text).toBe(`fornax ${FORNAX_VERSION} is current`);
     const forced = await run('update', '--force');
     expect(forced.code).toBe(0);
     expect(forced.text).toContain(`reinstalled fornax ${FORNAX_VERSION}`);
   });
 
   test('a running worker (lock held): the packs are left to it and a restart request is written', async () => {
-    const { paths, run } = await setup(workerZip({ version: FORNAX_VERSION }));
+    const typeYaml = readFileSync(join(writeEchoPack(tmp()), 'type.yaml'), 'utf8');
+    const { paths, run } = await setup(workerZip({ version: FORNAX_VERSION, packs: { echo: { 'type.yaml': typeYaml, 'scripts/tool.mjs': '// shipped\n' } } }));
+    writeEchoPack(paths.typesDir);
     const lock = lockWorker(paths);
     if (!('release' in lock)) throw new Error('no lock');
     writeFileSync(lock.file, String(process.ppid)); // another live process holds it
-    const r = await run('update');
-    expect(r.text).toContain('the worker restarts between jobs (after its running job, if any)');
-    expect(readRestartRequest(paths)).toBe(FORNAX_VERSION);
-    writeFileSync(lock.file, String(process.pid));
-    lock.release();
+    try {
+      const r = await run('update');
+      expect(r.code).toBe(0);
+      expect(r.text).toContain('the worker restarts between jobs (after its running job, if any)');
+      expect(r.text).not.toContain('updated type echo');
+      expect(readFileSync(join(paths.typesDir, 'echo', 'scripts', 'tool.mjs'), 'utf8')).toBe(readFileSync(JOB_TOOL, 'utf8'));
+      expect(readRestartRequest(paths)).toBe(FORNAX_VERSION);
+    } finally {
+      writeFileSync(lock.file, String(process.pid));
+      lock.release();
+    }
+  });
+
+  test('--force of the running version with a worker running: reinstalled, and no restart request', async () => {
+    const { paths, run } = await setup(workerZip({ version: FORNAX_VERSION }), FORNAX_VERSION);
+    const lock = lockWorker(paths);
+    if (!('release' in lock)) throw new Error('no lock');
+    writeFileSync(lock.file, String(process.ppid));
+    try {
+      const r = await run('update', '--force');
+      expect(r.code).toBe(0);
+      expect(r.text).toBe(`reinstalled fornax ${FORNAX_VERSION}`);
+      expect(readRestartRequest(paths)).toBeUndefined();
+    } finally {
+      writeFileSync(lock.file, String(process.pid));
+      lock.release();
+    }
   });
 
   test('a zip whose VERSION differs from the announced one changes nothing (Review Focus 2)', async () => {
@@ -91,6 +116,77 @@ describe('fornax update', () => {
     expect(readFileSync(join(paths.appDir, 'VERSION'), 'utf8')).toBe('0.0.1\n');
   });
 
+  test('bytes of another length than announced change nothing', async () => {
+    const { ctx, paths, run } = await setup(workerZip({ version: FORNAX_VERSION }));
+    ctx.fetch = async (url, init) => {
+      const res = await fetch(url, init);
+      if (!String(url).endsWith('.zip')) return res;
+      return new Response(Buffer.concat([Buffer.from(await res.arrayBuffer()), Buffer.from([0])]), { status: 200 });
+    };
+    const r = await run('update');
+    expect(r.code).toBe(1);
+    expect(r.text).toContain('the download does not match the checksum the server announced; nothing was changed');
+    expect(readFileSync(join(paths.appDir, 'VERSION'), 'utf8')).toBe('0.0.1\n');
+  });
+
+  test('a download that grows past the announced size is stopped while it streams (no content-length)', async () => {
+    const { ctx, paths, run } = await setup(workerZip({ version: FORNAX_VERSION }));
+    let sent = 0;
+    ctx.fetch = async (url, init) => {
+      if (!String(url).endsWith('.zip')) return fetch(url, init);
+      const body = new ReadableStream<Uint8Array>({
+        pull(c) {
+          sent += 64 * 1024;
+          c.enqueue(new Uint8Array(64 * 1024));
+          if (sent > 64 * 1024 * 1024) c.close(); // a bound for the test, far past the cap
+        },
+      });
+      return new Response(body, { status: 200 });
+    };
+    const r = await run('update');
+    expect(r.code).toBe(1);
+    expect(r.text).toBe('the worker bundle is larger than the server announced');
+    expect(sent).toBeLessThan(4 * 1024 * 1024);
+    expect(readFileSync(join(paths.appDir, 'VERSION'), 'utf8')).toBe('0.0.1\n');
+  });
+
+  test('a connection lost while the zip comes is reported as such', async () => {
+    const { ctx, paths, run } = await setup(workerZip({ version: FORNAX_VERSION }));
+    ctx.fetch = async (url, init) => {
+      if (!String(url).endsWith('.zip')) return fetch(url, init);
+      const body = new ReadableStream<Uint8Array>({
+        start(c) {
+          c.enqueue(new Uint8Array(1024));
+          c.error(new TypeError('terminated', { cause: { code: 'ECONNRESET' } }));
+        },
+      });
+      return new Response(body, { status: 200 });
+    };
+    const r = await run('update');
+    expect(r.code).toBe(1);
+    expect(r.text).toBe('cannot reach the server: ECONNRESET');
+    expect(readFileSync(join(paths.appDir, 'VERSION'), 'utf8')).toBe('0.0.1\n');
+  });
+
+  test('a swap that cannot put the old app back says so: the swap\'s own message reaches the user', async () => {
+    const { ctx, paths, run } = await setup(workerZip({ version: FORNAX_VERSION }));
+    let renames = 0;
+    ctx.swapDeps = {
+      tries: 1,
+      rename: (from, to) => {
+        if (++renames > 1) throw Object.assign(new Error('busy'), { code: 'EBUSY' });
+        renameSync(from, to); // app -> app.old works, every rename after it is held
+      },
+    };
+    const r = await run('update');
+    expect(r.code).toBe(1);
+    expect(r.text).toBe(
+      `${paths.appDir} could not be replaced and the old one could not be put back (EBUSY): rename ${paths.appDir}.old to ${paths.appDir} by hand`,
+    );
+    expect(readFileSync(join(`${paths.appDir}.old`, 'VERSION'), 'utf8')).toBe('0.0.1\n');
+    expect(existsSync(`${paths.appDir}.new`)).toBe(false);
+  });
+
   test('not the installed copy: says to install first; no worker.yaml and no --server: says how', async () => {
     const { ctx, run } = await setup(workerZip({ version: FORNAX_VERSION }));
     ctx.script = join(writeWorkerDir(join(tmp(), 'zip')), 'fornax.mjs');
@@ -98,9 +194,19 @@ describe('fornax update', () => {
     expect(r.code).toBe(1);
     expect(r.text).toMatch(/^fornax is not installed: run node .* install$/);
     ctx.script = join(ctx.paths.appDir, 'fornax.mjs');
-    writeFileSync(ctx.paths.configFile, '');
+    rmSync(ctx.paths.configFile);
     const r2 = await run('update');
     expect(r2.code).toBe(1);
+    expect(r2.text).toContain('; or name the server: fornax update --server <url>');
+  });
+
+  test('--server names the server instead of worker.yaml', async () => {
+    const { s, paths, run } = await setup(workerZip({ version: FORNAX_VERSION }));
+    writeFileSync(paths.configFile, 'server: http://127.0.0.1:9\n');
+    const r = await run('update', '--server', s.url);
+    expect(r.code).toBe(0);
+    expect(r.text).toContain(`updated fornax 0.0.1 → ${FORNAX_VERSION}`);
+    expect(readFileSync(join(paths.appDir, 'VERSION'), 'utf8')).toBe(`${FORNAX_VERSION}\n`);
   });
 
   test('an older version on the server is installed too, marked "older"', async () => {
