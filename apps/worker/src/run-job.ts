@@ -10,7 +10,8 @@ import { jobDirs, type Paths } from './paths.js';
 import { childEnv, KILL_GRACE_MS, logTail, runProcess } from './process.js';
 import { expandArgv, TemplateError } from './template.js';
 
-export const HEARTBEAT_MS = 30_000;
+/** Short, so a cancel stops a running job within seconds (the heartbeat's answer is how the worker hears of it). */
+export const HEARTBEAT_MS = 5000;
 /** One heartbeat may take this long; a half-open connection must not hold the next ones up for minutes. */
 export const HEARTBEAT_TIMEOUT_MS = 20_000;
 /**
@@ -271,14 +272,21 @@ export async function runJob(job: ClaimedJob, pack: Pack, deps: JobDeps): Promis
     const first = await call(() => deps.api.heartbeat(job.id, job.lease, 0, null, beatSignal()));
     lastBeat = Date.now();
     if (first.cancel) return { outcome: 'canceled', detail: 'canceled before it started' };
+    // One line per outage, not one every few seconds: the first failure, then the first heartbeat that gets through.
+    let failing = false;
     beats = startHeartbeat(deps.heartbeatMs ?? HEARTBEAT_MS, async (progress, message) => {
       try {
         const answer = await deps.api.heartbeat(job.id, job.lease, progress, message, beatSignal());
         lastBeat = Date.now();
+        if (failing) say('heartbeats get through again');
+        failing = false;
         if (answer.cancel) end('cancel');
       } catch (e) {
         if (e instanceof LeaseLostError) end('lost');
-        else if (!signal.aborted) say(`heartbeat failed (${describeError(e)}); the job goes on and the next heartbeat tries again`);
+        else if (!signal.aborted && !failing) {
+          failing = true;
+          say(`heartbeat failed (${describeError(e)}); the job goes on and the next heartbeats try again`);
+        }
       }
     });
 

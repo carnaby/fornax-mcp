@@ -6,7 +6,7 @@ import { ApiError, LeaseLostError, NetworkError } from '../src/api.js';
 import { sweepJobs } from '../src/instance.js';
 import { loadPack } from '../src/pack.js';
 import { jobDirs } from '../src/paths.js';
-import { inputFileName, type JobDeps, runJob } from '../src/run-job.js';
+import { HEARTBEAT_MS, inputFileName, type JobDeps, runJob } from '../src/run-job.js';
 import { fakeApi, fakeClaim, isAlive, jobsLeft, NODE_TOOLS, readPids, testPaths, useTempDir, waitFor, writeEchoPack } from './helpers.js';
 
 const tmp = useTempDir();
@@ -19,6 +19,10 @@ function setup(packOpts: Parameters<typeof writeEchoPack>[1] = {}) {
   });
   return { paths, pack, deps };
 }
+
+test('a running job beats every 5 s, so a cancel stops it within seconds', () => {
+  expect(HEARTBEAT_MS).toBe(5000);
+});
 
 test('input files are named by the worker, never by the client', () => {
   expect(inputFileName('scene', 'my scene.BLEND')).toBe('scene.blend');
@@ -253,6 +257,25 @@ describe('runJob', () => {
     expect(lines.some((l) => l.startsWith('heartbeat failed'))).toBe(true);
     expect([...server.uploads.keys()].sort()).toEqual(['log.txt', 'previews/result.jpg', 'result.txt']);
     expect(f.called('complete')).toHaveLength(1);
+  });
+
+  test('failed heartbeats are told once per outage, and again when they get through', async () => {
+    const { pack, deps } = setup();
+    let beats = 0;
+    // Two outages: beats 2-4 and 7-8 fail (beat 1 is the claim's confirmation, outside the timer).
+    const f = fakeApi({
+      heartbeat: async () => {
+        beats++;
+        if ((beats >= 2 && beats <= 4) || (beats >= 7 && beats <= 8)) throw new NetworkError('cannot reach the server: ECONNREFUSED');
+        return { cancel: false };
+      },
+    });
+    const lines: string[] = [];
+    const r = await runJob(fakeClaim({ params: { mode: 'slow', ms: 1500 } }), pack, deps(f.api, { log: (l) => lines.push(l) }));
+    expect(r.outcome).toBe('succeeded');
+    expect(beats).toBeGreaterThanOrEqual(9);
+    expect(lines.filter((l) => l.startsWith('heartbeat failed'))).toHaveLength(2);
+    expect(lines.filter((l) => l === 'heartbeats get through again')).toHaveLength(2);
   });
 
   test('Ctrl+C during an upload: the upload is abandoned and the job released, never completed', async () => {

@@ -4,7 +4,7 @@ import type { Db } from '../db/client.js';
 import { workerState } from '../db/schema.js';
 import { oneLine } from './queue.js';
 
-/** A worker heartbeats every 30 s and long-polls for at most 30 s, so 90 s of silence means it is gone. */
+/** A worker heartbeats every 5 s (30 s before 0.4.1) and long-polls for at most 30 s, so 90 s of silence means it is gone. */
 export const WORKER_ONLINE_MS = 90_000;
 
 /** Spec 05a 2.4: what clients see of the worker's reason to wait, with a ready sentence. */

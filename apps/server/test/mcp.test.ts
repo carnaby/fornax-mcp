@@ -109,6 +109,8 @@ describe('the MCP endpoint', () => {
       expect(byName[name]!.annotations, name).toMatchObject({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
     }
     expect(byName.cancel_job!.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false });
+    // A worker beats every 5 s (0.4.1): the promise to the client follows it.
+    expect(byName.cancel_job!.description).toContain('within a few seconds');
     expect(byName.create_upload!.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false });
     expect(byName.submit_job!.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false });
   });
