@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { VERSION_TEXT } from './install/app.js';
+import { bundleVersion, VERSION_TEXT } from './install/app.js';
 import type { Paths } from './paths.js';
 
 /** Spec 05c 5.2: fornax update asks the running worker to restart on this version. */
@@ -40,7 +40,8 @@ export const RESTART_EXIT = 75;
  * Spec 05c 5.2: asked between jobs. True means restart now (the request is removed and the line printed). A request
  * for the version this worker is, or a damaged file, is removed; a copy outside app (running from `runsFrom`) says
  * once what to do and keeps it. A file that cannot be read or removed (held by another program) never stops the
- * worker: the next round tries again, and after a restart the new child sees its own version and removes it.
+ * worker: the next round tries again. A request for another version that cannot be removed restarts only when
+ * `<appDir>/VERSION` is that version; the new child then sees its own version and removes it.
  */
 export function restartCheck(
   paths: Paths,
@@ -54,11 +55,14 @@ export function restartCheck(
     remove?: (file: string) => void;
   },
 ): () => boolean {
-  const remove = () => {
+  /** True when the request is gone. */
+  const remove = (): boolean => {
     try {
       (o.remove ?? ((f: string) => rmSync(f, { force: true })))(paths.restartFile);
+      return true;
     } catch {
       // Tried again next round.
+      return false;
     }
   };
   let told = false;
@@ -74,7 +78,9 @@ export function restartCheck(
       told = true;
       return false;
     }
-    remove();
+    // A request that stays (its file held) restarts only when the installed program really is that version: else
+    // every new child would see it again and restart, until the supervisor gives up.
+    if (!remove() && bundleVersion(paths.appDir) !== r.version) return false;
     o.out(`restarting for fornax ${r.version}`);
     return true;
   };

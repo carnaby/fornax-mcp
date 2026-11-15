@@ -13,17 +13,22 @@ import { runPackSetup } from './pack-setup.js';
 export const ORIGIN_FILE = '.fornax-pack.json';
 export type PackOrigin = 'shipped' | 'dir';
 
-export function writeOrigin(dir: string, origin: PackOrigin): void {
-  writeFileSync(join(dir, ORIGIN_FILE), `${JSON.stringify({ source: origin })}\n`);
+/**
+ * Write the marker. `setupPending`: the pack's setup has yet to succeed (written before the files are swapped in, so a
+ * setup that fails or is cut short, e.g. by Ctrl+C at worker start, runs again at the next sync).
+ */
+export function writeOrigin(dir: string, origin: PackOrigin, setupPending = false): void {
+  writeFileSync(join(dir, ORIGIN_FILE), `${JSON.stringify(setupPending ? { source: origin, setup: 'pending' } : { source: origin })}\n`);
 }
 
-/** The marker's origin; null without a (readable) marker. */
-function readOrigin(dir: string): PackOrigin | null {
+/** The marker's origin (null without a readable marker) and whether a setup is pending; both marker shapes are read. */
+function readMarker(dir: string): { origin: PackOrigin | null; setupPending: boolean } {
   try {
-    const s = (JSON.parse(readFileSync(join(dir, ORIGIN_FILE), 'utf8')) as { source?: unknown }).source;
-    return s === 'shipped' || s === 'dir' ? s : null;
+    const m = JSON.parse(readFileSync(join(dir, ORIGIN_FILE), 'utf8')) as { source?: unknown; setup?: unknown };
+    const origin = m.source === 'shipped' || m.source === 'dir' ? m.source : null;
+    return { origin, setupPending: origin !== null && m.setup === 'pending' };
   } catch {
-    return null;
+    return { origin: null, setupPending: false };
   }
 }
 
@@ -61,9 +66,13 @@ const setupFiles = (pack: Pack): string[] =>
     return m ? [m[1]!] : [];
   });
 
-/** Spec 05c 4.4: the setup runs again when the type's version, its setup command or a file it runs changed. */
+/**
+ * Spec 05c 4.4: the setup runs again when the type's version, its setup command or a file it runs changed, or when the
+ * installed pack's setup is still pending (it failed or was cut short).
+ */
 function setupNeeded(oldDir: string, oldFiles: Map<string, string>, next: Pack, nextFiles: Map<string, string>): boolean {
   if (!next.impl.setup) return false;
+  if (readMarker(oldDir).setupPending) return true;
   let old: Pack;
   try {
     old = loadPack(oldDir);
@@ -149,7 +158,7 @@ function cleanPackLeftovers(typesDir: string, out: (line: string) => void, renam
 /** Bring one installed pack up to the shipped one; an error it throws is caught by syncShippedPacks. */
 async function syncPack(o: SyncOptions, name: string, shipped: Set<string>): Promise<void> {
   const dir = join(o.typesDir, name);
-  const origin = readOrigin(dir);
+  const { origin, setupPending } = readMarker(dir);
   if (!shipped.has(name)) {
     if (origin === 'shipped') o.out(`WARN  ${name} is no longer shipped`);
     return;
@@ -159,7 +168,8 @@ async function syncPack(o: SyncOptions, name: string, shipped: Set<string>): Pro
   const oldFiles = packFiles(dir);
   const newFiles = packFiles(source);
   if (sameFiles(oldFiles, newFiles)) {
-    if (origin === null) writeOrigin(dir, 'shipped');
+    if (setupPending) await setupAndCheck(o, name, dir);
+    else if (origin === null) writeOrigin(dir, 'shipped');
     return;
   }
   let next: Pack;
@@ -176,7 +186,7 @@ async function syncPack(o: SyncOptions, name: string, shipped: Set<string>): Pro
     (o.copy ?? cpSync)(source, stage, { recursive: true, filter: (src) => !relative(source, src).split(sep).some((part) => SKIP_PARTS.has(part)) });
     const env = join(dir, 'env');
     if (existsSync(env)) renameSync(env, join(stage, 'env'));
-    writeOrigin(stage, 'shipped');
+    writeOrigin(stage, 'shipped', needSetup);
     try {
       (o.swap ?? swapDir)(stage, dir);
     } catch (e) {
@@ -209,14 +219,26 @@ async function syncPack(o: SyncOptions, name: string, shipped: Set<string>): Pro
   const t = Math.max(Date.now(), statSync(yaml).mtimeMs + 1000) / 1000;
   utimesSync(yaml, t, t);
   o.out(`updated type ${name}`);
-  if (needSetup) {
+  if (needSetup) await setupAndCheck(o, name, dir);
+  else await checkInstalled(o, name, dir);
+}
+
+/** Run the pack's setup (its marker says pending until it succeeds), then check the pack. */
+async function setupAndCheck(o: SyncOptions, name: string, dir: string): Promise<void> {
+  const pack = loadPack(dir);
+  if (pack.impl.setup) {
     o.out(`running the setup of ${name}…`);
-    const why = await runPackSetup({ pack: loadPack(dir), dir, tools: o.tools, signal: o.signal, write: o.write, timeoutMs: o.setupTimeoutMs });
+    const why = await runPackSetup({ pack, dir, tools: o.tools, signal: o.signal, write: o.write, timeoutMs: o.setupTimeoutMs });
     if (why) {
       o.out(`WARN  ${name}: setup failed (${why}); the type is not ready (fornax doctor)`);
       return;
     }
   }
+  writeOrigin(dir, 'shipped');
+  await checkInstalled(o, name, dir);
+}
+
+async function checkInstalled(o: SyncOptions, name: string, dir: string): Promise<void> {
   const problem = await checkPack(loadPack(dir), o.tools, { signal: o.signal, timeoutMs: o.checkTimeoutMs });
   if (problem) o.out(`WARN  ${name} is not ready: ${problem}`);
 }

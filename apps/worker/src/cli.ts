@@ -98,6 +98,8 @@ export async function runCli(argv: string[], ctx: Ctx): Promise<number> {
     if (group === 'worker' && sub === 'pair' && shape(2, 'server', 'name', 'force') && flags.server && flags.name) {
       return await pair(ctx, { server: flags.server, name: flags.name, force: flags.force === true });
     }
+    // `worker --child` and its restart exit code 75 are a contract across versions: a supervisor that is still running
+    // an older version starts the newly installed program this way after fornax update. Not in USAGE: internal.
     if (group === 'worker' && sub === undefined && shape(1, 'once', 'child')) {
       if (!flags.child && ctx.supervise) return await ctx.supervise(flags.once ? ['--once'] : []);
       return await workerCommand(ctx, flags.once === true, { child: flags.child === true });
@@ -254,7 +256,14 @@ if (isMainModule()) {
   // Linux: the worker child has a process group of its own; a supervisor gone without passing a signal on (SIGKILL)
   // must not leave it claiming jobs where Ctrl+C no longer reaches it. Its parent gone counts as a first stop.
   const supervised = process.platform !== 'win32' && process.argv[2] === 'worker' && process.argv.slice(3).includes('--child');
-  const unwatch = supervised ? watchParent({ onGone: () => onSignal('SIGHUP') }) : () => {};
+  // A stop already passed on (e.g. by the supervisor) must not become a second signal, the hard quit.
+  const unwatch = supervised
+    ? watchParent({
+        onGone: () => {
+          if (!stop.signal.aborted) onSignal('SIGHUP');
+        },
+      })
+    : () => {};
   process.exitCode = await runCli(process.argv.slice(2), ctx);
   unwatch();
   unwire();

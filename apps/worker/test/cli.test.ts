@@ -215,6 +215,15 @@ describe('fornax CLI', () => {
     }
   });
 
+  test('worker --child (what an older running supervisor starts) is the worker command, and stays out of the usage', async () => {
+    const { run } = cli();
+    const plain = await run('worker');
+    const child = await run('worker', '--child');
+    expect(plain.code).toBe(1);
+    expect(child).toEqual(plain);
+    expect((await run('--help')).text).not.toContain('--child');
+  });
+
   test('a second worker on this PC refuses to start; leftovers of earlier runs are swept at start', async () => {
     const s = await server();
     const { ctx, run } = cli();

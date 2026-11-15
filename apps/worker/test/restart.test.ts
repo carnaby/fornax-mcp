@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { startTestServer } from '@fornax/server/testing';
 import { afterEach, describe, expect, test } from 'vitest';
@@ -80,15 +80,39 @@ describe('restartCheck', () => {
     expect(tries).toBe(2);
   });
 
-  test('a request for another version restarts even when its file cannot be removed', () => {
+  test('a request whose file cannot be removed restarts when the installed program is that version (app/VERSION)', () => {
     const paths = testPaths(tmp());
     const out: string[] = [];
     writeRestartRequest(paths, '0.4.0');
+    mkdirSync(paths.appDir, { recursive: true });
+    writeFileSync(join(paths.appDir, 'VERSION'), '0.4.0\n');
     const remove = () => {
       throw Object.assign(new Error('held'), { code: 'EPERM' });
     };
     expect(restartCheck(paths, { version: '0.3.0', installed: true, runsFrom: RUNS_FROM, out: (l) => out.push(l), remove })()).toBe(true);
     expect(out).toEqual(['restarting for fornax 0.4.0']);
+  });
+
+  test('a request whose file cannot be removed and whose version is not the installed one: no restart, tried again next round', () => {
+    const paths = testPaths(tmp());
+    const out: string[] = [];
+    writeRestartRequest(paths, '0.4.0');
+    // Without it each new child would see the same request and restart again, until the supervisor gives up.
+    mkdirSync(paths.appDir, { recursive: true });
+    writeFileSync(join(paths.appDir, 'VERSION'), '0.3.0\n');
+    let tries = 0;
+    const remove = () => {
+      tries++;
+      throw Object.assign(new Error('held'), { code: 'EPERM' });
+    };
+    const check = restartCheck(paths, { version: '0.3.0', installed: true, runsFrom: RUNS_FROM, out: (l) => out.push(l), remove });
+    expect(check()).toBe(false);
+    expect(check()).toBe(false);
+    expect(tries).toBe(2);
+    expect(out).toEqual([]);
+    // No VERSION at all: the same.
+    rmSync(join(paths.appDir, 'VERSION'));
+    expect(check()).toBe(false);
   });
 });
 

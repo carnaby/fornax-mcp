@@ -176,7 +176,8 @@ checks the download's size and SHA-256 against what the server announces; on a m
 brings the installed built-in types up to date (their `env/` stays; a type's setup runs again only when the type
 changed what it installs) and mentions new built-in types (`fornax types install <name>`); types installed with
 `--from` are left alone. A running `fornax worker` finishes its job and restarts on the new version in the same
-window: it restarts between jobs, so a running job or lease finishes first, and an idle worker restarts within about
+window when it was started from the installed copy (a worker started from the unzipped folder prints what to do
+instead): it restarts between jobs, so a running job or lease finishes first, and an idle worker restarts within about
 25 s.
 
 `--force` installs the offered version again even when you have it (the worker does not restart for the same

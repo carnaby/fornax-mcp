@@ -66,6 +66,42 @@ describe('syncShippedPacks', () => {
     expect(existsSync(join(typesDir, 'echo', 'type.yaml'))).toBe(true);
   });
 
+  test('a setup that failed (or was cut short) stays pending: the next sync runs it again with equal files, and its success clears it', async () => {
+    const { root, shippedDir, typesDir, out, sync } = setup();
+    const marker = () => JSON.parse(readFileSync(join(typesDir, 'echo', ORIGIN_FILE), 'utf8')) as unknown;
+    // Fails until the flag file exists. No braces in it: every {…} in type.yaml is a symbol.
+    const flag = join(root, 'setup-may-pass');
+    const setupScript = `const fs=require('fs');fs.existsSync(${JSON.stringify(flag)})||process.exit(3);fs.existsSync('env')||fs.mkdirSync('env');fs.writeFileSync('env/ran','1')`;
+    writeEchoPack(shippedDir, { setup: ['{tool.node}', '-e', setupScript] });
+    writeFileSync(join(shippedDir, 'echo', 'type.yaml'), readFileSync(join(shippedDir, 'echo', 'type.yaml'), 'utf8').replace('version: 1', 'version: 2'));
+    await sync();
+    expect(out.some((l) => l.startsWith('WARN  echo: setup failed (exit code 3'))).toBe(true);
+    expect(marker()).toEqual({ source: 'shipped', setup: 'pending' });
+
+    writeFileSync(flag, '');
+    out.length = 0;
+    await sync();
+    expect(out[0]).toBe('running the setup of echo…');
+    expect(out).not.toContain('updated type echo');
+    expect(out.filter((l) => l.startsWith('WARN'))).toEqual([]);
+    expect(existsSync(join(typesDir, 'echo', 'env', 'ran'))).toBe(true);
+    expect(marker()).toEqual({ source: 'shipped' });
+
+    out.length = 0;
+    await sync();
+    expect(out).toEqual([]);
+  });
+
+  test('equal files without a pending setup run no setup', async () => {
+    const { shippedDir, typesDir, out, sync } = setup();
+    const setupScript = "const fs=require('fs');fs.existsSync('env')||fs.mkdirSync('env');fs.writeFileSync('env/ran','1')";
+    for (const dir of [shippedDir, typesDir]) writeEchoPack(dir, { setup: ['{tool.node}', '-e', setupScript] });
+    writeOrigin(join(typesDir, 'echo'), 'shipped');
+    await sync();
+    expect(out).toEqual([]);
+    expect(existsSync(join(typesDir, 'echo', 'env', 'ran'))).toBe(false);
+  });
+
   test('a pack installed from a directory is never touched', async () => {
     const { shippedDir, typesDir, sync } = setup();
     writeOrigin(join(typesDir, 'echo'), 'dir');

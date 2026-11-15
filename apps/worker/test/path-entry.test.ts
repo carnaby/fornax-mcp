@@ -42,9 +42,14 @@ describe('addToPath on Windows (seams, no registry)', () => {
   test('a failing PowerShell is a WARN with the command to run by hand (a quote in the folder doubled)', () => {
     const lines = addToPath(APP, { platform: 'win32', readUserPath: () => { throw new Error('no powershell'); }, writeUserPath: () => {} });
     expect(lines[0]).toMatch(/^WARN  could not add .* to your Path \(no powershell\); add it by hand:/);
-    expect(lines[1]).toContain(`SetEnvironmentVariable('Path'`);
+    // Raw and kind-keeping, as the automatic path writes it: no %VAR% expanded, no REG_SZ written.
+    expect(lines[1]).toBe(
+      `  $k = Get-Item 'HKCU:\\Environment'; Set-ItemProperty 'HKCU:\\Environment' Path (($k.GetValue('Path', '', 'DoNotExpandEnvironmentNames') + ';${APP}').TrimStart(';')) -Type ExpandString`,
+    );
+    expect(lines[1]).not.toContain('SetEnvironmentVariable');
+    expect(lines[2]).toBe('  or add it in Settings \u203A Edit environment variables for your account');
     const quoted = addToPath("C:\\Users\\o'b\\fornax\\app", { platform: 'win32', readUserPath: () => { throw new Error('x'); } });
-    expect(quoted[1]).toContain("';C:\\Users\\o''b\\fornax\\app', 'User')");
+    expect(quoted[1]).toContain("+ ';C:\\Users\\o''b\\fornax\\app').TrimStart(';')");
   });
 });
 

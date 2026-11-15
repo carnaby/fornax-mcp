@@ -35,6 +35,8 @@ export async function bundleWorker(outDir) {
   const types = join(repo, 'types');
   cpSync(types, join(stage, 'types'), { recursive: true, filter: (src) => !relative(types, src).split(sep).some((part) => SKIP.has(part)) });
   cpSync(join(repo, 'LICENSE'), join(stage, 'LICENSE'));
+  // fornax.cmd must stay byte-identical across versions: cmd.exe re-reads a running batch file at its saved offset after
+  // each command, and fornax update swaps this file in under a launcher that is still running.
   writeFileSync(join(stage, 'fornax.cmd'), '@echo off\r\nnode "%~dp0fornax.mjs" %*\r\n');
   writeFileSync(join(stage, 'fornax'), '#!/bin/sh\nexec node "$(dirname "$(readlink -f "$0")")/fornax.mjs" "$@"\n');
   chmodSync(join(stage, 'fornax'), 0o755);

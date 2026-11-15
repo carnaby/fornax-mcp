@@ -83,9 +83,12 @@ export function addToPath(appDir: string, deps: PathDeps = {}): string[] {
       (deps.writeUserPath ?? writeUserPathRaw)(merged, kind);
       return [`added ${appDir} to your Path; open a new terminal to use fornax`];
     } catch (e) {
+      // The same raw write as the automatic path: [Environment]::Get/SetEnvironmentVariable would expand every %VAR%
+      // entry and store the Path as REG_SZ.
       return [
         `WARN  could not add ${appDir} to your Path (${(e as Error).message}); add it by hand:`,
-        `  [Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path', 'User') + ';${appDir.replaceAll("'", "''")}', 'User')`,
+        `  $k = Get-Item 'HKCU:\\Environment'; Set-ItemProperty 'HKCU:\\Environment' Path (($k.GetValue('Path', '', 'DoNotExpandEnvironmentNames') + ';${appDir.replaceAll("'", "''")}').TrimStart(';')) -Type ExpandString`,
+        '  or add it in Settings › Edit environment variables for your account',
       ];
     }
   }
