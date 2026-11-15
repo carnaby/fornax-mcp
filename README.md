@@ -196,6 +196,11 @@ running job with its time and progress, the waiting jobs in the order they will 
 - `fornax queue --watch` prints the queue again after every change (with `--json`, one line each; with `--json` it
   also ends when its standard input closes, which is how a program that reads it stops it).
 
+`fornax worker --events` runs the worker for a program that controls it (the tray): standard output carries only JSON
+lines (`{"event":"started","version","pid"}`, `{"event":"log","line"}`, `{"event":"restarting"}`,
+`{"event":"stopped","code"}`), and a line `stop` on standard input stops it like Ctrl+C (a second one at once; closing
+standard input is one stop).
+
 ### Updating
 
 `fornax update` installs the version your server offers (`fornax doctor` and the worker say when it differs). It
