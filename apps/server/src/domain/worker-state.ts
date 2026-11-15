@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { workerState } from '../db/schema.js';
 import { oneLine } from './queue.js';
+import { jobChanges } from './signal.js';
 
 /** A worker heartbeats every 5 s (30 s before 0.4.1) and long-polls for at most 30 s, so 90 s of silence means it is gone. */
 export const WORKER_ONLINE_MS = 90_000;
@@ -29,15 +30,28 @@ export function waitingView(w: WorkerWaiting): WaitingView {
   };
 }
 
+/**
+ * Every worker request but the quiet ones. Spec 06 2.3: a change the operator sees wakes the long-polls (the worker
+ * comes online after missing or being offline, or reports another version); a heartbeat of an online worker does not,
+ * or every 5 s it would wake all waiters for nothing.
+ */
 export function touchWorker(db: Db, input: { tokenId: string; hostname: string; version: string | null }, now: Date): void {
+  const before = db.select({ lastSeenAt: workerState.lastSeenAt, version: workerState.version }).from(workerState).where(eq(workerState.id, 1)).get();
   const values = { tokenId: input.tokenId, hostname: input.hostname, version: input.version, lastSeenAt: now };
   // `waiting` is not in `values`: any request of the worker keeps the reason it last reported.
   db.insert(workerState).values({ id: 1, ...values }).onConflictDoUpdate({ target: workerState.id, set: values }).run();
+  const wasOnline = before !== undefined && now.getTime() - before.lastSeenAt.getTime() <= WORKER_ONLINE_MS;
+  if (!wasOnline || before.version !== input.version) jobChanges.wake();
 }
 
-/** The worker's last status (PUT /api/worker/status); a claim clears it. The row exists: touchWorker ran first. */
+/**
+ * The worker's last status (PUT /api/worker/status); a claim clears it. The row exists: touchWorker ran first. Wakes
+ * the long-polls only when the reason changed (a claim clears it every time, mostly when there is none).
+ */
 export function setWorkerWaiting(db: Db, waiting: WorkerWaiting | null): void {
+  const before = db.select({ waiting: workerState.waiting }).from(workerState).where(eq(workerState.id, 1)).get();
   db.update(workerState).set({ waiting }).where(eq(workerState.id, 1)).run();
+  if (JSON.stringify(before?.waiting ?? null) !== JSON.stringify(waiting)) jobChanges.wake();
 }
 
 /** Whether the worker is online, and its reason to wait only while it is (a stopped worker's last reason is stale). */

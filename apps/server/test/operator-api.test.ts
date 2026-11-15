@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { submitJob } from '../src/domain/jobs.js';
-import { workerOnline } from '../src/domain/worker-state.js';
+import { jobChanges } from '../src/domain/signal.js';
+import { setWorkerWaiting, touchWorker, WORKER_ONLINE_MS, workerOnline } from '../src/domain/worker-state.js';
 import { leaseContract } from './fixtures.js';
 import { announce, issueToken, tokenIdOf, useTestApp } from './helpers.js';
 
@@ -89,5 +90,62 @@ describe('operator API (spec 06 2.3)', () => {
     expect(same.change).toBe(changed.change);
     expect(Date.now() - quietStart).toBeGreaterThanOrEqual(900);
     expect(same.queued[0].id).toBe(a);
+  });
+
+  test('long-poll: the worker coming online shows within a second, not after the wait', async () => {
+    const { worker } = setup();
+    const first = (await t.app.inject({ method: 'GET', url: '/api/worker/jobs', headers: auth(worker) })).json();
+    expect(first.worker.online).toBe(false);
+    const started = Date.now();
+    const pending = t.app.inject({ method: 'GET', url: `/api/worker/jobs?wait=10&change=${first.change}`, headers: auth(worker) });
+    await new Promise((r) => setTimeout(r, 100));
+    await t.app.inject({ method: 'GET', url: '/api/worker/ping', headers: auth(worker) });
+    expect((await pending).json().worker.online).toBe(true);
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
+
+  test("long-poll: the worker's reason to wait shows within a second, not after the wait", async () => {
+    const { worker } = setup();
+    await t.app.inject({ method: 'GET', url: '/api/worker/ping', headers: auth(worker) });
+    const first = (await t.app.inject({ method: 'GET', url: '/api/worker/jobs', headers: auth(worker) })).json();
+    expect(first.worker).toMatchObject({ online: true, waiting: null });
+    const started = Date.now();
+    const pending = t.app.inject({ method: 'GET', url: `/api/worker/jobs?wait=10&change=${first.change}`, headers: auth(worker) });
+    await new Promise((r) => setTimeout(r, 100));
+    const busy = { reason: 'gpu_busy', used_mib: 5120, total_mib: 16311, limit_mib: 2048 };
+    await t.app.inject({ method: 'PUT', url: '/api/worker/status', headers: auth(worker), payload: { waiting: busy } });
+    expect((await pending).json().worker.waiting).toMatchObject({ reason: 'gpu_busy', used_mib: 5120 });
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
+});
+
+describe('worker state wakes long-polls only when the view changes (spec 06 2.3)', () => {
+  /** Whether `act` wakes a waiter of jobChanges (a waiter not woken runs into its 300 ms). */
+  async function wakes(act: () => void): Promise<boolean> {
+    const started = Date.now();
+    const waiting = jobChanges.wait(300);
+    act();
+    await waiting;
+    return Date.now() - started < 250;
+  }
+  const touch = (version: string | null = '0.5.0') => touchWorker(t.db, { tokenId: 'w', hostname: 'pc', version }, t.clock.now);
+  const busy = { reason: 'gpu_busy' as const, used_mib: 5120, total_mib: 16311, limit_mib: 2048 };
+
+  test('touchWorker: online after missing or offline, and a new version, wake; a heartbeat of an online worker does not', async () => {
+    expect(await wakes(() => touch())).toBe(true);
+    t.clock.advance(5000);
+    expect(await wakes(() => touch())).toBe(false);
+    expect(await wakes(() => touch('0.5.1'))).toBe(true);
+    t.clock.advance(WORKER_ONLINE_MS + 1);
+    expect(await wakes(() => touch('0.5.1'))).toBe(true);
+  });
+
+  test('setWorkerWaiting wakes when the reason changes, not when it is the same', async () => {
+    touch();
+    expect(await wakes(() => setWorkerWaiting(t.db, null))).toBe(false);
+    expect(await wakes(() => setWorkerWaiting(t.db, busy))).toBe(true);
+    expect(await wakes(() => setWorkerWaiting(t.db, { ...busy }))).toBe(false);
+    expect(await wakes(() => setWorkerWaiting(t.db, { ...busy, used_mib: 6000 }))).toBe(true);
+    expect(await wakes(() => setWorkerWaiting(t.db, null))).toBe(true);
   });
 });
