@@ -1,6 +1,11 @@
+import contextlib
 import hashlib
+import http.client
+import importlib.util
+import io
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -59,7 +64,74 @@ class SourceTest(unittest.TestCase):
             z.writestr("Repo-abc/../../evil.py", "x")
         with self.assertRaises(setup.SetupError):
             setup.extract_stripped(bad, self.dir / "out")
-        self.assertFalse((self.dir / "evil.py").exists())
+        # out/../../evil.py is the temp folder's parent.
+        self.assertFalse((self.dir.parent / "evil.py").exists())
+
+    def test_a_member_with_a_drive_is_refused(self):
+        bad = self.dir / "bad.zip"
+        with zipfile.ZipFile(bad, "w") as z:
+            z.writestr("Repo-abc/a/C:/x.py", "x")
+        with self.assertRaisesRegex(setup.SetupError, r"outside its folder"):
+            setup.extract_stripped(bad, self.dir / "out")
+        self.assertFalse((self.dir / "out").exists())
+
+    @unittest.skipIf(os.name == "nt", "on Windows zipfile reads a backslash in a member name as a folder separator")
+    def test_a_member_with_a_backslash_is_refused(self):
+        bad = self.dir / "bad.zip"
+        with zipfile.ZipFile(bad, "w") as z:
+            z.writestr("Repo-abc/a" + chr(92) + ".." + chr(92) + ".." + chr(92) + "evil.py", "x")
+        with self.assertRaisesRegex(setup.SetupError, r"outside its folder"):
+            setup.extract_stripped(bad, self.dir / "out")
+
+
+class BootstrapTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def venv(self, *flags):
+        target = self.dir / "uv"
+        subprocess.run([sys.executable, "-m", "venv", *flags, str(target)], check=True, capture_output=True)
+        return target
+
+    def test_no_venv_is_not_ready(self):
+        self.assertFalse(setup.bootstrap_ok(self.dir / "uv"))
+
+    def test_a_venv_without_pip_is_not_ready(self):
+        self.assertFalse(setup.bootstrap_ok(self.venv("--without-pip")))
+
+    @unittest.skipUnless(importlib.util.find_spec("pip"), "the Python running the tests has no pip")
+    def test_a_venv_that_runs_pip_is_ready(self):
+        self.assertTrue(setup.bootstrap_ok(self.venv("--without-pip", "--system-site-packages")))
+
+
+class MainTest(unittest.TestCase):
+    def test_a_broken_off_download_ends_in_one_sentence(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        saved = {name: getattr(setup, name) for name in ("ENV", "UV_CACHE", "setup_streams", "ensure_uv")}
+
+        def broken():
+            raise http.client.IncompleteRead(b"abc", 10)
+
+        setup.ENV = Path(tmp.name) / "env"
+        setup.UV_CACHE = setup.ENV / ".uv-cache"
+        setup.setup_streams = lambda: None
+        setup.ensure_uv = broken
+        err, out = io.StringIO(), io.StringIO()
+        try:
+            with contextlib.redirect_stderr(err), contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as ended:
+                setup.main()
+        finally:
+            for name, value in saved.items():
+                setattr(setup, name, value)
+        self.assertEqual(ended.exception.code, 1)
+        lines = err.getvalue().splitlines()
+        self.assertEqual(len(lines), 1, lines)
+        self.assertRegex(lines[0], r"^setup: a download broke off \(IncompleteRead: .*\): run the setup again$")
 
 
 class ModelsTest(unittest.TestCase):

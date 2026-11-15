@@ -11,6 +11,7 @@ into {pack}/env, nothing outside it changes:
 Safe to run again: finished parts are kept. uv's cache (env/.uv-cache) is removed at the end.
 """
 import hashlib
+import http.client
 import os
 import shutil
 import subprocess
@@ -86,14 +87,21 @@ def download(url, dest):
 def extract_stripped(zip_path, dest):
     """The archive's files without its single root folder; a member that would land outside `dest` is refused."""
     dest = Path(dest)
+    root = dest.resolve()
+    backslash = chr(92)
     with zipfile.ZipFile(zip_path) as z:
         for info in z.infolist():
             parts = PurePosixPath(info.filename).parts[1:]
             if not parts:
                 continue
-            if any(part in ("..", "") for part in parts) or PurePosixPath(*parts).is_absolute() or ":" in parts[0]:
-                raise SetupError(f"the archive holds a path outside its folder: {info.filename}")
             target = dest.joinpath(*parts)
+            # ":" (a drive or an NTFS stream) and a backslash (a separator on Windows) are never part of a file name here.
+            if (
+                any(part in ("..", "") or ":" in part or backslash in part for part in parts)
+                or PurePosixPath(*parts).is_absolute()
+                or not target.resolve().is_relative_to(root)
+            ):
+                raise SetupError(f"the archive holds a path outside its folder: {info.filename}")
             if info.is_dir():
                 target.mkdir(parents=True, exist_ok=True)
                 continue
@@ -172,16 +180,32 @@ def uv_env():
     return dict(os.environ, UV_CACHE_DIR=str(UV_CACHE), UV_PYTHON_INSTALL_DIR=str(PYTHON_DIR), UV_NO_CONFIG="1")
 
 
+def bootstrap_ok(venv):
+    """True when the venv's Python exists and runs pip (a half-made venv, e.g. without python3-venv, has no pip)."""
+    python = venv_python(venv)
+    if not python.exists():
+        return False
+    r = subprocess.run([str(python), "-m", "pip", "--version"], capture_output=True)
+    return r.returncode == 0
+
+
 def ensure_uv():
     uv = UV_VENV / ("Scripts/uv.exe" if os.name == "nt" else "bin/uv")
-    if not venv_python(UV_VENV).exists():
-        step([sys.executable, "-m", "venv", UV_VENV], f"creating {UV_VENV} for uv")
+    if not bootstrap_ok(UV_VENV):
+        say(f"creating {UV_VENV} for uv")
+        r = subprocess.run([sys.executable, "-m", "venv", "--clear", str(UV_VENV)])
+        if r.returncode != 0 or not bootstrap_ok(UV_VENV):
+            raise SetupError(
+                f"creating the venv {UV_VENV} for uv failed (exit {r.returncode}): install the venv module of tools.python"
+                " (python3-venv on Debian or Ubuntu) and run the setup again"
+            )
     step([venv_python(UV_VENV), "-m", "pip", "install", "--disable-pip-version-check", "--no-cache-dir", f"uv=={UV_VERSION}"], f"installing uv {UV_VERSION}")
     return uv
 
 
 def ensure_python(uv):
-    step([uv, "python", "install", PYTHON_VERSION], f"installing CPython {PYTHON_VERSION} into {PYTHON_DIR}", env=uv_env())
+    # --no-bin: no python3.13 in ~/.local/bin; --no-registry: no PEP 514 entry under HKCU. Nothing outside the pack.
+    step([uv, "python", "install", PYTHON_VERSION, "--no-bin", "--no-registry"], f"installing CPython {PYTHON_VERSION} into {PYTHON_DIR}", env=uv_env())
     r = subprocess.run([str(uv), "python", "find", "--managed-python", PYTHON_VERSION], env=uv_env(), capture_output=True, text=True)
     if r.returncode != 0 or not r.stdout.strip():
         raise SetupError(f"uv does not find the CPython {PYTHON_VERSION} it installed: {r.stderr.strip()}")
@@ -223,8 +247,12 @@ def main():
         if models_from:
             say(f"taking the models from {models_from} (SEEDVR2_MODELS_FROM)")
         ensure_models(MODELS_DIR, models_from, download)
-    except (SetupError, OSError) as e:
-        print(f"setup: {e}", file=sys.stderr, flush=True)
+    except (SetupError, OSError, http.client.HTTPException) as e:
+        if isinstance(e, http.client.HTTPException):
+            message = f"a download broke off ({type(e).__name__}: {e}): run the setup again"
+        else:
+            message = str(e)
+        print(f"setup: {message}", file=sys.stderr, flush=True)
         sys.exit(1)
     finally:
         shutil.rmtree(UV_CACHE, ignore_errors=True)
