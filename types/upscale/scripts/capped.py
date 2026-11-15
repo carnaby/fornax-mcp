@@ -64,7 +64,9 @@ def end_with_watcher(pipe):
         except Exception:
             pass  # it held the other end of stdout too: the write fails, and must not stop what follows
         if os.name == "nt":
-            subprocess.run(["taskkill", "/F", "/T", "/PID", str(os.getpid())], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+            # By full path, as the worker runs it: not a taskkill.exe from SeedVR2's folder or PATH.
+            taskkill = os.path.join(os.environ.get("SystemRoot", "C:" + chr(92) + "Windows"), "System32", "taskkill.exe")
+            subprocess.run([taskkill, "/F", "/T", "/PID", str(os.getpid())], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
         else:
             os.killpg(os.getpgid(0), signal.SIGKILL)  # run.py starts this in a session (process group) of its own
     finally:

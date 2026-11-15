@@ -1,4 +1,5 @@
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -75,6 +76,15 @@ class SuperviseTest(unittest.TestCase):
         clock = Clock()
         a = sv.supervise(starter(clock, 5, 0), readings(1000, 1200, 1100), LIMIT, 100, clock)
         self.assertEqual((a.code, a.stopped, a.peak_mib), (0, None, 1200))
+
+    def test_the_tree_is_killed_after_a_normal_end_too(self):
+        for code in (0, 1):
+            with self.subTest(code=code):
+                clock = Clock()
+                start = starter(clock, 5, code)
+                a = sv.supervise(start, readings(1000), LIMIT, 100, clock)
+                self.assertTrue(start.jobs[0].killed, "what the launcher left behind still runs")
+                self.assertEqual((a.code, a.stopped), (code, None))
 
     def test_the_vram_watchdog_kills_at_once(self):
         clock = Clock()
@@ -247,6 +257,56 @@ class ProcessJobTest(unittest.TestCase):
             size = beat.stat().st_size
             time.sleep(1.0)
             self.assertEqual(beat.stat().st_size, size, "the grandchild still runs")
+
+    def test_a_caller_that_raises_does_not_stop_the_draining(self):
+        seen = []
+
+        def on_line(line):
+            seen.append(line)
+            if len(seen) == 1:
+                raise RuntimeError("the caller broke")
+
+        # Far more than a pipe holds: an undrained pipe would block the child.
+        code = chr(10).join(["for i in range(20000):", "    print('line %05d ' % i + 'x' * 40)", ""])
+        job = sv.ProcessJob([sys.executable, "-c", code], cwd=None, env=None, on_line=on_line)
+        try:
+            self.assertEqual(job.wait(15), 0, "the child blocked on a pipe nobody drains")
+            self.assertEqual(len(seen), 20000)
+        finally:
+            job.kill()
+
+    @unittest.skipIf(os.name == "nt", "POSIX: the attempt's session is killed; on Windows capped.py's tether ends its tree")
+    def test_supervise_kills_what_a_launcher_left_when_it_ended_by_itself(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            beat = Path(tmp, "beat.txt")
+            grandchild = chr(10).join(["import time", "while True:", f"    open({str(beat)!r}, 'a').write('.')", "    time.sleep(0.1)", ""])
+            launcher = chr(10).join([
+                "import os, subprocess, sys, time",
+                f"subprocess.Popen([sys.executable, '-c', {grandchild!r}])",
+                f"while not (os.path.exists({str(beat)!r}) and os.path.getsize({str(beat)!r}) > 2):",
+                "    time.sleep(0.1)",
+                "sys.exit(1)",
+                "",
+            ])
+            jobs = []
+
+            def start(on_line):
+                jobs.append(sv.ProcessJob([sys.executable, "-c", launcher], cwd=None, env=None, on_line=on_line))
+                return jobs[-1]
+
+            try:
+                a = sv.supervise(start, lambda: 1000, LIMIT, 60, time.monotonic, poll_s=0.2)
+                self.assertEqual((a.code, a.stopped), (1, None))
+                time.sleep(0.5)
+                size = beat.stat().st_size
+                time.sleep(1.0)
+                self.assertEqual(beat.stat().st_size, size, "the grandchild still runs")
+            finally:
+                for job in jobs:
+                    try:
+                        os.killpg(job.pid, signal.SIGKILL)
+                    except OSError:
+                        pass
 
 
 class NvidiaSmiTest(unittest.TestCase):

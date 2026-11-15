@@ -30,6 +30,8 @@ from upscale_lib import (
 NVIDIA_SMI = ["nvidia-smi"]
 CAPPED_REFUSED, CAPPED_BAD_SETTING = 10, 11
 TAIL_LINES = 12
+# By full path, as the worker runs it: a taskkill.exe in the job's folder or on PATH is not the one meant.
+TASKKILL = os.path.join(os.environ.get("SystemRoot", "C:" + chr(92) + "Windows"), "System32", "taskkill.exe")
 
 
 class Broken(Exception):
@@ -73,7 +75,7 @@ def kill_tree(pid):
     """Ends a process and everything it started, at once."""
     if os.name == "nt":
         try:
-            subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+            subprocess.run([TASKKILL, "/F", "/T", "/PID", str(pid)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
         except (OSError, subprocess.TimeoutExpired):
             pass
     else:
@@ -91,23 +93,39 @@ class ProcessJob:
         kwargs = {"start_new_session": True} if os.name != "nt" else {}
         self._p = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, **kwargs)
         self.pid = self._p.pid
-        self._splitter = LineSplitter(on_line)
+        self._splitter = LineSplitter(self._safe(on_line))
         self._reader = threading.Thread(target=self._read, daemon=True)
         self._reader.start()
 
-    def _read(self):
-        decoder = codecs.getincrementaldecoder("utf-8")("replace")
-        fd = self._p.stdout.fileno()
-        while True:
+    @staticmethod
+    def _safe(on_line):
+        # A caller that raises must not end the reader: the pipe would stop draining and SeedVR2 block holding VRAM.
+        def call(line):
             try:
-                chunk = os.read(fd, 65536)
-            except OSError:
-                break
-            if not chunk:
-                break
-            self._splitter.push(decoder.decode(chunk))
-        self._splitter.push(decoder.decode(b"", final=True))
-        self._splitter.flush()
+                on_line(line)
+            except Exception:
+                pass
+
+        return call
+
+    def _read(self):
+        # The reader owns stdout and closes it at the end: closed under it, the fd number could already be the next
+        # attempt's.
+        try:
+            decoder = codecs.getincrementaldecoder("utf-8")("replace")
+            fd = self._p.stdout.fileno()
+            while True:
+                try:
+                    chunk = os.read(fd, 65536)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                self._splitter.push(decoder.decode(chunk))
+            self._splitter.push(decoder.decode(b"", final=True))
+            self._splitter.flush()
+        finally:
+            _close(self._p.stdout)
 
     def wait(self, timeout):
         """The exit code, or None when it still runs after `timeout` seconds (None: wait for the end)."""
@@ -116,20 +134,28 @@ class ProcessJob:
         except subprocess.TimeoutExpired:
             return None
         self._reader.join(5)  # every line is handed over before the code; a grandchild holding the pipe cannot block
-        for stream in (self._p.stdin, self._p.stdout):
-            try:
-                stream.close()
-            except OSError:
-                pass
+        _close(self._p.stdin)
+        if not self._reader.is_alive():
+            _close(self._p.stdout)
         return code
 
     def kill(self):
-        if self._p.poll() is None:
+        if os.name != "nt":
+            # Also after the launcher ended: what it left in its session (process group) would hold the card unwatched.
+            kill_tree(self._p.pid)
+        elif self._p.poll() is None:  # Windows: once it is reaped, its pid may already be another process's
             kill_tree(self._p.pid)
         try:
             self._p.kill()
         except OSError:
             pass
+
+
+def _close(stream):
+    try:
+        stream.close()
+    except OSError:
+        pass
 
 
 def _read_with_timeout(read, timeout):
@@ -152,7 +178,7 @@ def supervise(start, read_used_mib, limit_mib, max_seconds, clock, on_line=None,
     """Runs one attempt under the watchdog and the time limit: reads the card at once and then every `poll_s`, and
     kills the attempt's tree the moment a reading passes `limit_mib`, the time is up, or MAX_BLIND_POLLS readings in a
     row gave no number. A reading that takes longer than `read_timeout_s` counts as none. Whatever raises here kills
-    the attempt first."""
+    the attempt first; every end kills the attempt's tree, also when the launcher ended by itself."""
     t0 = clock()
 
     def elapsed():
@@ -205,8 +231,8 @@ def supervise(start, read_used_mib, limit_mib, max_seconds, clock, on_line=None,
     except BaseException:
         job.kill()
         raise
-    if stopped:
-        job.kill()
+    job.kill()  # after every end: what SeedVR2 started may outlive the launcher
+    if code is None:
         code = job.wait(None)
     return Attempt(
         code=1 if code is None else code, stopped=stopped, peak_mib=peak, seconds=elapsed(),
