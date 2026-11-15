@@ -1,0 +1,26 @@
+{
+  "name": "@fornax/tray",
+  "version": "0.4.1",
+  "private": true,
+  "type": "module",
+  "description": "The Fornax tray app (Tauri 2): starts the worker, shows and orders the queue.",
+  "license": "MIT",
+  "scripts": {
+    "dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "dev:web": "vite",
+    "build:web": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "test:rust": "pnpm build:web && cargo test --manifest-path src-tauri/Cargo.toml",
+    "icons": "node scripts/icons.mjs",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.12.4"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.12.4",
+    "typescript": "^7.0.2",
+    "vite": "8.3.6"
+  }
+}

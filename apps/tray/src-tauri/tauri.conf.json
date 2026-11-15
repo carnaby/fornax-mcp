@@ -1,0 +1,38 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Fornax tray",
+  "version": "0.4.1",
+  "identifier": "io.github.carnaby.fornax.tray",
+  "build": {
+    "devUrl": "http://localhost:1421",
+    "frontendDist": "../dist",
+    "beforeDevCommand": "pnpm dev:web",
+    "beforeBuildCommand": "pnpm build:web"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Fornax",
+        "width": 480,
+        "height": 680,
+        "minWidth": 380,
+        "minHeight": 460,
+        "visible": false,
+        "center": true,
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["msi", "deb", "appimage"],
+    "category": "Utility",
+    "shortDescription": "Starts the Fornax worker and shows and orders its queue",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.png", "icons/icon.ico"],
+    "linux": { "deb": { "depends": ["libayatana-appindicator3-1"] } }
+  }
+}
