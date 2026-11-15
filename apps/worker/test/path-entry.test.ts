@@ -42,11 +42,13 @@ describe('addToPath on Windows (seams, no registry)', () => {
   test('a failing PowerShell is a WARN with the command to run by hand (a quote in the folder doubled)', () => {
     const lines = addToPath(APP, { platform: 'win32', readUserPath: () => { throw new Error('no powershell'); }, writeUserPath: () => {} });
     expect(lines[0]).toMatch(/^WARN  could not add .* to your Path \(no powershell\); add it by hand:/);
-    // Raw and kind-keeping, as the automatic path writes it: no %VAR% expanded, no REG_SZ written.
+    // Raw and kind-keeping, as the automatic path writes it: no %VAR% expanded, no REG_SZ written; then the same
+    // set-and-clear as the automatic path, so Explorer and new terminals see the change without a sign-out.
     expect(lines[1]).toBe(
-      `  $k = Get-Item 'HKCU:\\Environment'; Set-ItemProperty 'HKCU:\\Environment' Path (($k.GetValue('Path', '', 'DoNotExpandEnvironmentNames') + ';${APP}').TrimStart(';')) -Type ExpandString`,
+      `  $k = Get-Item 'HKCU:\\Environment'; Set-ItemProperty 'HKCU:\\Environment' Path (($k.GetValue('Path', '', 'DoNotExpandEnvironmentNames') + ';${APP}').TrimStart(';')) -Type ExpandString; ` +
+        "[Environment]::SetEnvironmentVariable('FORNAX_PATH_CHANGED', '1', 'User'); [Environment]::SetEnvironmentVariable('FORNAX_PATH_CHANGED', $null, 'User')",
     );
-    expect(lines[1]).not.toContain('SetEnvironmentVariable');
+    expect(lines[1]).not.toContain("SetEnvironmentVariable('Path'");
     expect(lines[2]).toBe('  or add it in Settings \u203A Edit environment variables for your account');
     const quoted = addToPath("C:\\Users\\o'b\\fornax\\app", { platform: 'win32', readUserPath: () => { throw new Error('x'); } });
     expect(quoted[1]).toContain("+ ';C:\\Users\\o''b\\fornax\\app').TrimStart(';')");

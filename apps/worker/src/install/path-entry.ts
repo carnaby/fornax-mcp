@@ -54,11 +54,14 @@ export function readUserPathRaw(): { value: string | null; kind: PathKind } {
   return { value: value === '' ? null : value, kind };
 }
 
-/** Write the user Path with the kind it had; the set-and-clear of a variable through .NET tells running programs (Explorer, new terminals) that the environment changed. */
+/** The set-and-clear of a variable through .NET: tells running programs (Explorer, new terminals) that the environment changed. */
+const ANNOUNCE_CHANGE =
+  "[Environment]::SetEnvironmentVariable('FORNAX_PATH_CHANGED', '1', 'User'); [Environment]::SetEnvironmentVariable('FORNAX_PATH_CHANGED', $null, 'User')";
+
+/** Write the user Path with the kind it had, then announce the change. */
 function writeUserPathRaw(value: string, kind: PathKind): void {
   psOut(
-    "Set-ItemProperty -Path 'HKCU:\\Environment' -Name Path -Value $env:FORNAX_NEW_PATH -Type $env:FORNAX_PATH_KIND; " +
-      "[Environment]::SetEnvironmentVariable('FORNAX_PATH_CHANGED', '1', 'User'); [Environment]::SetEnvironmentVariable('FORNAX_PATH_CHANGED', $null, 'User')",
+    `Set-ItemProperty -Path 'HKCU:\\Environment' -Name Path -Value $env:FORNAX_NEW_PATH -Type $env:FORNAX_PATH_KIND; ${ANNOUNCE_CHANGE}`,
     { FORNAX_NEW_PATH: value, FORNAX_PATH_KIND: pathKind(kind) },
   );
 }
@@ -87,7 +90,7 @@ export function addToPath(appDir: string, deps: PathDeps = {}): string[] {
       // entry and store the Path as REG_SZ.
       return [
         `WARN  could not add ${appDir} to your Path (${(e as Error).message}); add it by hand:`,
-        `  $k = Get-Item 'HKCU:\\Environment'; Set-ItemProperty 'HKCU:\\Environment' Path (($k.GetValue('Path', '', 'DoNotExpandEnvironmentNames') + ';${appDir.replaceAll("'", "''")}').TrimStart(';')) -Type ExpandString`,
+        `  $k = Get-Item 'HKCU:\\Environment'; Set-ItemProperty 'HKCU:\\Environment' Path (($k.GetValue('Path', '', 'DoNotExpandEnvironmentNames') + ';${appDir.replaceAll("'", "''")}').TrimStart(';')) -Type ExpandString; ${ANNOUNCE_CHANGE}`,
         '  or add it in Settings › Edit environment variables for your account',
       ];
     }
