@@ -4,18 +4,17 @@ import { TYPE_NAME } from '@fornax/protocol';
 import { checkPack } from '../checks.js';
 import { copyToClipboard } from '../clipboard.js';
 import { ConfigError, readWorkerConfig } from '../config.js';
+import { runPackSetup } from '../install/pack-setup.js';
+import { writeOrigin } from '../install/packs.js';
 import { loadPack, loadPacks, missingTools } from '../pack.js';
-import { childEnv, logTail, runProcess } from '../process.js';
 import { buildTypePrompt, gpuSummary, systemSummary } from '../prompt.js';
 import { readShippedDoc, shippedExamples, shippedPack } from '../shipped.js';
-import { expandArgv } from '../template.js';
 import type { Ctx } from './context.js';
 
-/** A pack's setup (venv, packages, models) may take this long. */
-export const SETUP_TIMEOUT_MS = 2 * 3_600_000;
+export { SETUP_TIMEOUT_MS } from '../install/pack-setup.js';
 
 /** Tools from worker.yaml, or none before pairing: the types commands work without a server. */
-function localTools(ctx: Ctx): Record<string, string> {
+export function localTools(ctx: Ctx): Record<string, string> {
   try {
     return readWorkerConfig(ctx.paths).tools;
   } catch (e) {
@@ -112,20 +111,10 @@ export async function typesInstall(
     (deps.copy ?? cpSync)(source, dest, { recursive: true, filter: (src) => relative(source, src).split(sep)[0] !== 'env' });
     if (pack.impl.setup) {
       ctx.out(`running the setup of ${name}…`);
-      const r = await runProcess({
-        argv: expandArgv(pack.impl.setup, { pack: dest, tools }),
-        cwd: dest,
-        env: childEnv(process.env, {}),
-        timeoutMs: SETUP_TIMEOUT_MS,
-        signal: ctx.signal,
-        onOutput: ctx.write,
-      });
-      if (r.code !== 0) {
-        const why = r.spawnError ?? (r.timedOut ? 'it ran too long' : r.canceled ? 'interrupted' : `exit code ${r.code ?? r.signal}`);
-        const tail = logTail(r.log);
-        failure = `the setup of ${name} failed (${why})${tail ? `: ${tail}` : ''}`;
-      }
+      const why = await runPackSetup({ pack, dir: dest, tools, signal: ctx.signal, write: ctx.write });
+      if (why) failure = `the setup of ${name} failed (${why.split(': ')[0]})${why.includes(': ') ? `: ${why.slice(why.indexOf(': ') + 2)}` : ''}`;
     }
+    if (failure === null) writeOrigin(dest, from !== undefined ? 'dir' : 'shipped');
     installed = failure === null;
   } catch (e) {
     // Only the class and code: the message may carry local paths or tool output.

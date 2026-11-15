@@ -156,4 +156,13 @@ describe('fornax types', () => {
       expect(r.text).toContain('must not contain one another');
     }
   });
+
+  test('types install marks where the pack came from (spec 05c 4.4)', async () => {
+    const { ctx, run } = cli();
+    // Built-in: the repo's lease pack (no setup, no tools).
+    expect((await run('types', 'install', 'lease')).code).toBe(0);
+    expect(JSON.parse(readFileSync(join(ctx.paths.typesDir, 'lease', '.fornax-pack.json'), 'utf8'))).toEqual({ source: 'shipped' });
+    expect((await run('types', 'install', 'echo', '--from', source())).code).toBe(0);
+    expect(JSON.parse(readFileSync(join(ctx.paths.typesDir, 'echo', '.fornax-pack.json'), 'utf8'))).toEqual({ source: 'dir' });
+  });
 });
