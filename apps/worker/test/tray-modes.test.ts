@@ -84,6 +84,20 @@ describe('fornax worker --events (spec 06 3.2)', () => {
     expect(await client.job(job.id)).toMatchObject({ state: 'queued', attempts: 0 });
   }, 90_000);
 
+  test('a second stop with a job running quits at once with code 130', async () => {
+    const { env, client } = await setup();
+    const w = start(['worker', '--events'], env);
+    await offering(w);
+    const job = await client.submit('echo', { mode: 'slow', ms: 60_000 });
+    // The tool's own progress: it runs (a job only claimed has no tool to stop yet).
+    await waitFor(async () => (await client.job(job.id)).progress_message === 'slow start', 30_000, 'the tool running');
+    w.p.stdin.write('stop\nstop\n');
+    expect(await w.exited).toBe(130);
+    const events = w.events();
+    expect(events.at(-1)).toEqual({ event: 'stopped', code: 130 });
+    expect(events.some((e) => e.event === 'log' && e.line === 'stopping: the running job is stopped and given back (a second stop quits at once)')).toBe(true);
+  }, 90_000);
+
   test('a closed stdin stops it like a stop line', async () => {
     const { env } = await setup();
     const w = start(['worker', '--events'], env);
