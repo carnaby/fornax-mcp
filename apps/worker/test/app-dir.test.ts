@@ -75,10 +75,71 @@ describe('the app folder', () => {
     expect(readFileSync(join(target, 'fornax.mjs'), 'utf8')).toContain('1.0.0');
   });
 
+  test('a busy restore of the old app is retried (spec 05c 4.3 point 4)', () => {
+    const target = join(tmp(), 'app');
+    writeWorkerDir(target, { version: '1.0.0' });
+    writeWorkerDir(`${target}.new`, { version: '2.0.0' });
+    // app → app.old works, app.new → app never does, app.old → app fails twice and then works.
+    let restoreFailures = 2;
+    const rename = (a: string, b: string) => {
+      if (a.endsWith('.new')) throw Object.assign(new Error('busy'), { code: 'EPERM' });
+      if (a.endsWith('.old') && restoreFailures-- > 0) throw Object.assign(new Error('busy'), { code: 'EBUSY' });
+      renameSync(a, b);
+    };
+    expect(() => swapDir(`${target}.new`, target, { rename, delayMs: 1 })).toThrow(InstallError);
+    expect(bundleVersion(target)).toBe('1.0.0');
+    expect(existsSync(`${target}.old`)).toBe(false);
+  });
+
+  test('a restore that keeps failing names app.old and leaves it on disk, whole', () => {
+    const target = join(tmp(), 'app');
+    writeWorkerDir(target, { version: '1.0.0' });
+    writeWorkerDir(`${target}.new`, { version: '2.0.0' });
+    const rename = (a: string, b: string) => {
+      if (a.endsWith('.new') || a.endsWith('.old')) throw Object.assign(new Error('busy'), { code: 'EBUSY' });
+      renameSync(a, b);
+    };
+    let err: unknown;
+    try {
+      swapDir(`${target}.new`, target, { rename, delayMs: 1 });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(InstallError);
+    expect((err as Error).message).toContain('the old one could not be put back');
+    expect((err as Error).message).toContain(`${target}.old`);
+    expect(existsSync(target)).toBe(false);
+    expect(bundleVersion(`${target}.old`)).toBe('1.0.0');
+  });
+
+  test('an app.old without app is put back, never deleted: by cleanLeftovers and by swapDir', () => {
+    const paths = testPaths(tmp());
+    const old = `${paths.appDir}.old`;
+    writeWorkerDir(old, { version: '1.0.0' });
+    cleanLeftovers(paths);
+    expect(bundleVersion(paths.appDir)).toBe('1.0.0');
+    expect(existsSync(old)).toBe(false);
+
+    const target = join(tmp(), 'app');
+    writeWorkerDir(`${target}.old`, { version: '1.0.0' });
+    writeWorkerDir(`${target}.new`, { version: '2.0.0' });
+    const calls: string[] = [];
+    const rename = (a: string, b: string) => {
+      calls.push(`${a.slice(target.length) || 'app'} → ${b.slice(target.length) || 'app'}`);
+      renameSync(a, b);
+    };
+    swapDir(`${target}.new`, target, { rename, delayMs: 1 });
+    expect(calls).toEqual(['.old → app', 'app → .old', '.new → app']);
+    expect(bundleVersion(target)).toBe('2.0.0');
+    expect(existsSync(`${target}.old`)).toBe(false);
+  });
+
   test('cleanLeftovers removes app.new and app.old of an interrupted run', () => {
     const paths = testPaths(tmp());
+    writeWorkerDir(paths.appDir, { version: '1.0.0' });
     for (const d of [`${paths.appDir}.new`, `${paths.appDir}.old`]) mkdirSync(d, { recursive: true });
     cleanLeftovers(paths);
     expect(existsSync(`${paths.appDir}.new`) || existsSync(`${paths.appDir}.old`)).toBe(false);
+    expect(bundleVersion(paths.appDir)).toBe('1.0.0');
   });
 });

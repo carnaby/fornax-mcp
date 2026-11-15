@@ -49,32 +49,53 @@ export type SwapDeps = { rename?: (from: string, to: string) => void; tries?: nu
 
 const sleepSync = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
-/**
- * Replace `target` with `stage` (spec 05c 4.3): target → target.old, stage → target, target.old removed. A busy
- * rename is tried `tries` times. When it cannot be done, target is the old one again, whole, and InstallError says why.
- */
-export function swapDir(stage: string, target: string, deps: SwapDeps = {}): void {
+const errorCode = (e: unknown): string => (e as NodeJS.ErrnoException).code ?? 'error';
+
+/** A rename that tries a busy rename `tries` times, `delayMs` apart. */
+function retryingRename(deps: SwapDeps): (from: string, to: string) => void {
   const rename = deps.rename ?? renameSync;
   const tries = deps.tries ?? 5;
   const delayMs = deps.delayMs ?? 1000;
-  const retrying = (from: string, to: string) => {
+  return (from, to) => {
     for (let i = 1; ; i++) {
       try {
         rename(from, to);
         return;
       } catch (e) {
-        const code = (e as NodeJS.ErrnoException).code ?? '';
-        if (i >= tries || !BUSY.has(code)) throw e;
+        if (i >= tries || !BUSY.has(errorCode(e))) throw e;
         sleepSync(delayMs);
       }
     }
   };
+}
+
+/**
+ * An interrupted swap that left only <target>.old: put it back, since it is the only copy. Then <target>.old, if
+ * still there, sits next to a whole target and may go.
+ */
+function restoreLonelyOld(target: string, retrying: (from: string, to: string) => void): void {
+  const old = `${target}.old`;
+  if (!existsSync(target) && existsSync(old)) retrying(old, target);
+}
+
+/**
+ * Replace `target` with `stage` (spec 05c 4.3): target → target.old, stage → target, target.old removed. A busy
+ * rename is tried `tries` times. When it cannot be done, target is the old one again, whole, and InstallError says why;
+ * when even the old one cannot be put back, the error names <target>.old, which is then never deleted.
+ */
+export function swapDir(stage: string, target: string, deps: SwapDeps = {}): void {
+  const retrying = retryingRename(deps);
   const busy = (e: unknown) =>
     new InstallError(
-      `${target} could not be replaced (${(e as NodeJS.ErrnoException).code ?? 'error'}): a program, a terminal or an antivirus scan holds a file in it; close it and run the command again`,
+      `${target} could not be replaced (${errorCode(e)}): a program, a terminal or an antivirus scan holds a file in it; close it and run the command again`,
     );
   const old = `${target}.old`;
-  removeDir(old);
+  try {
+    restoreLonelyOld(target, retrying);
+    removeDir(old);
+  } catch (e) {
+    throw busy(e);
+  }
   const had = existsSync(target);
   if (had) {
     try {
@@ -88,9 +109,11 @@ export function swapDir(stage: string, target: string, deps: SwapDeps = {}): voi
   } catch (e) {
     if (had) {
       try {
-        rename(old, target);
-      } catch {
-        // Both renames failing would leave only app.old: the error below names the folder, and the next run restores nothing by itself.
+        retrying(old, target);
+      } catch (e2) {
+        throw new InstallError(
+          `${target} could not be replaced and the old one could not be put back (${errorCode(e2)}): rename ${old} to ${target} by hand`,
+        );
       }
     }
     throw busy(e);
@@ -98,13 +121,19 @@ export function swapDir(stage: string, target: string, deps: SwapDeps = {}): voi
   try {
     removeDir(old);
   } catch {
-    // A file still held in the old folder: the next install or update removes it.
+    // A file still held in the old folder: target is whole, so the next install or update removes it.
   }
 }
 
-/** What an interrupted install or update left (spec 05c 4.3 step 1). */
+/** What an interrupted install or update left (spec 05c 4.3 step 1). An app.old without app is put back, never deleted. */
 export function cleanLeftovers(paths: Paths): void {
-  for (const d of [`${paths.appDir}.new`, `${paths.appDir}.old`]) {
+  const old = `${paths.appDir}.old`;
+  try {
+    restoreLonelyOld(paths.appDir, retryingRename({}));
+  } catch {
+    // Still held: app.old stays (it is the only copy) and the next swapDir tries again.
+  }
+  for (const d of [`${paths.appDir}.new`, ...(existsSync(paths.appDir) ? [old] : [])]) {
     try {
       removeDir(d);
     } catch {
