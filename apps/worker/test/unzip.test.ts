@@ -42,6 +42,20 @@ describe('readZip', () => {
     expect(() => readZip(good.subarray(0, good.length - 30))).toThrow(ZipError);
     expect(() => readZip(Buffer.from('not a zip'))).toThrow(ZipError);
   });
+
+  test('a stored entry with one changed byte fails its CRC-32', () => {
+    const good = zipBuffer([{ name: 'fornax-worker/a.txt', data: Buffer.from('abc') }]); // stays stored
+    const damaged = Buffer.from(good);
+    const dataAt = 30 + 'fornax-worker/a.txt'.length;
+    damaged[dataAt] = damaged[dataAt]! ^ 0xff;
+    expect(() => readZip(damaged)).toThrow(/is damaged/);
+  });
+
+  test('a zip64 end record is a ZipError', () => {
+    const zip64 = Buffer.from(zipBuffer([{ name: 'fornax-worker/a.txt', data: Buffer.from('abc') }]));
+    zip64.writeUInt16LE(0xffff, zip64.length - 22 + 10);
+    expect(() => readZip(zip64)).toThrow(/zip64/);
+  });
 });
 
 describe('extractWorkerZip', () => {
@@ -58,6 +72,7 @@ describe('extractWorkerZip', () => {
     ['with ..', 'fornax-worker/../x.txt'],
     ['with a backslash', 'fornax-worker/types\\x.txt'],
     ['with a drive letter', 'fornax-worker/C:/x.txt'],
+    ['with an absolute path', 'fornax-worker//x.txt'],
     ['the root itself', 'fornax-worker/'],
   ])('an entry %s is refused and nothing is written', (_why, name) => {
     const dest = join(tmp(), 'app.new');
