@@ -35,10 +35,11 @@ export const eventLine = (e: WorkerEvent): string => `${JSON.stringify(e)}\n`;
 
 /**
  * Spec 06 3.2: the tray's stop channel. Every line "stop" (blanks and a CR around it allowed) calls `onStop`; the end
- * of the input counts as one stop when none came before (the tray is gone). The cleanup is no stop; it closes the
- * input so the process can exit.
+ * of the input calls `onEnd` (by default one more stop) when no stop line came before (the tray is gone). A caller
+ * whose stops also come by signal passes an `onEnd` that checks whether one did: the end is no second stop. The cleanup
+ * is no stop; it closes the input so the process can exit.
  */
-export function readStops(input: NodeJS.ReadableStream, onStop: () => void): () => void {
+export function readStops(input: NodeJS.ReadableStream, onStop: () => void, onEnd: () => void = onStop): () => void {
   let stops = 0;
   let cleaning = false;
   const lines = createInterface({ input, crlfDelay: Infinity });
@@ -50,7 +51,7 @@ export function readStops(input: NodeJS.ReadableStream, onStop: () => void): () 
   lines.on('close', () => {
     if (cleaning || stops > 0) return;
     stops++;
-    onStop();
+    onEnd();
   });
   input.on('error', () => lines.close());
   return () => {

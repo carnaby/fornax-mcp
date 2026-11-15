@@ -73,6 +73,23 @@ describe('readStops (spec 06 3.2)', () => {
     expect(b).toBe(1);
   });
 
+  test('the end of the input may go to a callback of its own (a stop by signal may have come before it)', async () => {
+    const input = new PassThrough();
+    const seen: string[] = [];
+    readStops(input, () => seen.push('stop'), () => seen.push('end'));
+    input.end();
+    await tick();
+    expect(seen).toEqual(['end']);
+
+    const after = new PassThrough();
+    const later: string[] = [];
+    readStops(after, () => later.push('stop'), () => later.push('end'));
+    after.write('stop\n');
+    after.end();
+    await tick();
+    expect(later).toEqual(['stop']);
+  });
+
   test('the cleanup is no stop and closes the input', async () => {
     const input = new PassThrough();
     let stops = 0;

@@ -300,8 +300,18 @@ if (isMainModule()) {
   });
   let unwire = wireSignals(process, onSignal, leasing ? LEASE_STOP_SIGNALS : STOP_SIGNALS);
   // The child under the tray takes "stop" lines as the signals (first graceful, second at once); the end of stdin (the
-  // supervisor gone) is one stop.
-  const unreadStops = events && isChild ? readStops(process.stdin, () => onSignal('SIGTERM')) : () => {};
+  // supervisor gone) is one stop. Not a second one: after a stop by signal (Linux: passed on by the supervisor, which
+  // was then killed) the end of stdin must not become the hard quit (like watchParent below).
+  const unreadStops =
+    events && isChild
+      ? readStops(
+          process.stdin,
+          () => onSignal('SIGTERM'),
+          () => {
+            if (!stop.signal.aborted) onSignal('SIGTERM');
+          },
+        )
+      : () => {};
   // Spec 06 3.1: `fornax queue --json --watch` (the tray's reader) ends when stdin closes, i.e. when the tray is gone.
   const unwatchInput =
     argv[0] === 'queue' && argv.includes('--watch') && argv.includes('--json') ? onInputEnd(process.stdin, () => stop.abort()) : () => {};
