@@ -2,6 +2,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writ
 import { basename, join } from 'node:path';
 import { describe, expect, test } from 'vitest';
 import { lockWorker } from '../src/instance.js';
+import { InstallError } from '../src/install/errors.js';
 import { ORIGIN_FILE, syncPacksUnderLock, syncShippedPacks, writeOrigin } from '../src/install/packs.js';
 import { NODE_TOOLS, testPaths, useTempDir, writeEchoPack } from './helpers.js';
 
@@ -124,6 +125,82 @@ describe('syncShippedPacks', () => {
     expect(readFileSync(join(typesDir, 'echo', 'scripts', 'tool.mjs'), 'utf8')).not.toBe('// new tool\n');
     expect(readFileSync(join(typesDir, 'echo', 'env', 'marker'), 'utf8')).toBe('venv');
     expect(readFileSync(join(typesDir, 'other', 'scripts', 'tool.mjs'), 'utf8')).toBe('// new tool\n');
+  });
+
+  test('a busy swap: env/ goes back into the pack, the stage goes, one WARN', async () => {
+    const { shippedDir, typesDir, out } = setup();
+    mkdirSync(join(typesDir, 'echo', 'env'));
+    writeFileSync(join(typesDir, 'echo', 'env', 'marker'), 'venv');
+    writeFileSync(join(shippedDir, 'echo', 'scripts', 'tool.mjs'), '// new tool\n');
+    const swap = (_stage: string, target: string) => {
+      throw new InstallError(`${target} could not be replaced (EBUSY): a program holds a file in it`);
+    };
+    await syncShippedPacks({ shippedDir, typesDir, tools: NODE_TOOLS, out: (l) => out.push(l), signal: new AbortController().signal, swap });
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatch(/^WARN {2}echo: .*could not be replaced \(EBUSY\)/);
+    expect(readFileSync(join(typesDir, 'echo', 'env', 'marker'), 'utf8')).toBe('venv');
+    expect(existsSync(join(typesDir, 'echo.new'))).toBe(false);
+  });
+
+  test('a swap whose old pack could not be put back: both halves stay, and the next sync joins them again', async () => {
+    const { shippedDir, typesDir, out, sync } = setup();
+    mkdirSync(join(typesDir, 'echo', 'env'));
+    writeFileSync(join(typesDir, 'echo', 'env', 'marker'), 'venv');
+    writeFileSync(join(shippedDir, 'echo', 'scripts', 'tool.mjs'), '// new tool\n');
+    // What swapDir leaves then: <name> missing, <name>.old the old pack, the stage (with env/) untouched.
+    const swap = (_stage: string, target: string) => {
+      renameSync(target, `${target}.old`);
+      throw new InstallError(`${target} could not be replaced and the old one could not be put back (EPERM): rename ${target}.old to ${target} by hand`);
+    };
+    await syncShippedPacks({ shippedDir, typesDir, tools: NODE_TOOLS, out: (l) => out.push(l), signal: new AbortController().signal, swap });
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatch(/^WARN {2}echo: .*could not be put back/);
+    expect(existsSync(join(typesDir, 'echo'))).toBe(false);
+    expect(existsSync(join(typesDir, 'echo.old', 'type.yaml'))).toBe(true);
+    expect(readFileSync(join(typesDir, 'echo.new', 'env', 'marker'), 'utf8')).toBe('venv');
+
+    out.length = 0;
+    await sync();
+    expect(out).toEqual(['updated type echo']);
+    expect(readFileSync(join(typesDir, 'echo', 'env', 'marker'), 'utf8')).toBe('venv');
+    expect(readFileSync(join(typesDir, 'echo', 'scripts', 'tool.mjs'), 'utf8')).toBe('// new tool\n');
+    expect(existsSync(join(typesDir, 'echo.old'))).toBe(false);
+    expect(existsSync(join(typesDir, 'echo.new'))).toBe(false);
+  });
+
+  test('a lone <name>.old that cannot be put back is a WARN, and the pack is not offered as a new type', async () => {
+    const { typesDir, shippedDir, out } = setup();
+    renameSync(join(typesDir, 'echo'), join(typesDir, 'echo.old'));
+    const rename = () => {
+      throw Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' });
+    };
+    await syncShippedPacks({ shippedDir, typesDir, tools: NODE_TOOLS, out: (l) => out.push(l), signal: new AbortController().signal, rename });
+    expect(out).toEqual(['WARN  echo: echo.old could not be put back (EPERM); rename it by hand']);
+    expect(existsSync(join(typesDir, 'echo.old', 'type.yaml'))).toBe(true);
+  });
+
+  test('the setup runs again only when a file it runs changed, not for another script', async () => {
+    const { shippedDir, typesDir, out, sync } = setup();
+    const setupJs = "import { mkdirSync, writeFileSync } from 'node:fs';\nmkdirSync('env', { recursive: true });\nwriteFileSync('env/ran', '1');\n";
+    for (const dir of [shippedDir, typesDir]) {
+      writeEchoPack(dir, { setup: ['{tool.node}', '{pack}/scripts/setup.mjs'] });
+      writeFileSync(join(dir, 'echo', 'scripts', 'setup.mjs'), setupJs);
+    }
+    const ran = join(typesDir, 'echo', 'env', 'ran');
+
+    // Same version, setup argv and setup.mjs; only the tool changed: replaced, no setup.
+    writeFileSync(join(shippedDir, 'echo', 'scripts', 'tool.mjs'), '// new tool\n');
+    await sync();
+    expect(out).toEqual(['updated type echo']);
+    expect(readFileSync(join(typesDir, 'echo', 'scripts', 'tool.mjs'), 'utf8')).toBe('// new tool\n');
+    expect(existsSync(ran)).toBe(false);
+
+    // Same version, the setup file changed: the setup runs.
+    writeFileSync(join(shippedDir, 'echo', 'scripts', 'setup.mjs'), `// a new model\n${setupJs}`);
+    out.length = 0;
+    await sync();
+    expect(out.slice(0, 2)).toEqual(['updated type echo', 'running the setup of echo…']);
+    expect(existsSync(ran)).toBe(true);
   });
 });
 

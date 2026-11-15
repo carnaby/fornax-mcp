@@ -84,8 +84,10 @@ export type SyncOptions = {
   signal: AbortSignal;
   setupTimeoutMs?: number;
   checkTimeoutMs?: number;
-  /** Tests replace the copy into the stage. */
+  /** Tests replace the copy into the stage, the swap and the rename that puts a lone <name>.old back. */
   copy?: typeof cpSync;
+  swap?: (stage: string, target: string) => void;
+  rename?: (from: string, to: string) => void;
 };
 
 /** The error code, else the error's class: never the message, which may hold local paths. */
@@ -113,7 +115,7 @@ function envLeftIn(stage: string, dir: string): boolean {
  * What a sync that could not finish left: a lone <name>.old is the only copy and is put back; an <name>.old next to
  * <name> and a <name>.new go (env/ in a .new is moved back first, and a .new still holding it stays).
  */
-function cleanPackLeftovers(typesDir: string, out: (line: string) => void): void {
+function cleanPackLeftovers(typesDir: string, out: (line: string) => void, rename: (from: string, to: string) => void = renameSync): void {
   if (!existsSync(typesDir)) return;
   const names = readdirSync(typesDir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
   for (const leftover of names.filter((n) => n.endsWith('.old'))) {
@@ -121,7 +123,7 @@ function cleanPackLeftovers(typesDir: string, out: (line: string) => void): void
     const dir = join(typesDir, name);
     if (!existsSync(dir)) {
       try {
-        renameSync(join(typesDir, leftover), dir);
+        rename(join(typesDir, leftover), dir);
       } catch (e) {
         out(`WARN  ${name}: ${leftover} could not be put back (${errorName(e)}); rename it by hand`);
       }
@@ -176,13 +178,19 @@ async function syncPack(o: SyncOptions, name: string, shipped: Set<string>): Pro
     if (existsSync(env)) renameSync(env, join(stage, 'env'));
     writeOrigin(stage, 'shipped');
     try {
-      swapDir(stage, dir);
+      (o.swap ?? swapDir)(stage, dir);
     } catch (e) {
       if (!(e instanceof InstallError)) throw e;
       o.out(`WARN  ${name}: ${e.message}`);
       // dir is missing only when even the old pack could not be put back (<dir>.old holds it): the stage, with env/,
       // then stays as it is, and the next sync puts both back.
-      if (existsSync(dir) && !envLeftIn(stage, dir)) removeDir(stage);
+      if (existsSync(dir) && !envLeftIn(stage, dir)) {
+        try {
+          removeDir(stage);
+        } catch {
+          // Still held: the next sync removes it.
+        }
+      }
       return;
     }
   } catch (e) {
@@ -219,7 +227,7 @@ async function syncPack(o: SyncOptions, name: string, shipped: Set<string>): Pro
  * a WARN, and the others are still synced.
  */
 export async function syncShippedPacks(o: SyncOptions): Promise<void> {
-  cleanPackLeftovers(o.typesDir, o.out);
+  cleanPackLeftovers(o.typesDir, o.out, o.rename);
   const shipped = new Set(packDirs(o.shippedDir));
   const installed = packDirs(o.typesDir);
   for (const name of installed) {
@@ -229,7 +237,9 @@ export async function syncShippedPacks(o: SyncOptions): Promise<void> {
       o.out(`WARN  ${name}: could not be brought up to date (${errorName(e)})`);
     }
   }
-  for (const name of shipped) if (!installed.includes(name)) o.out(`new type ${name}: fornax types install ${name}`);
+  // A <name>.old or <name>.new still there holds the installed pack or its env/: installing it again would strand them.
+  const leftover = (name: string) => [`${name}.old`, `${name}.new`].some((d) => existsSync(join(o.typesDir, d)));
+  for (const name of shipped) if (!installed.includes(name) && !leftover(name)) o.out(`new type ${name}: fornax types install ${name}`);
 }
 
 /** Sync the packs when no worker runs (spec 05c 4.4); 'worker-running' leaves them to the worker's next start. */
