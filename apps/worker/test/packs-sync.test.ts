@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import { describe, expect, test } from 'vitest';
 import { lockWorker } from '../src/instance.js';
 import { ORIGIN_FILE, syncPacksUnderLock, syncShippedPacks, writeOrigin } from '../src/install/packs.js';
@@ -84,15 +84,46 @@ describe('syncShippedPacks', () => {
     expect(existsSync(join(typesDir, 'upscale'))).toBe(false);
   });
 
-  test('a leftover <name>.old of a failed swap is not a pack', async () => {
+  test('an <name>.old next to the pack is not a pack and goes, so does an <name>.new', async () => {
     const { typesDir, out, sync } = setup();
     // What a swap that could not finish leaves next to the pack: an older copy of it, type.yaml included.
     writeEchoPack(join(typesDir, 'leftover'));
     renameSync(join(typesDir, 'leftover', 'echo'), join(typesDir, 'echo.old'));
     writeOrigin(join(typesDir, 'echo.old'), 'shipped');
+    writeEchoPack(join(typesDir, 'leftover'));
+    renameSync(join(typesDir, 'leftover', 'echo'), join(typesDir, 'echo.new'));
     await sync();
     expect(out).toEqual([]);
-    expect(existsSync(join(typesDir, 'echo.old', 'type.yaml'))).toBe(true);
+    expect(existsSync(join(typesDir, 'echo.old'))).toBe(false);
+    expect(existsSync(join(typesDir, 'echo.new'))).toBe(false);
+  });
+
+  test('a lone <name>.old (the only copy after a swap that could not be undone) is put back and synced', async () => {
+    const { shippedDir, typesDir, out, sync } = setup();
+    renameSync(join(typesDir, 'echo'), join(typesDir, 'echo.old'));
+    writeFileSync(join(shippedDir, 'echo', 'scripts', 'tool.mjs'), '// new tool\n');
+    await sync();
+    expect(readFileSync(join(typesDir, 'echo', 'scripts', 'tool.mjs'), 'utf8')).toBe('// new tool\n');
+    expect(existsSync(join(typesDir, 'echo.old'))).toBe(false);
+    expect(out).toEqual(['updated type echo']);
+  });
+
+  test("one pack's file error is a WARN; the other packs are still brought up to date", async () => {
+    const { shippedDir, typesDir, out } = setup();
+    writeEchoPack(shippedDir, { name: 'other' });
+    writeEchoPack(typesDir, { name: 'other' });
+    mkdirSync(join(typesDir, 'echo', 'env'));
+    writeFileSync(join(typesDir, 'echo', 'env', 'marker'), 'venv');
+    for (const name of ['echo', 'other']) writeFileSync(join(shippedDir, name, 'scripts', 'tool.mjs'), '// new tool\n');
+    const copy = ((src: string, dest: string, opts: object) => {
+      if (basename(src) === 'echo') throw Object.assign(new Error(`EBUSY: resource busy, copyfile ${src}`), { code: 'EBUSY' });
+      cpSync(src, dest, opts);
+    }) as typeof cpSync;
+    await syncShippedPacks({ shippedDir, typesDir, tools: NODE_TOOLS, out: (l) => out.push(l), signal: new AbortController().signal, copy });
+    expect(out).toEqual(['WARN  echo: could not be brought up to date (EBUSY)', 'updated type other']);
+    expect(readFileSync(join(typesDir, 'echo', 'scripts', 'tool.mjs'), 'utf8')).not.toBe('// new tool\n');
+    expect(readFileSync(join(typesDir, 'echo', 'env', 'marker'), 'utf8')).toBe('venv');
+    expect(readFileSync(join(typesDir, 'other', 'scripts', 'tool.mjs'), 'utf8')).toBe('// new tool\n');
   });
 });
 
