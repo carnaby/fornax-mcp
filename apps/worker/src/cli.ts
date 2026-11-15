@@ -182,7 +182,12 @@ type SignalDeps = {
    * the waiting job this long (the command then ends by itself), and exits 130 only after it. Unset: quit at once.
    */
   cancelGraceMs?: number;
+  /** What the first message says quits at once, in its parentheses (default: Ctrl+C again; under the tray: TRAY_SECOND_STOP). */
+  secondStopHint?: string;
 };
+
+/** Spec 06 3.2: under the tray a stop comes as a line from it, not as Ctrl+C. */
+export const TRAY_SECOND_STOP = 'a second stop quits at once';
 
 /** The longest a second Ctrl+C of fornax lease waits for the cancel of a waiting job. */
 export const LEASE_CANCEL_GRACE_MS = 3000;
@@ -195,11 +200,8 @@ export function makeSignalHandler(d: SignalDeps): (signal?: NodeJS.Signals) => v
   let signals = 0;
   return (signal) => {
     if (++signals === 1) {
-      d.say(
-        d.hasRunning()
-          ? 'stopping: the running job is stopped and given back (Ctrl+C again quits at once)'
-          : 'stopping (Ctrl+C again quits at once)',
-      );
+      const hint = d.secondStopHint ?? 'Ctrl+C again quits at once';
+      d.say(d.hasRunning() ? `stopping: the running job is stopped and given back (${hint})` : `stopping (${hint})`);
       d.abort(signal);
     } else if (signals === 2) {
       if (d.cancelGraceMs !== undefined && !d.hasRunning()) {
@@ -294,6 +296,7 @@ if (isMainModule()) {
     exit: (c) => process.exit(c),
     say: leasing ? () => {} : err,
     cancelGraceMs: leasing ? LEASE_CANCEL_GRACE_MS : undefined,
+    secondStopHint: events ? TRAY_SECOND_STOP : undefined,
   });
   let unwire = wireSignals(process, onSignal, leasing ? LEASE_STOP_SIGNALS : STOP_SIGNALS);
   // The child under the tray takes "stop" lines as the signals (first graceful, second at once); the end of stdin (the

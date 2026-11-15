@@ -7,7 +7,7 @@ import { FORNAX_VERSION, fingerprint, generateToken } from '@fornax/protocol';
 import { startTestServer, type TestServer } from '@fornax/server/testing';
 import { afterEach, describe, expect, test } from 'vitest';
 import { ApiError, type WorkerApi } from '../src/api.js';
-import { consoleWriter, LEASE_STOP_SIGNALS, makeSignalHandler, runCli, wireSignals } from '../src/cli.js';
+import { consoleWriter, LEASE_STOP_SIGNALS, makeSignalHandler, runCli, TRAY_SECOND_STOP, wireSignals } from '../src/cli.js';
 import { hasRunning, killRunning, runProcess } from '../src/process.js';
 import type { Ctx } from '../src/commands/context.js';
 import { LEASE_USAGE } from '../src/commands/lease.js';
@@ -467,6 +467,19 @@ describe('signal handling', () => {
     handler();
     expect(events[0]).toMatch(/^say stopping/);
     expect(events[0]).not.toContain('job');
+  });
+
+  test('the first message names how to quit at once: Ctrl+C on the console, a second stop under the tray', () => {
+    const said = (running: boolean, secondStopHint?: string) => {
+      const lines: string[] = [];
+      const handler = makeSignalHandler({ abort: () => {}, killRunning: async () => {}, hasRunning: () => running, exit: () => {}, say: (t) => lines.push(t), secondStopHint });
+      handler();
+      return lines;
+    };
+    expect(said(true)).toEqual(['stopping: the running job is stopped and given back (Ctrl+C again quits at once)']);
+    expect(said(false)).toEqual(['stopping (Ctrl+C again quits at once)']);
+    expect(said(true, TRAY_SECOND_STOP)).toEqual(['stopping: the running job is stopped and given back (a second stop quits at once)']);
+    expect(said(false, TRAY_SECOND_STOP)).toEqual(['stopping (a second stop quits at once)']);
   });
 
   test('a console gone with the terminal (EIO after a hangup, EPIPE) neither crashes the handler nor stops the abort', async () => {
