@@ -1,5 +1,7 @@
+import { realpathSync } from 'node:fs';
 import { WorkerApi } from '../api.js';
 import { ConfigError, readToken, readWorkerConfig, serverWarning, type WorkerConfig } from '../config.js';
+import type { PathDeps } from '../install/path-entry.js';
 import type { LeaseTimings } from '../lease/run.js';
 import type { LoopOptions } from '../loop.js';
 import type { Paths } from '../paths.js';
@@ -26,10 +28,24 @@ export type Ctx = {
   readStdin?: () => Promise<string>;
   /** Test seam: shorter clocks for fornax lease. */
   leaseTimings?: Partial<LeaseTimings>;
+  /** Test seam: the running fornax.mjs (spec 05c 2: "the installed copy"). */
+  script?: string;
+  /** Test seam: how fornax install puts fornax on PATH. */
+  pathDeps?: PathDeps;
 };
 
 export const apiFor = (ctx: Ctx, server: string, token: string): WorkerApi =>
   ctx.makeApi?.(server, token) ?? new WorkerApi({ server, token, onWarning: (m) => ctx.out(`warning: ${m}`) });
+
+/** The running fornax.mjs, resolved as the OS names it (the CLI is started as `node <it>`). */
+export function runningScript(ctx: Ctx): string {
+  if (ctx.script !== undefined) return ctx.script;
+  try {
+    return realpathSync.native(process.argv[1] ?? '');
+  } catch {
+    return process.argv[1] ?? '';
+  }
+}
 
 /** worker.yaml, the token and an API client; ConfigError with a hint when this PC is not paired. */
 export function connect(ctx: Ctx): { config: WorkerConfig; api: WorkerApi } {

@@ -6,11 +6,13 @@ import { FORNAX_VERSION } from '@fornax/protocol';
 import { ApiError, NetworkError } from './api.js';
 import type { Ctx } from './commands/context.js';
 import { doctor } from './commands/doctor.js';
+import { installCommand } from './commands/install.js';
 import { LEASE_FORMS, leaseCommand, usageText } from './commands/lease.js';
 import { pair } from './commands/pair.js';
 import { typesAdd, typesInstall, typesList } from './commands/types.js';
 import { queueCommand, workerCommand } from './commands/worker.js';
 import { ConfigError } from './config.js';
+import { InstallError } from './install/errors.js';
 import { PackError } from './pack.js';
 import { resolvePaths } from './paths.js';
 import { hasRunning, killRunning } from './process.js';
@@ -23,6 +25,8 @@ export const USAGE = usageText([
   'fornax types list',
   'fornax types install <name> [--from <dir>]',
   'fornax types add <name>',
+  'fornax install',
+  'fornax update [--force] [--server <url>]',
   ...LEASE_FORMS,
   'fornax --version',
 ]);
@@ -31,7 +35,7 @@ type Flags = { server?: string; name?: string; force?: boolean; from?: string; o
 
 /** How a command's error ends: our own errors with their message, anything else only with its class (it may hold paths or tool output). */
 export function reportError(e: unknown, say: (line: string) => void): number {
-  if (e instanceof ConfigError || e instanceof PackError || e instanceof NetworkError || e instanceof ApiError) {
+  if (e instanceof ConfigError || e instanceof PackError || e instanceof NetworkError || e instanceof ApiError || e instanceof InstallError) {
     say(e.message);
     return 1;
   }
@@ -86,6 +90,7 @@ export async function runCli(argv: string[], ctx: Ctx): Promise<number> {
   const shape = (n: number, ...allowed: (keyof Flags)[]) => words.length === n && Object.keys(flags).every((k) => allowed.includes(k as keyof Flags));
   const [group, sub, arg] = words;
   try {
+    if (group === 'install' && shape(1)) return await installCommand(ctx);
     if (group === 'worker' && sub === 'pair' && shape(2, 'server', 'name', 'force') && flags.server && flags.name) {
       return await pair(ctx, { server: flags.server, name: flags.name, force: flags.force === true });
     }
