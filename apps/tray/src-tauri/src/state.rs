@@ -37,8 +37,8 @@ pub enum MoveTo {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Input {
-    /// The tray started, with its setting and a warning to show (tray.json, Redirection Guard), if any.
-    Launched { start_worker: bool, warning: Option<String> },
+    /// The tray started, with its setting and the warnings to show (Redirection Guard, tray.json).
+    Launched { start_worker: bool, warnings: Vec<String> },
     /// `fornax --version` answered (its line) or could not run (why), and whether worker.lock is held.
     CliChecked { result: Result<String, String>, lock_held: bool },
     StartWorker,
@@ -59,6 +59,7 @@ pub enum Input {
     WatchText(String),
     WatchExited,
     WatchSpawnFailed(String),
+    /// The answer to a [`Effect::RunAction`]; main.rs also sends a failed one for a result page that did not open.
     ActionDone { key: String, result: Result<(), String> },
     LockChecked { held: bool },
     Warning(String),
@@ -208,9 +209,12 @@ pub struct Model {
     external: bool,
     cli: Cli,
     start_worker: bool,
-    /// Start the worker once fornax is found ready (the setting at launch).
+    /// Start the worker once fornax is found ready (the setting at launch); kept until it is.
     auto_start: bool,
-    warning: Option<String>,
+    /// A check of fornax runs (one at a time).
+    cli_checking: bool,
+    /// Every warning to show, once each (Redirection Guard, tray.json).
+    warnings: Vec<String>,
     watch: Watch,
     watch_failures: usize,
     queue: Option<Queue>,
@@ -226,7 +230,8 @@ pub struct Model {
     seen_failed: BTreeSet<String>,
     queue_seen: bool,
     wave_told: bool,
-    next_lock_check: i64,
+    /// When the lock is checked next while fornax is ready, or fornax again while it has a problem.
+    next_check: i64,
     confirm_quit: bool,
     quitting: bool,
     log: VecDeque<LogLine>,
@@ -271,6 +276,14 @@ fn what_of(j: &Job) -> String {
     j.label.clone().or_else(|| j.inputs.values().flatten().next().cloned()).or_else(|| j.group.clone()).unwrap_or_default()
 }
 
+/// Whether a line of text can say why a process ended. Node's crash output ends with its version (`Node.js v22.16.0`)
+/// after the stack frames (`    at …`) and the error's indented properties closed by `}`: the reason is the line
+/// before them.
+fn is_reason(line: &str) -> bool {
+    let footer = line.strip_prefix("Node.js v").is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()));
+    !footer && !line.starts_with(char::is_whitespace) && line.trim() != "}"
+}
+
 impl Model {
     pub fn new() -> Self {
         Model {
@@ -282,7 +295,8 @@ impl Model {
             cli: Cli::Unchecked,
             start_worker: true,
             auto_start: false,
-            warning: None,
+            cli_checking: false,
+            warnings: Vec::new(),
             watch: Watch::Off,
             watch_failures: 0,
             queue: None,
@@ -295,7 +309,7 @@ impl Model {
             seen_failed: BTreeSet::new(),
             queue_seen: false,
             wave_told: false,
-            next_lock_check: 0,
+            next_check: 0,
             confirm_quit: false,
             quitting: false,
             log: VecDeque::new(),
@@ -304,12 +318,13 @@ impl Model {
 
     pub fn apply(&mut self, input: Input, now: i64) -> Vec<Effect> {
         match input {
-            Input::Launched { start_worker, warning } => {
+            Input::Launched { start_worker, warnings } => {
                 self.start_worker = start_worker;
                 self.auto_start = start_worker;
-                if let Some(text) = warning {
+                for text in warnings {
                     self.warn(now, text);
                 }
+                self.cli_checking = true;
                 vec![Effect::CheckCli]
             }
             Input::CliChecked { result, lock_held } => self.cli_checked(result, lock_held, now),
@@ -344,7 +359,9 @@ impl Model {
                 Vec::new()
             }
             Input::WorkerText(line) => {
-                self.last_line = Some(line.clone());
+                if is_reason(&line) {
+                    self.last_line = Some(line.clone());
+                }
                 self.push_log(now, line, true);
                 Vec::new()
             }
@@ -371,7 +388,9 @@ impl Model {
                 Vec::new()
             }
             Input::WatchText(line) => {
-                self.watch_text = Some(line.clone());
+                if is_reason(&line) {
+                    self.watch_text = Some(line.clone());
+                }
                 self.push_log(now, line, true);
                 Vec::new()
             }
@@ -408,7 +427,8 @@ impl Model {
 
     fn cli_checked(&mut self, result: Result<String, String>, lock_held: bool, now: i64) -> Vec<Effect> {
         self.external = lock_held && self.own == Own::Stopped;
-        self.next_lock_check = now + LOCK_EVERY_MS;
+        self.cli_checking = false;
+        self.next_check = now + LOCK_EVERY_MS;
         self.cli = match result {
             Ok(text) => match version_of(&text) {
                 Some(v) if v >= MIN_CLI => Cli::Ready,
@@ -417,12 +437,13 @@ impl Model {
             },
             Err(message) => Cli::Problem(message),
         };
-        let auto = std::mem::take(&mut self.auto_start);
+        // The start at sign-in waits for the first good check (tick checks again while there is a problem).
         if self.cli != Cli::Ready {
             return Vec::new();
         }
+        let auto = std::mem::take(&mut self.auto_start);
         let mut effects = Vec::new();
-        if self.watch == Watch::Off {
+        if self.watch == Watch::Off && !self.quitting {
             self.watch = Watch::Running;
             effects.push(Effect::SpawnWatch);
         }
@@ -439,6 +460,7 @@ impl Model {
     fn start(&mut self, now: i64) -> Vec<Effect> {
         self.own = Own::Starting;
         self.exit_note = None;
+        self.last_line = None;
         self.push_log(now, "starting the worker".to_string(), false);
         vec![Effect::SpawnWorker]
     }
@@ -536,7 +558,7 @@ impl Model {
             self.exit_note = Some(self.last_line.clone().unwrap_or_else(|| format!("the worker ended with code {code}")));
         }
         // A worker started elsewhere may hold the lock now: check at the next tick.
-        self.next_lock_check = now;
+        self.next_check = now;
     }
 
     fn queue_line(&mut self, queue: Queue, now: i64) -> Vec<Effect> {
@@ -609,16 +631,28 @@ impl Model {
                 effects.push(Effect::SpawnWatch);
             }
         }
-        if self.cli == Cli::Ready && !self.quitting && now >= self.next_lock_check {
-            self.next_lock_check = now + LOCK_EVERY_MS;
-            effects.push(Effect::CheckLock);
+        if !self.quitting && now >= self.next_check {
+            match self.cli {
+                Cli::Ready => {
+                    self.next_check = now + LOCK_EVERY_MS;
+                    effects.push(Effect::CheckLock);
+                }
+                // The user may have followed the note (fornax update, Node installed): its answer sets the next time.
+                Cli::Problem(_) if !self.cli_checking => {
+                    self.cli_checking = true;
+                    effects.push(Effect::CheckCli);
+                }
+                _ => {}
+            }
         }
         self.action_errors.retain(|(_, _, until)| *until > now);
         effects
     }
 
     fn warn(&mut self, now: i64, text: String) {
-        self.warning = Some(text.clone());
+        if !self.warnings.contains(&text) {
+            self.warnings.push(text.clone());
+        }
         self.push_log(now, text, true);
     }
 
@@ -685,7 +719,7 @@ impl Model {
     fn note(&self) -> Option<String> {
         match &self.cli {
             Cli::Problem(message) => Some(message.clone()),
-            _ => self.exit_note.clone().or_else(|| self.warning.clone()),
+            _ => self.exit_note.clone().or_else(|| (!self.warnings.is_empty()).then(|| self.warnings.join("\n"))),
         }
     }
 
@@ -705,7 +739,7 @@ impl Model {
     /// Spec 06 4.3, first match wins.
     fn icon(&self) -> Icon {
         let q = self.queue.as_ref();
-        let queue_lost = q.is_none() && (self.server_down.is_some() || matches!(self.watch, Watch::Waiting { .. }));
+        let queue_lost = q.is_none() && (self.server_down.is_some() || matches!(self.watch, Watch::Waiting { .. }) || self.watch_problem.is_some());
         let stopped = self.own == Own::Stopped && !self.external;
         if stopped && (self.exit_note.is_some() || matches!(self.cli, Cli::Problem(_)) || queue_lost) {
             return Icon::Error;
@@ -795,7 +829,7 @@ mod tests {
     }
 
     fn launched(start_worker: bool) -> Input {
-        Input::Launched { start_worker, warning: None }
+        Input::Launched { start_worker, warnings: Vec::new() }
     }
 
     fn checked(version: &str, lock_held: bool) -> Input {
@@ -1055,7 +1089,9 @@ mod tests {
         assert_eq!(s.queue_note.as_deref(), said);
         assert_eq!(s.icon, Icon::Error);
         assert!(m.apply(Input::Tick, NOW + 2_000).contains(&Effect::SpawnWatch));
-        assert_eq!(m.snapshot().queue_note.as_deref(), said, "it stays while the next reader runs");
+        let s = m.snapshot();
+        assert_eq!(s.queue_note.as_deref(), said, "it stays while the next reader runs");
+        assert_eq!(s.icon, Icon::Error, "the icon does not turn grey while the next reader starts");
         m.apply(queue(None, vec![], vec![], false), NOW + 3_000);
         assert_eq!(m.snapshot().queue_note, None, "a good queue line clears it");
 
@@ -1160,7 +1196,7 @@ mod tests {
     #[test]
     fn the_setting_and_warnings() {
         let mut m = Model::new();
-        m.apply(Input::Launched { start_worker: true, warning: Some("tray.json is not valid: expected value".into()) }, NOW);
+        m.apply(Input::Launched { start_worker: true, warnings: vec!["tray.json is not valid: expected value".into()] }, NOW);
         assert_eq!(m.snapshot().note.as_deref(), Some("tray.json is not valid: expected value"));
         assert_eq!(m.apply(Input::SetStartWorker(false), NOW), vec![Effect::SaveStartWorker(false)]);
         assert!(!m.snapshot().start_worker);
@@ -1181,6 +1217,89 @@ mod tests {
         long.owner = Some("ö".repeat(200));
         m.apply(queue(Some(long), vec![], vec![], false), NOW);
         assert!(m.snapshot().tooltip.encode_utf16().count() <= TOOLTIP_UNITS);
+    }
+
+    /// After the user follows the note (fornax update, install fornax or Node) the tray recovers by itself, and a start
+    /// at sign-in still starts the worker.
+    #[test]
+    fn a_problem_with_fornax_is_checked_again_until_it_is_ready() {
+        let mut m = Model::new();
+        m.apply(launched(true), NOW);
+        assert_eq!(m.apply(checked("0.4.1", false), NOW), vec![]);
+        assert_eq!(m.apply(Input::Tick, NOW + LOCK_EVERY_MS - 1), vec![]);
+        assert_eq!(m.apply(Input::Tick, NOW + LOCK_EVERY_MS), vec![Effect::CheckCli]);
+        assert_eq!(m.apply(Input::Tick, NOW + 2 * LOCK_EVERY_MS), vec![], "one check at a time");
+        let s = m.snapshot();
+        assert_eq!(s.note.as_deref(), Some("fornax 0.4.1 is too old for the tray: run fornax update"), "the note stays while it is checked");
+        assert!(!s.can_start);
+        let node = r#"Node.js was not found (node): install Node.js 22 or newer, or set "node" in tray.json"#;
+        assert_eq!(m.apply(Input::CliChecked { result: Err(node.into()), lock_held: false }, NOW + 2 * LOCK_EVERY_MS), vec![]);
+        assert_eq!(m.snapshot().note.as_deref(), Some(node));
+        assert_eq!(m.apply(Input::Tick, NOW + 3 * LOCK_EVERY_MS - 1), vec![]);
+        assert_eq!(m.apply(Input::Tick, NOW + 3 * LOCK_EVERY_MS), vec![Effect::CheckCli]);
+        assert_eq!(m.apply(checked("0.5.0", false), NOW + 3 * LOCK_EVERY_MS), vec![Effect::SpawnWatch, Effect::SpawnWorker], "the start at sign-in waited");
+        assert_eq!(m.snapshot().note, None);
+        assert_eq!(m.apply(Input::Tick, NOW + 4 * LOCK_EVERY_MS), vec![Effect::CheckLock], "from now on only the lock");
+    }
+
+    /// Node's crash output ends with its version and the stack: the line before them says why.
+    #[test]
+    fn a_crash_footer_and_stack_frames_are_no_reason() {
+        let crash = [
+            "Error: boom",
+            "    at main (file:///app/fornax.mjs:10:5)",
+            "    at process.processTicksAndRejections (node:internal/process/task_queues:95:5) {",
+            "  code: 'ERR_BOOM'",
+            "}",
+            "Node.js v22.16.0",
+        ];
+        let mut m = running_worker();
+        for line in crash {
+            m.apply(Input::WorkerText(line.into()), NOW);
+        }
+        m.apply(Input::WorkerExited { code: Some(1) }, NOW);
+        let s = m.snapshot();
+        assert_eq!(s.note.as_deref(), Some("Error: boom"));
+        assert_eq!(s.log.last().map(|l| l.text.as_str()), Some("Node.js v22.16.0"), "the log keeps every line");
+
+        let mut m = ready(false);
+        for line in crash {
+            m.apply(Input::WatchText(line.into()), NOW);
+        }
+        m.apply(Input::WatchExited, NOW);
+        assert_eq!(m.snapshot().queue_note.as_deref(), Some("The queue cannot be read: Error: boom"));
+    }
+
+    #[test]
+    fn a_new_start_forgets_the_last_line_of_the_run_before() {
+        let mut m = running_worker();
+        m.apply(Input::WorkerEvent(WorkerEvent::Log { line: "offering: echo".into() }), NOW);
+        m.apply(Input::StopWorker, NOW);
+        m.apply(Input::WorkerExited { code: Some(0) }, NOW);
+        m.apply(Input::StartWorker, NOW);
+        m.apply(Input::WorkerExited { code: Some(3) }, NOW);
+        assert_eq!(m.snapshot().note.as_deref(), Some("the worker ended with code 3"));
+    }
+
+    #[test]
+    fn a_version_check_that_answers_during_quit_starts_nothing() {
+        let mut m = Model::new();
+        m.apply(launched(true), NOW);
+        assert_eq!(m.apply(Input::Quit, NOW), vec![Effect::Exit]);
+        assert_eq!(m.apply(checked("0.5.0", false), NOW), vec![], "no reader and no worker while quitting");
+        assert_eq!(m.apply(Input::Tick, NOW + 60_000), vec![]);
+    }
+
+    #[test]
+    fn every_warning_shows_once() {
+        let guard = "Windows protects this tray against folder links (Redirection Guard)";
+        let broken = "tray.json is not valid: expected value";
+        let mut m = Model::new();
+        m.apply(Input::Launched { start_worker: true, warnings: vec![guard.into(), broken.into()] }, NOW);
+        assert_eq!(m.snapshot().note, Some(format!("{guard}\n{broken}")));
+        m.apply(Input::Warning("cannot write tray.json".into()), NOW);
+        m.apply(Input::Warning("cannot write tray.json".into()), NOW);
+        assert_eq!(m.snapshot().note, Some(format!("{guard}\n{broken}\ncannot write tray.json")));
     }
 
     #[test]

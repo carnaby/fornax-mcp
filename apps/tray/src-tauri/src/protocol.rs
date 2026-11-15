@@ -15,8 +15,8 @@ pub enum WorkerEvent {
     Log { line: String },
     /// The supervisor restarts the worker for a new version.
     Restarting,
-    /// The supervisor's last line.
-    Stopped { code: i32 },
+    /// The supervisor's last line. i64: a Windows crash code (e.g. 3221225477) does not fit an i32.
+    Stopped { code: i64 },
     /// An event a newer CLI may add.
     #[serde(other)]
     Other,
@@ -174,6 +174,8 @@ mod tests {
         assert_eq!(parse_event(r#"{"event":"log","line":"offering: echo"}"#), Some(WorkerEvent::Log { line: "offering: echo".into() }));
         assert_eq!(parse_event(r#"{"event":"restarting"}"#), Some(WorkerEvent::Restarting));
         assert_eq!(parse_event(r#"{"event":"stopped","code":130}"#), Some(WorkerEvent::Stopped { code: 130 }));
+        // A Windows crash code (0xC0000005) is larger than an i32.
+        assert_eq!(parse_event(r#"{"event":"stopped","code":3221225477}"#), Some(WorkerEvent::Stopped { code: 3_221_225_477 }));
         assert_eq!(parse_event(r#"{"event":"something-new","x":1}"#), Some(WorkerEvent::Other));
         assert_eq!(parse_event("not json"), None);
         assert_eq!(parse_event(r#"{"event":"started"}"#), None, "a started event without its fields");

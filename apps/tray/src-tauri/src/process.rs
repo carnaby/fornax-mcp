@@ -94,9 +94,10 @@ fn guard<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 /// The parent pid in a `/proc/<pid>/stat` line: `pid (comm) state ppid …`. The name may contain spaces and
-/// parentheses, so the fields are counted after the last `)`.
+/// parentheses, so the fields are counted after the last `)`; it need not be UTF-8 (broken bytes are replaced).
 #[cfg(any(not(windows), test))]
-fn parent_of(stat: &str) -> Option<u32> {
+fn parent_of(stat: &[u8]) -> Option<u32> {
+    let stat = String::from_utf8_lossy(stat);
     let rest = &stat[stat.rfind(')')? + 1..];
     rest.split_whitespace().nth(1)?.parse().ok()
 }
@@ -126,7 +127,7 @@ fn descendants(root: u32) -> Vec<u32> {
         .flatten()
         .filter_map(|entry| {
             let pid = entry.file_name().to_str()?.parse::<u32>().ok()?;
-            let stat = std::fs::read_to_string(entry.path().join("stat")).ok()?;
+            let stat = std::fs::read(entry.path().join("stat")).ok()?;
             Some((pid, parent_of(&stat)?))
         })
         .collect();
@@ -478,10 +479,19 @@ mod tests {
 
     #[test]
     fn reads_the_parent_from_proc_stat_even_when_the_name_has_parentheses() {
-        assert_eq!(parent_of("4242 (node) S 17 4242 4242 0 -1 4194560 812"), Some(17));
-        assert_eq!(parent_of("4243 (a) (b c) R 4242 4242 4242 0 -1"), Some(4242));
-        assert_eq!(parent_of("4244 (x"), None);
-        assert_eq!(parent_of(""), None);
+        assert_eq!(parent_of(b"4242 (node) S 17 4242 4242 0 -1 4194560 812"), Some(17));
+        assert_eq!(parent_of(b"4243 (a) (b c) R 4242 4242 4242 0 -1"), Some(4242));
+        assert_eq!(parent_of(b"4244 (x"), None);
+        assert_eq!(parent_of(b""), None);
+    }
+
+    /// The kernel cuts a name at 15 bytes, which can split a multi-byte character: the rest of the line still counts.
+    #[test]
+    fn reads_the_parent_from_proc_stat_when_the_name_is_not_utf8() {
+        let mut stat = b"4245 (caf".to_vec();
+        stat.extend([0xC3, 0xFF]);
+        stat.extend(b") S 4242 4245 4245 0 -1");
+        assert_eq!(parent_of(&stat), Some(4242));
     }
 
     #[test]

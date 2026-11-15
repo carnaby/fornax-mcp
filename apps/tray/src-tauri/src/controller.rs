@@ -100,7 +100,7 @@ impl Controller {
             Ok(cfg) => (cfg.start_worker, None),
             Err(message) => (true, Some(message)),
         };
-        let _ = tx.send(Input::Launched { start_worker, warning: warning.or(config_warning) });
+        let _ = tx.send(Input::Launched { start_worker, warnings: warning.into_iter().chain(config_warning).collect() });
         {
             let runner = Runner::new(paths, tx.clone(), ui, timing);
             let latest = Arc::clone(&latest);
