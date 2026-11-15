@@ -5,8 +5,8 @@
 // Worker words: stubborn (ignores stop and the end of stdin), crash (exits 1 without "stopped"), locked (another
 // worker holds the lock), grandchild (starts a process that sleeps, in its own process group off Windows like the
 // real worker's child, and logs "grandchild <pid>"). Reader words: down (the server cannot be reached), watch-exit
-// (exits 1 after its first line). Action words: failaction (exits 1 with the server's sentence), slowaction (never
-// ends).
+// (exits 1 after its first line), unpaired (exits 1 with the CLI's sentence on stderr before any line). Action words:
+// failaction (exits 1 with the server's sentence), slowaction (never ends).
 import { spawn } from 'node:child_process';
 import { appendFileSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -98,6 +98,10 @@ if (args[0] === '--version') {
   forever();
 } else if (args[0] === 'queue' && args.includes('--watch')) {
   appendFileSync(join(here, 'watch-starts'), 'x\n');
+  if (has('unpaired')) {
+    process.stderr.write('this computer is not paired as a worker (fornax worker pair)\n');
+    process.exit(1);
+  }
   if (has('down')) out({ ok: false, error: 'network', message: 'cannot reach the server: ECONNREFUSED' });
   else out(queue());
   if (has('watch-exit')) process.exit(1);

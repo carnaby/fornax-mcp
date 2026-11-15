@@ -357,6 +357,15 @@ pub(crate) mod testing {
     pub fn next(rx: &Receiver<Output>) -> Output {
         rx.recv_timeout(Duration::from_secs(15)).expect("output in time")
     }
+
+    /// Whether a process runs. Off Windows a killed process stays in /proc as a zombie (state Z) until it is reaped.
+    #[cfg(not(windows))]
+    pub fn alive(pid: u32) -> bool {
+        fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| stat.rfind(')').is_some_and(|i| !stat[i + 1..].trim_start().starts_with('Z')))
+    }
+
+    #[cfg(windows)]
+    pub use crate::lock::alive;
 }
 
 #[cfg(test)]
@@ -365,7 +374,7 @@ mod tests {
     use std::sync::mpsc::Receiver;
     use std::time::{Duration, Instant};
 
-    use super::testing::{channel, fake_cli, next};
+    use super::testing::{alive, channel, fake_cli, next};
     use super::*;
 
     fn until_exit(rx: &Receiver<Output>) -> Vec<Output> {
@@ -489,14 +498,6 @@ mod tests {
     /// so the group of the tray's child alone would leave them running. On Windows taskkill /T finds the grandchild.
     #[test]
     fn kill_tree_ends_a_grandchild_in_its_own_process_group() {
-        #[cfg(not(windows))]
-        fn alive(pid: u32) -> bool {
-            // A killed process stays in /proc as a zombie (state Z) until it is reaped.
-            std::fs::read_to_string(format!("/proc/{pid}/stat"))
-                .is_ok_and(|stat| stat.rfind(')').is_some_and(|i| !stat[i + 1..].trim_start().starts_with('Z')))
-        }
-        #[cfg(windows)]
-        use crate::lock::alive;
         let f = fake_cli("stubborn grandchild");
         let (sink, rx) = channel();
         let p = CliProcess::start(command(&f.cfg, &["worker", "--events"]), sink).unwrap();
