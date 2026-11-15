@@ -1,5 +1,6 @@
 import { type ChildProcess, spawn } from 'node:child_process';
 import { constants } from 'node:os';
+import { readStops } from './events.js';
 import { RESTART_EXIT } from './restart.js';
 
 export type SuperviseOptions = {
@@ -18,6 +19,11 @@ export type SuperviseOptions = {
   windowMs?: number;
   /** Test seam: each child as it starts. */
   onChild?: (child: ChildProcess) => void;
+  /**
+   * Spec 06 3.2 (`fornax worker --events`, the tray): "stop" lines come from `input` and go on to the child's stdin,
+   * one each (the child counts them like signals); `onRestart` is called before the child starts again.
+   */
+  events?: { input: NodeJS.ReadableStream; onRestart: () => void };
 };
 
 const FORWARDED = ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGQUIT'] as const;
@@ -50,6 +56,12 @@ export async function superviseWorker(o: SuperviseOptions): Promise<number> {
   const ignore = () => {
     stopRequested = true;
   };
+  const passStop = () => {
+    stopRequested = true;
+    const c = child as ChildProcess | null;
+    if (c?.stdin && !c.stdin.destroyed) c.stdin.write('stop\n');
+  };
+  const unread = o.events ? readStops(o.events.input, passStop) : () => {};
   const wired: [string, (s: NodeJS.Signals) => void][] = windows
     ? IGNORED_ON_WINDOWS.map((s) => [s, ignore])
     : FORWARDED.map((s) => [s, () => pass(passedAs(s))]);
@@ -60,11 +72,14 @@ export async function superviseWorker(o: SuperviseOptions): Promise<number> {
     for (;;) {
       const code = await new Promise<number>((resolve) => {
         const c = spawn(o.execPath, [...o.execArgv, o.script, 'worker', '--child', ...o.args], {
-          stdio: 'inherit',
+          stdio: o.events ? ['pipe', 'inherit', 'inherit'] : 'inherit',
           detached: !windows,
-          windowsHide: false,
+          // Spec 06 3.2: under the tray there is no console; a child that asked for one would open an empty window.
+          windowsHide: o.events !== undefined,
         });
         child = c;
+        // A stop written after the child ended must not crash the supervisor.
+        c.stdin?.on('error', () => {});
         o.onChild?.(c);
         c.once('error', (e) => {
           o.out(`cannot start the worker (${(e as NodeJS.ErrnoException).code ?? e.message})`);
@@ -84,9 +99,11 @@ export async function superviseWorker(o: SuperviseOptions): Promise<number> {
         o.out(`the worker asked to restart ${restarts.length} times in a minute; not restarting`);
         return 1;
       }
+      o.events?.onRestart();
     }
   } finally {
     for (const [s, h] of wired) signals.off(s, h);
+    unread();
   }
 }
 

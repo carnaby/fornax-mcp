@@ -2,6 +2,7 @@ import type { ChildProcess } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { PassThrough } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { superviseWorker, watchParent } from '../src/supervisor.js';
@@ -112,6 +113,44 @@ describe('superviseWorker', () => {
     expect(readFileSync(file, 'utf8')).toBe('ready');
     child!.kill();
     await done;
+  });
+
+  test('events: each stop line goes on to the child; the supervisor ends with its code', async () => {
+    const input = new PassThrough();
+    const s = supervise('stdin-2', { events: { input, onRestart: () => {} } });
+    await waitFor(() => state(s.file) === 'ready');
+    input.write('stop\n');
+    await waitFor(() => state(s.file) === 'stop');
+    input.write('stop\n');
+    expect(await s.done).toBe(0);
+    expect(state(s.file)).toBe('stop,stop');
+  });
+
+  test('events: a closed input is one stop for the child', async () => {
+    const input = new PassThrough();
+    const s = supervise('stdin-1', { events: { input, onRestart: () => {} } });
+    await waitFor(() => state(s.file) === 'ready');
+    input.end();
+    expect(await s.done).toBe(0);
+    expect(state(s.file)).toBe('stop');
+  });
+
+  test('events: a restart is announced once', async () => {
+    let restarts = 0;
+    const s = supervise('restart-once', { events: { input: new PassThrough(), onRestart: () => restarts++ } });
+    expect(await s.done).toBe(0);
+    expect(restarts).toBe(1);
+  });
+
+  test('events: a stop while the worker asked to restart ends the supervisor with 0', async () => {
+    const input = new PassThrough();
+    let restarts = 0;
+    const s = supervise('slow-75', { events: { input, onRestart: () => restarts++ } });
+    await waitFor(() => state(s.file) === '1');
+    input.write('stop\n');
+    expect(await s.done).toBe(0);
+    expect(restarts).toBe(0);
+    expect(state(s.file)).toBe('1');
   });
 });
 

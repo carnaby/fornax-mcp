@@ -14,7 +14,7 @@ import { typesAdd, typesInstall, typesList } from './commands/types.js';
 import { updateCommand } from './commands/update.js';
 import { queueCommand, workerCommand } from './commands/worker.js';
 import { ConfigError } from './config.js';
-import { onInputEnd } from './events.js';
+import { eventLine, onInputEnd, readStops, type WorkerEvent } from './events.js';
 import { InstallError } from './install/errors.js';
 import { PackError } from './pack.js';
 import { resolvePaths } from './paths.js';
@@ -23,7 +23,7 @@ import { superviseWorker, watchParent } from './supervisor.js';
 
 export const USAGE = usageText([
   'fornax worker pair --server <url> --name <name> [--force]',
-  'fornax worker [--once]',
+  'fornax worker [--once] [--events]',
   'fornax worker queue',
   'fornax queue [--json] [--watch]',
   'fornax queue move <id> (--top | --bottom | --before <id> | --after <id>)',
@@ -154,8 +154,8 @@ export async function runCli(argv: string[], ctx: Ctx): Promise<number> {
     }
     // `worker --child` and its restart exit code 75 are a contract across versions: a supervisor that is still running
     // an older version starts the newly installed program this way after fornax update. Not in USAGE: internal.
-    if (group === 'worker' && sub === undefined && shape(1, 'once', 'child')) {
-      if (!flags.child && ctx.supervise) return await ctx.supervise(flags.once ? ['--once'] : []);
+    if (group === 'worker' && sub === undefined && shape(1, 'once', 'child', 'events')) {
+      if (!flags.child && ctx.supervise) return await ctx.supervise([...(flags.once ? ['--once'] : []), ...(flags.events ? ['--events'] : [])]);
       return await workerCommand(ctx, flags.once === true, { child: flags.child === true });
     }
     if (group === 'worker' && sub === 'queue' && shape(2)) return await queueCommand(ctx);
@@ -272,48 +272,67 @@ function isMainModule(): boolean {
 
 if (isMainModule()) {
   const stop = new AbortController();
+  const argv = process.argv.slice(2);
   // Every line the worker prints goes through these: a hung-up terminal must not crash it (see consoleWriter).
-  const out = consoleWriter(process.stdout);
-  const err = consoleWriter(process.stderr);
+  const stdout = consoleWriter(process.stdout);
+  const stderr = consoleWriter(process.stderr);
+  // Spec 06 3.2: under the tray (`fornax worker --events`) stdout carries JSON lines only and stdin carries "stop".
+  const events = argv[0] === 'worker' && argv.includes('--events');
+  const isChild = argv[0] === 'worker' && argv.includes('--child');
+  const emit = (e: WorkerEvent) => stdout(eventLine(e));
+  const asLog = (line: string) => emit({ event: 'log', line });
+  const out = events ? asLog : (line: string) => stdout(`${line}\n`);
+  const err = events ? asLog : (line: string) => stderr(`${line}\n`);
   // fornax lease says itself what a stop does (it cancels the job or stops its program). SIGHUP and SIGQUIT stop it as
   // SIGTERM does: on Linux the program runs in a session of its own, so a closed terminal or Ctrl+\ reaches the program
   // only this way (the signal itself is passed on).
-  const leasing = process.argv[2] === 'lease' && process.argv[3] !== 'token';
+  const leasing = argv[0] === 'lease' && argv[1] !== 'token';
   const onSignal = makeSignalHandler({
     abort: (signal) => stop.abort(signal),
     killRunning: () => killRunning(2000),
     hasRunning,
     exit: (c) => process.exit(c),
-    say: leasing ? () => {} : (t) => err(`${t}\n`),
+    say: leasing ? () => {} : err,
     cancelGraceMs: leasing ? LEASE_CANCEL_GRACE_MS : undefined,
   });
   let unwire = wireSignals(process, onSignal, leasing ? LEASE_STOP_SIGNALS : STOP_SIGNALS);
+  // The child under the tray: it says which version started, and takes "stop" lines as the signals (first graceful,
+  // second at once); the end of stdin (the supervisor gone) is one stop.
+  if (events && isChild) emit({ event: 'started', version: FORNAX_VERSION, pid: process.pid });
+  const unreadStops = events && isChild ? readStops(process.stdin, () => onSignal('SIGTERM')) : () => {};
   // Spec 06 3.1: `fornax queue --json --watch` (the tray's reader) ends when stdin closes, i.e. when the tray is gone.
-  const argv = process.argv.slice(2);
   const unwatchInput =
     argv[0] === 'queue' && argv.includes('--watch') && argv.includes('--json') ? onInputEnd(process.stdin, () => stop.abort()) : () => {};
   const ctx: Ctx = {
     paths: resolvePaths(),
-    out: (l) => out(`${l}\n`),
-    err: (l) => err(`${l}\n`),
-    write: out,
+    out,
+    err,
+    // A pack's setup output under the tray: one log event per non-empty line.
+    write: events
+      ? (text) => {
+          for (const line of text.split('\n')) if (line.trim()) asLog(line.trimEnd());
+        }
+      : stdout,
     signal: stop.signal,
     // The supervisor handles signals itself (spec 05c 5.1): the stop handler must not abort or hard-quit it.
     supervise: async (args) => {
       unwire();
       unwire = () => {};
-      return superviseWorker({
+      const code = await superviseWorker({
         execPath: process.execPath,
         execArgv: process.execArgv,
         script: realpathSync.native(process.argv[1]!),
         args,
-        out: (l) => err(`${l}\n`),
+        out: err,
+        ...(events ? { events: { input: process.stdin, onRestart: () => emit({ event: 'restarting' }) } } : {}),
       });
+      if (events) emit({ event: 'stopped', code });
+      return code;
     },
   };
   // Linux: the worker child has a process group of its own; a supervisor gone without passing a signal on (SIGKILL)
   // must not leave it claiming jobs where Ctrl+C no longer reaches it. Its parent gone counts as a first stop.
-  const supervised = process.platform !== 'win32' && process.argv[2] === 'worker' && process.argv.slice(3).includes('--child');
+  const supervised = process.platform !== 'win32' && isChild;
   // A stop already passed on (e.g. by the supervisor) must not become a second signal, the hard quit.
   const unwatch = supervised
     ? watchParent({
@@ -322,8 +341,9 @@ if (isMainModule()) {
         },
       })
     : () => {};
-  process.exitCode = await runCli(process.argv.slice(2), ctx);
+  process.exitCode = await runCli(argv, ctx);
   unwatch();
   unwire();
+  unreadStops();
   unwatchInput();
 }
