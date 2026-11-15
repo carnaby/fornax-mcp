@@ -1,6 +1,8 @@
 //! The core of the Fornax tray (spec 06 § 4); `main.rs` wires it to Tauri.
 
 pub mod config;
+pub mod lock;
+pub mod protocol;
 pub mod relaunch;
 
 #[cfg(test)]
