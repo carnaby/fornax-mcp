@@ -120,6 +120,23 @@ describe('fornax update', () => {
     expect(readRestartRequest(paths)).toEqual({ kind: 'none' });
   });
 
+  test('a server without /downloads/fornax-worker.json (older than 0.3.0) is named as such; nothing changes', async () => {
+    const { ctx, paths, run } = await setup(workerZip({ version: '0.4.1' }));
+    ctx.fetch = async () => Response.json({ message: 'Route GET:/downloads/fornax-worker.json not found' }, { status: 404 });
+    const r = await run('update');
+    expect(r.code).toBe(1);
+    expect(r.text).toContain('the server offers no worker bundle (HTTP 404); a server older than 0.3.0 has none');
+    expect(readFileSync(join(paths.appDir, 'VERSION'), 'utf8')).toBe('0.0.1\n');
+  });
+
+  test('another refusal of the bundle info keeps its plain message', async () => {
+    const { ctx, run } = await setup(workerZip({ version: '0.4.1' }));
+    ctx.fetch = async () => new Response('busy', { status: 503 });
+    const r = await run('update');
+    expect(r.code).toBe(1);
+    expect(r.text).toContain('the server has no worker bundle (HTTP 503)');
+  });
+
   test('bytes that do not match the announced checksum change nothing', async () => {
     const { ctx, paths, run } = await setup(workerZip({ version: FORNAX_VERSION }));
     ctx.fetch = async (url, init) => {

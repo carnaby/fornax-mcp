@@ -18,6 +18,8 @@ export async function fetchBundleInfo(server: string, signal?: AbortSignal, time
   } catch (e) {
     throw networkErrorOf(e, s);
   }
+  // Servers before 0.3.0 have no such route; a newer one built without a bundle answers 404 too.
+  if (res.status === 404) throw new InstallError('the server offers no worker bundle (HTTP 404); a server older than 0.3.0 has none');
   if (!res.ok) throw new InstallError(`the server has no worker bundle (HTTP ${res.status})`);
   let text: string;
   try {
