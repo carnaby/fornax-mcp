@@ -91,6 +91,15 @@ function lease(
 }
 
 describe('runLease', () => {
+  test.each(['', '  '])('a blank FORNAX_LEASE (%j, as `FORNAX_LEASE= cmd` passes it) is taken as not set: a lease is asked for', async (blank) => {
+    const s = fakeServer();
+    const l = lease(s, ['--exit', '5'], {}, { env: { ...process.env, FORNAX_LEASE: blank } });
+    await waitFor(() => s.calls.includes('job'), 5000, 'the wait');
+    s.set({ state: 'running', started_at: STARTED, note: null, position: null });
+    expect(await l.run).toBe(5);
+    expect(s.calls[0]).toBe('submit');
+  });
+
   test('queued, then running: the program runs under the lease, its exit code comes back, alive and done name the claim', async () => {
     const s = fakeServer();
     const report = join(tmp(), 'report.json');

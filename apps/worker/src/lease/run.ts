@@ -420,8 +420,9 @@ export async function runLease(req: LeaseRequest, d: LeaseDeps): Promise<number>
     say(problem);
     return LEASE_EXIT.usage;
   }
-  const outer = d.env.FORNAX_LEASE;
-  if (outer !== undefined) return nested(outer);
+  // A blank value (`FORNAX_LEASE= cmd` in bash) is not a lease: taken as not set.
+  const outer = d.env.FORNAX_LEASE?.trim();
+  if (outer) return nested(outer);
 
   let deadline = waitDeadline();
   let view: ClientJobView;
