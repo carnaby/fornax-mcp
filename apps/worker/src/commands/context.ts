@@ -39,6 +39,8 @@ export type Ctx = {
   fetch?: typeof fetch;
   /** Test seam: the renames of fornax update's swap of <data>/app. */
   swapDeps?: SwapDeps;
+  /** Set by the CLI's main block: run `fornax worker` as the supervisor (spec 05c 5.1). Tests leave it unset. */
+  supervise?: (args: string[]) => Promise<number>;
 };
 
 export const apiFor = (ctx: Ctx, server: string, token: string): WorkerApi =>

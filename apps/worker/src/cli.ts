@@ -17,6 +17,7 @@ import { InstallError } from './install/errors.js';
 import { PackError } from './pack.js';
 import { resolvePaths } from './paths.js';
 import { hasRunning, killRunning } from './process.js';
+import { superviseWorker } from './supervisor.js';
 
 export const USAGE = usageText([
   'fornax worker pair --server <url> --name <name> [--force]',
@@ -97,7 +98,10 @@ export async function runCli(argv: string[], ctx: Ctx): Promise<number> {
     if (group === 'worker' && sub === 'pair' && shape(2, 'server', 'name', 'force') && flags.server && flags.name) {
       return await pair(ctx, { server: flags.server, name: flags.name, force: flags.force === true });
     }
-    if (group === 'worker' && sub === undefined && shape(1, 'once', 'child')) return await workerCommand(ctx, flags.once === true, { child: flags.child === true });
+    if (group === 'worker' && sub === undefined && shape(1, 'once', 'child')) {
+      if (!flags.child && ctx.supervise) return await ctx.supervise(flags.once ? ['--once'] : []);
+      return await workerCommand(ctx, flags.once === true, { child: flags.child === true });
+    }
     if (group === 'worker' && sub === 'queue' && shape(2)) return await queueCommand(ctx);
     if (group === 'doctor' && (shape(1) || shape(2))) return await doctor(ctx, sub);
     if (group === 'types' && sub === 'list' && shape(2)) return await typesList(ctx);
@@ -227,8 +231,26 @@ if (isMainModule()) {
     say: leasing ? () => {} : (t) => err(`${t}\n`),
     cancelGraceMs: leasing ? LEASE_CANCEL_GRACE_MS : undefined,
   });
-  const unwire = wireSignals(process, onSignal, leasing ? LEASE_STOP_SIGNALS : STOP_SIGNALS);
-  const ctx: Ctx = { paths: resolvePaths(), out: (l) => out(`${l}\n`), err: (l) => err(`${l}\n`), write: out, signal: stop.signal };
+  let unwire = wireSignals(process, onSignal, leasing ? LEASE_STOP_SIGNALS : STOP_SIGNALS);
+  const ctx: Ctx = {
+    paths: resolvePaths(),
+    out: (l) => out(`${l}\n`),
+    err: (l) => err(`${l}\n`),
+    write: out,
+    signal: stop.signal,
+    // The supervisor handles signals itself (spec 05c 5.1): the stop handler must not abort or hard-quit it.
+    supervise: async (args) => {
+      unwire();
+      unwire = () => {};
+      return superviseWorker({
+        execPath: process.execPath,
+        execArgv: process.execArgv,
+        script: realpathSync.native(process.argv[1]!),
+        args,
+        out: (l) => err(`${l}\n`),
+      });
+    },
+  };
   process.exitCode = await runCli(process.argv.slice(2), ctx);
   unwire();
 }
