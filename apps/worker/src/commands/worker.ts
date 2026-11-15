@@ -18,6 +18,7 @@ export async function workerCommand(ctx: Ctx, once: boolean, opts: { child?: boo
     );
     return 1;
   }
+  ctx.onWorkerStarted?.();
   // A hard quit (second Ctrl+C) exits without unwinding: the lock goes with the process.
   const onExit = () => lock.release();
   process.once('exit', onExit);

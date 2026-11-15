@@ -296,9 +296,8 @@ if (isMainModule()) {
     cancelGraceMs: leasing ? LEASE_CANCEL_GRACE_MS : undefined,
   });
   let unwire = wireSignals(process, onSignal, leasing ? LEASE_STOP_SIGNALS : STOP_SIGNALS);
-  // The child under the tray: it says which version started, and takes "stop" lines as the signals (first graceful,
-  // second at once); the end of stdin (the supervisor gone) is one stop.
-  if (events && isChild) emit({ event: 'started', version: FORNAX_VERSION, pid: process.pid });
+  // The child under the tray takes "stop" lines as the signals (first graceful, second at once); the end of stdin (the
+  // supervisor gone) is one stop.
   const unreadStops = events && isChild ? readStops(process.stdin, () => onSignal('SIGTERM')) : () => {};
   // Spec 06 3.1: `fornax queue --json --watch` (the tray's reader) ends when stdin closes, i.e. when the tray is gone.
   const unwatchInput =
@@ -329,6 +328,9 @@ if (isMainModule()) {
       if (events) emit({ event: 'stopped', code });
       return code;
     },
+    // The child under the tray says which version started once it holds worker.lock: a refused second worker reports
+    // only its log line and stopped 1 (spec 06 3.2).
+    ...(events && isChild ? { onWorkerStarted: () => emit({ event: 'started', version: FORNAX_VERSION, pid: process.pid }) } : {}),
   };
   // Linux: the worker child has a process group of its own; a supervisor gone without passing a signal on (SIGKILL)
   // must not leave it claiming jobs where Ctrl+C no longer reaches it. Its parent gone counts as a first stop.

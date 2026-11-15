@@ -41,6 +41,11 @@ export type Ctx = {
   swapDeps?: SwapDeps;
   /** Set by the CLI's main block: run `fornax worker` as the supervisor (spec 05c 5.1). Tests leave it unset. */
   supervise?: (args: string[]) => Promise<number>;
+  /**
+   * Called once the worker holds `<data>/worker.lock`, before anything else it does. Set by the CLI's main block only
+   * for the child under the tray: its `started` event (spec 06 3.2) must not come from a worker that is refused.
+   */
+  onWorkerStarted?: () => void;
 };
 
 export const apiFor = (ctx: Ctx, server: string, token: string): WorkerApi =>

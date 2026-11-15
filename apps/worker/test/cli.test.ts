@@ -227,6 +227,9 @@ describe('fornax CLI', () => {
   test('a second worker on this PC refuses to start; leftovers of earlier runs are swept at start', async () => {
     const s = await server();
     const { ctx, run } = cli();
+    // Spec 06 3.2: the tray's `started` event hangs on this; a refused worker never started.
+    let started = 0;
+    ctx.onWorkerStarted = () => started++;
     mkdirSync(ctx.paths.configDir, { recursive: true });
     writeFileSync(ctx.paths.configFile, `server: ${s.url}\ntools:\n  node: ${JSON.stringify(process.execPath)}\n`);
     saveToken(ctx.paths, s.issueToken('pc', 'worker'));
@@ -238,6 +241,7 @@ describe('fornax CLI', () => {
       const refused = await run('worker', '--once');
       expect(refused.code).toBe(1);
       expect(refused.text).toContain(`another fornax worker runs on this PC (pid ${other.pid})`);
+      expect(started).toBe(0);
     } finally {
       other.kill();
     }
@@ -245,6 +249,7 @@ describe('fornax CLI', () => {
     mkdirSync(join(ctx.paths.jobsDir, 'OLDJOB', 'out'), { recursive: true });
     const served = await run('worker', '--once');
     expect(served.code).toBe(0);
+    expect(started).toBe(1);
     expect(existsSync(join(ctx.paths.jobsDir, 'OLDJOB'))).toBe(false);
     expect(existsSync(join(ctx.paths.dataDir, 'worker.lock'))).toBe(false);
   });

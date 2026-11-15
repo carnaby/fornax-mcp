@@ -100,6 +100,8 @@ describe('fornax worker --events (spec 06 3.2)', () => {
     const second = start(['worker', '--events'], env);
     expect(await second.exited).toBe(1);
     const events = second.events();
+    // Spec 06 3.2: only the log line and stopped 1; `started` comes only from a child that holds worker.lock.
+    expect(events.filter((e) => e.event === 'started')).toEqual([]);
     expect(events.some((e) => e.event === 'log' && String(e.line).startsWith('another fornax worker runs on this PC'))).toBe(true);
     expect(events.at(-1)).toEqual({ event: 'stopped', code: 1 });
     first.p.stdin.write('stop\n');
