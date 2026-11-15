@@ -70,3 +70,53 @@ export const statusBody = z.strictObject({ waiting: workerWaiting.nullable() });
 
 /** GET /downloads/fornax-worker.json (spec 05c 6): what `fornax update` checks before it downloads the zip. */
 export type WorkerBundleInfo = { version: string; sha256: string; size: number };
+
+/** Spec 06 2.3: where the operator moves a waiting job (exactly one of these). */
+export const moveBody = z.union([
+  z.strictObject({ to: z.enum(['top', 'bottom']) }),
+  z.strictObject({ before: z.string().min(1).max(40) }),
+  z.strictObject({ after: z.string().min(1).max(40) }),
+]);
+export type MoveTarget = z.infer<typeof moveBody>;
+
+/** Spec 06 2.3: PUT /api/worker/pause. */
+export const pauseBody = z.strictObject({ paused: z.boolean() });
+
+/** Spec 06 2.3: one job as the operator sees it (any owner). */
+export type OperatorJob = {
+  id: string;
+  type: string;
+  /** The owner's token name. */
+  owner: string | null;
+  state: 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled';
+  /** params.label when it is a string (fornax lease --label), else null. */
+  label: string | null;
+  group: string | null;
+  priority: 'low' | 'normal' | 'high';
+  /** Input name → the uploaded file's name (null when the file is gone). */
+  inputs: Record<string, string | null>;
+  attempts: number;
+  type_unavailable: boolean;
+  /** A waiting job's next attempt time while it is still ahead, else null. */
+  run_after: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  progress: number | null;
+  progress_message: string | null;
+  error: string | null;
+  /** The signed result page. */
+  result_url: string;
+};
+
+/** Spec 06 2.3: GET /api/worker/jobs. */
+export type OperatorQueue = {
+  server_time: string;
+  /** 16 hex digits; changes exactly when something the operator sees changes (not time, last_seen or result links). */
+  change: string;
+  paused: boolean;
+  worker: { online: boolean; last_seen: string | null; version: string | null; waiting: { reason: string; message: string } | null };
+  running: OperatorJob | null;
+  queued: OperatorJob[];
+  finished: OperatorJob[];
+};

@@ -93,12 +93,22 @@ export function getOwnJob(db: Db, owner: string, id: string): JobRow {
 }
 
 /** Queued: canceled at once. Running: canceled now; the worker learns it at its next heartbeat and stops the process. */
-export function cancelJob(db: Db, owner: string, id: string, now: Date): JobRow {
-  const job = getOwnJob(db, owner, id);
+function cancelRow(db: Db, job: JobRow, now: Date): JobRow {
   if (job.state !== 'queued' && job.state !== 'running') throw conflict(`the job already ${job.state === 'succeeded' ? 'succeeded' : job.state}`);
   const row = finishJob(db, job, { state: 'canceled' }, now);
   if (!row) throw conflict('the job changed meanwhile; get its state again');
   return row;
+}
+
+export function cancelJob(db: Db, owner: string, id: string, now: Date): JobRow {
+  return cancelRow(db, getOwnJob(db, owner, id), now);
+}
+
+/** Spec 06 2.3: the operator cancels a job of any owner, the same way. */
+export function cancelAnyJob(db: Db, id: string, now: Date): JobRow {
+  const job = db.select().from(jobs).where(eq(jobs.id, id)).get();
+  if (!job) throw notFound(`job ${id} not found`);
+  return cancelRow(db, job, now);
 }
 
 /** 1-based place in the queue among jobs of offered types; null when not waiting or its type is withdrawn. */

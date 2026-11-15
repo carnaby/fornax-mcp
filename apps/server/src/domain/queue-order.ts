@@ -1,11 +1,11 @@
+import type { MoveTarget } from '@fornax/protocol';
 import { and, asc, desc, eq, isNotNull, isNull } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { type JobState, jobs } from '../db/schema.js';
 import { badRequest, conflict, notFound } from './errors.js';
 import { jobChanges } from './signal.js';
 
-/** Spec 06 2.3: where the operator moves a waiting job. */
-export type MoveTarget = { to: 'top' | 'bottom' } | { before: string } | { after: string };
+export type { MoveTarget };
 
 /** The waiting jobs with a place, in queue order. */
 function waiting(db: Db): { id: string; priority: number }[] {
