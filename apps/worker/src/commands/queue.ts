@@ -1,5 +1,6 @@
+import { setTimeout as sleep } from 'node:timers/promises';
 import type { MoveTarget, OperatorJob, OperatorQueue } from '@fornax/protocol';
-import { WorkerApi } from '../api.js';
+import { ApiError, NetworkError, WorkerApi } from '../api.js';
 import { ConfigError, readToken, readWorkerConfig, serverWarning } from '../config.js';
 import type { Ctx } from './context.js';
 
@@ -104,5 +105,62 @@ export async function queueCancel(ctx: Ctx, id: string): Promise<number> {
 export async function queuePause(ctx: Ctx, paused: boolean): Promise<number> {
   const q = await connectOperator(ctx).api.setPaused(paused);
   ctx.out(paused ? (q.running ? 'the queue is paused: the running job finishes, no other job starts' : 'the queue is paused: no job starts') : 'the queue runs again');
+  return 0;
+}
+
+/** Spec 06 3.1: pauses after failed reads; after 401/403 (a token that may get fixed) a longer one. */
+export const WATCH_RETRY_MS = [1000, 2000, 5000, 10_000];
+export const WATCH_AUTH_RETRY_MS = 60_000;
+/** The long-poll of each read. */
+export const WATCH_WAIT_S = 25;
+
+export function watchErrorKind(e: unknown): 'network' | 'auth' | 'server' | null {
+  if (e instanceof NetworkError) return 'network';
+  if (e instanceof ApiError) return e.status === 401 || e.status === 403 ? 'auth' : 'server';
+  return null;
+}
+
+/**
+ * `fornax queue --watch [--json]`: the queue, then the queue again after every change, until the stop signal. A read
+ * that fails prints an error (with --json a line `{"ok":false,"error","message"}`) and is tried again; the next good
+ * read prints the queue even when it did not change. Each read has its own time limit, so a connection that died
+ * without an error does not hang the watch.
+ */
+export async function queueWatch(
+  ctx: Ctx,
+  o: { json: boolean; retryMs?: number[]; authRetryMs?: number; waitS?: number; requestTimeoutMs?: number },
+): Promise<number> {
+  const { api, say } = connectOperator(ctx);
+  const retry = o.retryMs ?? WATCH_RETRY_MS;
+  const waitS = o.waitS ?? WATCH_WAIT_S;
+  const limitMs = o.requestTimeoutMs ?? (waitS + 15) * 1000;
+  let change: string | undefined;
+  let failures = 0;
+  while (!ctx.signal.aborted) {
+    try {
+      const signal = AbortSignal.any([ctx.signal, AbortSignal.timeout(limitMs)]);
+      const q = await api.operatorQueue({ wait: change === undefined ? 0 : waitS, change, signal });
+      failures = 0;
+      if (q.change === change) continue;
+      change = q.change;
+      if (o.json) {
+        ctx.out(jsonLine(q));
+      } else {
+        ctx.out('');
+        for (const line of renderQueue(q)) ctx.out(line);
+      }
+    } catch (e) {
+      if (ctx.signal.aborted) break;
+      const error = watchErrorKind(e);
+      if (!error) throw e;
+      const message = (e as Error).message;
+      if (o.json) ctx.out(JSON.stringify({ ok: false, error, message }));
+      else say(`cannot read the queue (${message}); trying again`);
+      const delay = error === 'auth' ? (o.authRetryMs ?? WATCH_AUTH_RETRY_MS) : retry[Math.min(failures, retry.length - 1)]!;
+      failures++;
+      change = undefined;
+      await sleep(delay, undefined, { signal: ctx.signal }).catch(() => undefined);
+    }
+  }
   return 0;
 }

@@ -9,11 +9,12 @@ import { doctor } from './commands/doctor.js';
 import { installCommand } from './commands/install.js';
 import { LEASE_FORMS, leaseCommand, usageText } from './commands/lease.js';
 import { pair } from './commands/pair.js';
-import { queueCancel, queueMove, queuePause, queueShow } from './commands/queue.js';
+import { queueCancel, queueMove, queuePause, queueShow, queueWatch } from './commands/queue.js';
 import { typesAdd, typesInstall, typesList } from './commands/types.js';
 import { updateCommand } from './commands/update.js';
 import { queueCommand, workerCommand } from './commands/worker.js';
 import { ConfigError } from './config.js';
+import { onInputEnd } from './events.js';
 import { InstallError } from './install/errors.js';
 import { PackError } from './pack.js';
 import { resolvePaths } from './paths.js';
@@ -132,7 +133,9 @@ export async function runCli(argv: string[], ctx: Ctx): Promise<number> {
   const [group, sub, arg] = words;
   if (group === 'queue') {
     try {
-      if (sub === undefined && shape(1, 'json', 'watch') && !flags.watch) return await queueShow(ctx, { json: flags.json === true });
+      if (sub === undefined && shape(1, 'json', 'watch')) {
+        return flags.watch ? await queueWatch(ctx, { json: flags.json === true }) : await queueShow(ctx, { json: flags.json === true });
+      }
       const target = moveTargetOf(flags);
       if (sub === 'move' && arg !== undefined && target && shape(3, 'top', 'bottom', 'before', 'after')) return await queueMove(ctx, arg, target);
       if (sub === 'cancel' && arg !== undefined && shape(3)) return await queueCancel(ctx, arg);
@@ -285,6 +288,10 @@ if (isMainModule()) {
     cancelGraceMs: leasing ? LEASE_CANCEL_GRACE_MS : undefined,
   });
   let unwire = wireSignals(process, onSignal, leasing ? LEASE_STOP_SIGNALS : STOP_SIGNALS);
+  // Spec 06 3.1: `fornax queue --json --watch` (the tray's reader) ends when stdin closes, i.e. when the tray is gone.
+  const argv = process.argv.slice(2);
+  const unwatchInput =
+    argv[0] === 'queue' && argv.includes('--watch') && argv.includes('--json') ? onInputEnd(process.stdin, () => stop.abort()) : () => {};
   const ctx: Ctx = {
     paths: resolvePaths(),
     out: (l) => out(`${l}\n`),
@@ -318,4 +325,5 @@ if (isMainModule()) {
   process.exitCode = await runCli(process.argv.slice(2), ctx);
   unwatch();
   unwire();
+  unwatchInput();
 }

@@ -1,12 +1,15 @@
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import type { OperatorQueue } from '@fornax/protocol';
 import { startTestServer, type TestServer } from '@fornax/server/testing';
 import { afterEach, describe, expect, test } from 'vitest';
+import { WorkerApi } from '../src/api.js';
 import { runCli } from '../src/cli.js';
 import type { Ctx } from '../src/commands/context.js';
-import { duration, renderQueue } from '../src/commands/queue.js';
+import { duration, queueWatch, renderQueue } from '../src/commands/queue.js';
 import { saveServer, saveToken } from '../src/config.js';
 import { loadPack } from '../src/pack.js';
-import { clientOf, testPaths, useTempDir, writeEchoPack } from './helpers.js';
+import { clientOf, testPaths, useTempDir, waitFor, writeEchoPack } from './helpers.js';
 
 const tmp = useTempDir();
 const servers: TestServer[] = [];
@@ -130,3 +133,54 @@ describe('fornax queue (spec 06 3.1)', () => {
     expect(await runCli(['queue', 'pause', '--top'], ctx)).toBe(2);
   });
 });
+
+describe('fornax queue --watch (spec 06 3.1)', () => {
+  test('prints the queue, then each change; ends with the stop signal', async () => {
+    const { ctx, out, client } = await setup();
+    const stop = new AbortController();
+    const watching = queueWatch({ ...ctx, signal: stop.signal }, { json: true, waitS: 5 });
+    await waitForLines(out, 1);
+    expect(JSON.parse(out[0]!)).toMatchObject({ ok: true, queued: [] });
+    const a = await client.submit('echo', { mode: 'ok' });
+    await waitForLines(out, 2);
+    expect(JSON.parse(out[1]!)).toMatchObject({ ok: true, queued: [{ id: a.id }] });
+    stop.abort();
+    expect(await watching).toBe(0);
+  });
+
+  test('an unreachable server: an error line, then the queue once it answers again', async () => {
+    const { s, ctx, out } = await setup();
+    const port = Number(new URL(s.url).port);
+    await s.close();
+    servers.splice(0);
+    const stop = new AbortController();
+    const watching = queueWatch({ ...ctx, signal: stop.signal }, { json: true, waitS: 1, retryMs: [50] });
+    await waitForLines(out, 1);
+    expect(JSON.parse(out[0]!)).toMatchObject({ ok: false, error: 'network' });
+    const again = await startTestServer({ port });
+    servers.push(again);
+    // The new server does not know the old worker token: 401 is an "auth" line.
+    await waitFor(() => out.some((l) => JSON.parse(l).error === 'auth'));
+    stop.abort();
+    expect(await watching).toBe(0);
+  });
+
+  test('a server that never answers counts as unreachable and is asked again', async () => {
+    const { ctx, out } = await setup();
+    const hanging = createServer(() => {});
+    await new Promise<void>((r) => hanging.listen(0, '127.0.0.1', r));
+    const url = `http://127.0.0.1:${(hanging.address() as AddressInfo).port}`;
+    const stop = new AbortController();
+    const watching = queueWatch({ ...ctx, signal: stop.signal, makeApi: (_s, token) => new WorkerApi({ server: url, token }) }, { json: true, waitS: 0, retryMs: [50], requestTimeoutMs: 300 });
+    await waitForLines(out, 1, 5000);
+    expect(JSON.parse(out[0]!)).toMatchObject({ ok: false, error: 'network', message: 'the server did not answer in time' });
+    stop.abort();
+    expect(await watching).toBe(0);
+    hanging.closeAllConnections();
+    hanging.close();
+  });
+});
+
+async function waitForLines(lines: string[], n: number, ms = 10_000): Promise<void> {
+  await waitFor(() => lines.length >= n, ms, `${n} lines`);
+}

@@ -193,6 +193,8 @@ running job with its time and progress, the waiting jobs in the order they will 
 - `fornax queue cancel <id>` cancels a job of any client.
 - `fornax queue pause` lets the running job finish and starts no other; `fornax queue resume` goes on.
 - `fornax queue --json` prints the same as one line of JSON (`"ok": true` and the fields of `GET /api/worker/jobs`).
+- `fornax queue --watch` prints the queue again after every change (with `--json`, one line each; with `--json` it
+  also ends when its standard input closes, which is how a program that reads it stops it).
 
 ### Updating
 
