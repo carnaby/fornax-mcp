@@ -54,7 +54,32 @@ describe('built-in type packs', () => {
     expect(expandArgv(pack.impl.check!, { pack: '/p', tools: {}, node: '/n', platform: 'linux' })).toEqual(['/n', '/p/scripts/check.mjs']);
   });
 
+  test('upscale: contract, tools and commands', () => {
+    const pack = loadPack(shippedPack('upscale')!);
+    expect(pack.contract).toMatchObject({ name: 'upscale', version: 1, max_runtime_s: 3 * 3600 });
+    expect(Object.keys(pack.contract.inputs)).toEqual(['video']);
+    expect(pack.contract.inputs.video).toMatchObject({ extensions: ['.mp4', '.mov'], max_mb: 1024 });
+    expect(Object.keys(pack.contract.params.properties).sort()).toEqual(['audio', 'batch', 'overlap', 'resolution']);
+    expect(pack.contract.params.properties.resolution).toMatchObject({ enum: [1080, 1440], default: 1080 });
+    expect(pack.contract.params.properties.batch).toMatchObject({ enum: [9, 13, 17, 21, 25, 29] });
+    expect(pack.contract.params.properties.batch).not.toHaveProperty('default');
+    expect(pack.contract.params.properties.overlap).toMatchObject({ type: 'integer', minimum: 0, maximum: 28, default: 3 });
+    expect(pack.contract.params.properties.audio).toMatchObject({ type: 'boolean', default: false });
+    expect(pack.contract.description).toMatch(/BT\.601/);
+    expect(pack.impl.tools).toEqual(['python', 'ffmpeg', 'ffprobe']);
+    const tools = { python: 'py', ffmpeg: 'ff', ffprobe: 'fp' };
+    const upscaleJob = { ...job, inputs: { video: '/w/in/video.mp4' } };
+    expect(expandArgv(pack.impl.run, { pack: '/p', tools, job: upscaleJob, platform: 'linux' })).toEqual([
+      '/p/env/bin/python', '/p/scripts/run.py', '--params', '/w/work/params.json', '--video', '/w/in/video.mp4',
+      '--ffmpeg', 'ff', '--ffprobe', 'fp', '--out', '/w/out', '--work', '/w/work',
+    ]);
+    expect(expandArgv(pack.impl.setup!, { pack: '/p', tools, platform: 'linux' })).toEqual(['py', '/p/scripts/setup.py']);
+    expect(expandArgv(pack.impl.check!, { pack: '/p', tools, platform: 'linux' })).toEqual([
+      '/p/env/bin/python', '/p/scripts/check.py', '--ffmpeg', 'ff', '--ffprobe', 'fp',
+    ]);
+  });
+
   test('the prompt for a new type gets every built-in pack as an example', () => {
-    expect(shippedExamples().map((e) => e.name)).toEqual(['lease', 'render', 'transcribe']);
+    expect(shippedExamples().map((e) => e.name)).toEqual(['lease', 'render', 'transcribe', 'upscale']);
   });
 });

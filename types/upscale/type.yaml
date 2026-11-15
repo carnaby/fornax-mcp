@@ -1,0 +1,22 @@
+name: upscale
+version: 1
+description: >-
+  Upscale a short video clip with SeedVR2 (a diffusion video upscaler) on the GPU: the same frames, frame rate and
+  colours at 1080p or 1440p, without sound unless audio is true. Takes only clips with BT.601 colour (smpte170m or
+  bt470bg). About 2 minutes per second of video at 1080p; needs a 16 GB card.
+inputs:
+  video: { extensions: [.mp4, .mov], max_mb: 1024 }
+params:
+  type: object
+  additionalProperties: false
+  properties:
+    resolution: { enum: [1080, 1440], default: 1080, description: The short side of the result. }
+    batch:      { enum: [9, 13, 17, 21, 25, 29], description: "Frames the model sees at once (4n+1); 21 at 1080, 13 at 1440 when left out. Smaller needs less memory and holds together worse over time." }
+    overlap:    { type: integer, minimum: 0, maximum: 28, default: 3, description: Frames two neighbouring batches share; must be smaller than the batch. }
+    audio:      { type: boolean, default: false, description: Keep the source's sound track. }
+max_runtime: 3h
+tools: [python, ffmpeg, ffprobe]
+setup: ["{tool.python}", "{pack}/scripts/setup.py"]
+check: ["{python}", "{pack}/scripts/check.py", "--ffmpeg", "{tool.ffmpeg}", "--ffprobe", "{tool.ffprobe}"]
+run: ["{python}", "{pack}/scripts/run.py", "--params", "{params_json}", "--video", "{input.video}",
+      "--ffmpeg", "{tool.ffmpeg}", "--ffprobe", "{tool.ffprobe}", "--out", "{out}", "--work", "{work}"]
