@@ -5,6 +5,7 @@ pub mod lock;
 pub mod process;
 pub mod protocol;
 pub mod relaunch;
+pub mod state;
 
 #[cfg(test)]
 mod conf_tests {
