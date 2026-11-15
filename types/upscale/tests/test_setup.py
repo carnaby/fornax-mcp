@@ -108,6 +108,28 @@ class BootstrapTest(unittest.TestCase):
         self.assertTrue(setup.bootstrap_ok(self.venv("--without-pip", "--system-site-packages")))
 
 
+class PythonInstallTest(unittest.TestCase):
+    def test_nothing_outside_the_pack_and_no_registry_flag_off_windows(self):
+        calls = []
+
+        class Stop(Exception):
+            pass
+
+        def step(cmd, what, env=None):
+            calls.append([str(c) for c in cmd])
+            raise Stop()
+
+        saved = setup.step
+        setup.step = step
+        try:
+            with self.assertRaises(Stop):
+                setup.ensure_python(Path("uv"))
+        finally:
+            setup.step = saved
+        self.assertIn("--no-bin", calls[0])
+        self.assertEqual("--no-registry" in calls[0], os.name == "nt")
+
+
 class MainTest(unittest.TestCase):
     def test_a_broken_off_download_ends_in_one_sentence(self):
         tmp = tempfile.TemporaryDirectory()

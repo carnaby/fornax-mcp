@@ -204,8 +204,10 @@ def ensure_uv():
 
 
 def ensure_python(uv):
-    # --no-bin: no python3.13 in ~/.local/bin; --no-registry: no PEP 514 entry under HKCU. Nothing outside the pack.
-    step([uv, "python", "install", PYTHON_VERSION, "--no-bin", "--no-registry"], f"installing CPython {PYTHON_VERSION} into {PYTHON_DIR}", env=uv_env())
+    # --no-bin: no python3.13 in ~/.local/bin; --no-registry (Windows only): no PEP 514 entry under HKCU. Nothing
+    # outside the pack.
+    flags = ["--no-bin", "--no-registry"] if os.name == "nt" else ["--no-bin"]
+    step([uv, "python", "install", PYTHON_VERSION, *flags], f"installing CPython {PYTHON_VERSION} into {PYTHON_DIR}", env=uv_env())
     r = subprocess.run([str(uv), "python", "find", "--managed-python", PYTHON_VERSION], env=uv_env(), capture_output=True, text=True)
     if r.returncode != 0 or not r.stdout.strip():
         raise SetupError(f"uv does not find the CPython {PYTHON_VERSION} it installed: {r.stderr.strip()}")
