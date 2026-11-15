@@ -337,10 +337,10 @@ paused.
 
 1. Install `fornax` 0.5.0 or newer and pair this PC (see [Run the worker](#run-the-worker)); the tray runs the
    installed `fornax.mjs` with Node.js 22 or newer.
-2. Download the installer from the GitHub release: `Fornax tray_<version>_x64_en-US.msi` on Windows (it is not
-   signed: SmartScreen asks, choose More info, Run anyway), the `.deb` or the `.AppImage` on Ubuntu (they need
-   `libwebkit2gtk-4.1-0` and `libayatana-appindicator3-1`; GNOME shows tray icons with the AppIndicator extension,
-   which Ubuntu enables).
+2. Download the installer from the GitHub release: the `.msi` on Windows (it is not signed: SmartScreen asks, choose
+   More info, Run anyway), the `.deb` or the `.AppImage` on Ubuntu (they need `libwebkit2gtk-4.1-0` and
+   `libayatana-appindicator3-1`, the `.AppImage` also `libfuse2`, on Ubuntu 24.04 `libfuse2t64`; GNOME shows tray
+   icons with the AppIndicator extension, which Ubuntu enables).
 3. Start it once and tick Start at sign-in in its menu. At sign-in it starts without its window and starts the
    worker. A worker you started yourself in a terminal shows as "Worker runs outside the tray"; stop it there if the
    tray should own it.

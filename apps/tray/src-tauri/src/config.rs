@@ -106,7 +106,7 @@ pub fn load(paths: &Paths) -> Result<TrayConfig, String> {
     Ok(TrayConfig { node: node.unwrap_or_else(|| PathBuf::from("node")), cli: paths.cli(), start_worker: parsed.start_worker.unwrap_or(true), file })
 }
 
-/// The menu's "Start the worker with the tray": writes `start_worker`, keeps every other key; a broken file is left
+/// The menu's "Start worker with the tray": writes `start_worker`, keeps every other key; a broken file is left
 /// as it is.
 pub fn save_start_worker(paths: &Paths, on: bool) -> Result<(), String> {
     let file = paths.tray_json();
