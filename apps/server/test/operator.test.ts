@@ -13,17 +13,18 @@ import { announce, issueToken, tokenIdOf, uploadFile, useTestApp } from './helpe
 
 const t = useTestApp();
 const labelled = { ...leaseContract, params: { ...leaseContract.params, properties: { ...leaseContract.params.properties, label: { type: 'string', maxLength: 40 } } } };
-const urlOf = (job: JobRow) => `https://fornax.example.com/r/${job.id}-${Date.now()}`;
+let calls = 0;
+const urlOf = (job: JobRow) => `https://fornax.example.com/r/${job.id}-${++calls}`;
 const view = () => operatorQueue(t.db, t.clock.now, urlOf);
 
 beforeEach(() => {
   announce(t.db, [renderContract, labelled], t.clock.now);
   issueToken(t.db, 'alice');
-  issueToken(t.db, 'leasepc');
+  issueToken(t.db, 'bob');
 });
 
 /** A render job of a second token of `owner` (named `<owner>2`): an input file can only be used by its uploader. */
-async function render(owner: 'alice' | 'leasepc' = 'alice'): Promise<JobRow> {
+async function render(owner: 'alice' | 'bob' = 'alice'): Promise<JobRow> {
   const raw = issueToken(t.db, `${owner}2`);
   const scene = await uploadFile(t.app, raw, 'scene.blend', 'B');
   const row = submitJob(t.db, t.config, tokenIdOf(t.db, `${owner}2`), { type: 'render', params: { frame_start: 1 }, inputs: { scene } }, t.clock.now);
@@ -31,7 +32,7 @@ async function render(owner: 'alice' | 'leasepc' = 'alice'): Promise<JobRow> {
   return row;
 }
 function lease(label: string): JobRow {
-  const row = submitJob(t.db, t.config, tokenIdOf(t.db, 'leasepc'), { type: 'lease', params: { minutes: 5, label }, inputs: {} }, t.clock.now);
+  const row = submitJob(t.db, t.config, tokenIdOf(t.db, 'bob'), { type: 'lease', params: { minutes: 5, label }, inputs: {} }, t.clock.now);
   t.clock.advance(1);
   return row;
 }
@@ -55,7 +56,7 @@ describe('operatorQueue (spec 06 2.3)', () => {
       result_url: expect.stringContaining(`/r/${r.id}-`),
     });
     expect(q.queued.map((j) => j.id)).toEqual([l.id]);
-    expect(q.queued[0]).toMatchObject({ owner: 'leasepc', label: 'chrome', inputs: {}, type_unavailable: false, run_after: null });
+    expect(q.queued[0]).toMatchObject({ owner: 'bob', label: 'chrome', inputs: {}, type_unavailable: false, run_after: null });
   });
 
   test('a waiting job after a failed attempt shows its retry time', async () => {
@@ -132,7 +133,7 @@ describe('cancelAnyJob', () => {
   });
 
   test('a running job is canceled at once (the worker learns it at its next heartbeat)', async () => {
-    const r = await render('leasepc');
+    const r = await render('bob');
     claimJob(t.db, t.clock.now);
     expect(cancelAnyJob(t.db, r.id, t.clock.now).state).toBe('canceled');
     expect(t.db.select().from(jobs).where(eq(jobs.id, r.id)).get()?.state).toBe('canceled');
