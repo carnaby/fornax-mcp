@@ -5,7 +5,7 @@ import { hostname } from 'node:os';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { ReadableStream as WebReadableStream } from 'node:stream/web';
-import { type ClaimedJob, claimedJob, type JobTypeContract, type OutputsJson, type ReleaseReason, WORKER_HEADERS, type WorkerWaiting } from '@fornax/protocol';
+import { type ClaimedJob, claimedJob, type JobTypeContract, type MoveTarget, type OperatorQueue, type OutputsJson, type ReleaseReason, WORKER_HEADERS, type WorkerWaiting } from '@fornax/protocol';
 import { WORKER_VERSION } from './version.js';
 
 /** The server answered with an error status. */
@@ -163,6 +163,27 @@ export class WorkerApi {
 
   async queue(): Promise<WorkerQueue> {
     return (await (await this.request('GET', '/queue')).json()) as WorkerQueue;
+  }
+
+  /** Spec 06 2.3: the whole queue for the operator; with `change` and `wait` the server answers when it changes. */
+  async operatorQueue(o: { wait?: number; change?: string; signal?: AbortSignal } = {}): Promise<OperatorQueue> {
+    const q = new URLSearchParams();
+    if (o.wait) q.set('wait', String(o.wait));
+    if (o.change) q.set('change', o.change);
+    const query = q.toString();
+    return (await (await this.request('GET', `/jobs${query ? `?${query}` : ''}`, { signal: o.signal })).json()) as OperatorQueue;
+  }
+
+  async moveJob(id: string, target: MoveTarget): Promise<OperatorQueue> {
+    return (await (await this.request('POST', `/jobs/${enc(id)}/move`, { json: target })).json()) as OperatorQueue;
+  }
+
+  async cancelAnyJob(id: string): Promise<OperatorQueue> {
+    return (await (await this.request('POST', `/jobs/${enc(id)}/cancel`)).json()) as OperatorQueue;
+  }
+
+  async setPaused(paused: boolean): Promise<OperatorQueue> {
+    return (await (await this.request('PUT', '/pause', { json: { paused } })).json()) as OperatorQueue;
   }
 
   /** Stream an input to `dest`; size and SHA-256 must match the claim, else the file is removed. */

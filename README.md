@@ -184,6 +184,16 @@ On the PC with the GPU (Windows or Linux, Node.js 22 or newer):
    that are self-contained (File > External Data > Pack Resources).
 5. Start it: `fornax worker`. Ctrl+C gives the running job back; a second Ctrl+C kills the tool.
 
+### Watching and ordering the queue
+
+On the worker's PC (it uses the worker's token) `fornax queue` shows the whole queue: whether it is paused, the
+running job with its time and progress, the waiting jobs in the order they will run, the last finished ones.
+
+- `fornax queue move <id> --top` (or `--bottom`, `--before <id>`, `--after <id>`) changes the order of waiting jobs.
+- `fornax queue cancel <id>` cancels a job of any client.
+- `fornax queue pause` lets the running job finish and starts no other; `fornax queue resume` goes on.
+- `fornax queue --json` prints the same as one line of JSON (`"ok": true` and the fields of `GET /api/worker/jobs`).
+
 ### Updating
 
 `fornax update` installs the version your server offers (`fornax doctor` and the worker say when it differs). It

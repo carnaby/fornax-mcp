@@ -2,13 +2,14 @@
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { FORNAX_VERSION } from '@fornax/protocol';
+import { FORNAX_VERSION, type MoveTarget } from '@fornax/protocol';
 import { ApiError, NetworkError } from './api.js';
 import type { Ctx } from './commands/context.js';
 import { doctor } from './commands/doctor.js';
 import { installCommand } from './commands/install.js';
 import { LEASE_FORMS, leaseCommand, usageText } from './commands/lease.js';
 import { pair } from './commands/pair.js';
+import { queueCancel, queueMove, queuePause, queueShow } from './commands/queue.js';
 import { typesAdd, typesInstall, typesList } from './commands/types.js';
 import { updateCommand } from './commands/update.js';
 import { queueCommand, workerCommand } from './commands/worker.js';
@@ -23,6 +24,10 @@ export const USAGE = usageText([
   'fornax worker pair --server <url> --name <name> [--force]',
   'fornax worker [--once]',
   'fornax worker queue',
+  'fornax queue [--json] [--watch]',
+  'fornax queue move <id> (--top | --bottom | --before <id> | --after <id>)',
+  'fornax queue cancel <id>',
+  'fornax queue pause | resume',
   'fornax doctor [type]',
   'fornax types list',
   'fornax types install <name> [--from <dir>]',
@@ -33,7 +38,23 @@ export const USAGE = usageText([
   'fornax --version',
 ]);
 
-type Flags = { server?: string; name?: string; force?: boolean; from?: string; once?: boolean; child?: boolean; help?: boolean; version?: boolean };
+type Flags = {
+  server?: string;
+  name?: string;
+  force?: boolean;
+  from?: string;
+  once?: boolean;
+  child?: boolean;
+  help?: boolean;
+  version?: boolean;
+  json?: boolean;
+  watch?: boolean;
+  top?: boolean;
+  bottom?: boolean;
+  before?: string;
+  after?: string;
+  events?: boolean;
+};
 
 /** How a command's error ends: our own errors with their message, anything else only with its class (it may hold paths or tool output). */
 export function reportError(e: unknown, say: (line: string) => void): number {
@@ -44,6 +65,16 @@ export function reportError(e: unknown, say: (line: string) => void): number {
   const code = (e as NodeJS.ErrnoException).code;
   say(`unexpected error: ${e instanceof Error ? e.constructor.name : typeof e}${typeof code === 'string' ? ` (${code})` : ''}`);
   return 1;
+}
+
+/** Exactly one of --top, --bottom, --before <id>, --after <id>; null otherwise (a usage error). */
+function moveTargetOf(flags: Flags): MoveTarget | null {
+  const given: MoveTarget[] = [];
+  if (flags.top) given.push({ to: 'top' });
+  if (flags.bottom) given.push({ to: 'bottom' });
+  if (flags.before !== undefined) given.push({ before: flags.before });
+  if (flags.after !== undefined) given.push({ after: flags.after });
+  return given.length === 1 ? given[0]! : null;
 }
 
 /** Parse and dispatch. 0 done, 1 failed (the message says why), 2 usage; fornax lease has exit codes of its own. */
@@ -72,6 +103,13 @@ export async function runCli(argv: string[], ctx: Ctx): Promise<number> {
         child: { type: 'boolean' },
         help: { type: 'boolean', short: 'h' },
         version: { type: 'boolean', short: 'v' },
+        json: { type: 'boolean' },
+        watch: { type: 'boolean' },
+        top: { type: 'boolean' },
+        bottom: { type: 'boolean' },
+        before: { type: 'string' },
+        after: { type: 'string' },
+        events: { type: 'boolean' },
       },
     });
     flags = parsed.values;
@@ -92,6 +130,19 @@ export async function runCli(argv: string[], ctx: Ctx): Promise<number> {
   /** Exactly `n` words, and no flag the command does not take (a typo must not silently change the meaning). */
   const shape = (n: number, ...allowed: (keyof Flags)[]) => words.length === n && Object.keys(flags).every((k) => allowed.includes(k as keyof Flags));
   const [group, sub, arg] = words;
+  if (group === 'queue') {
+    try {
+      if (sub === undefined && shape(1, 'json', 'watch') && !flags.watch) return await queueShow(ctx, { json: flags.json === true });
+      const target = moveTargetOf(flags);
+      if (sub === 'move' && arg !== undefined && target && shape(3, 'top', 'bottom', 'before', 'after')) return await queueMove(ctx, arg, target);
+      if (sub === 'cancel' && arg !== undefined && shape(3)) return await queueCancel(ctx, arg);
+      if ((sub === 'pause' || sub === 'resume') && shape(2)) return await queuePause(ctx, sub === 'pause');
+    } catch (e) {
+      return reportError(e, ctx.err ?? ctx.out);
+    }
+    ctx.out(USAGE);
+    return 2;
+  }
   try {
     if (group === 'install' && shape(1)) return await installCommand(ctx);
     if (group === 'update' && shape(1, 'force', 'server')) return await updateCommand(ctx, { force: flags.force === true, server: flags.server });
