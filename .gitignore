@@ -12,3 +12,5 @@ docs/
 # Python caches and the environments a type pack's setup creates.
 __pycache__/
 types/*/env/
+# The tray's installers CI puts into the server image (spec 06d 2.2).
+tray-installers/

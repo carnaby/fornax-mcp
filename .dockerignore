@@ -10,3 +10,5 @@ docs
 types/*/env
 .env
 .env.*
+tray-installers/**/*.AppImage
+apps/tray/src-tauri/target
