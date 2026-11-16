@@ -10,6 +10,56 @@ pub mod state;
 pub mod tray;
 pub mod update;
 
+/// A folder for one test, removed when it is dropped (also when the test fails), so the tests leave nothing in the
+/// system's temp folder.
+#[cfg(test)]
+pub mod test_dir {
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    pub struct TempDir(PathBuf);
+
+    impl TempDir {
+        /// A fresh, empty folder named `<prefix> <pid>-<n>`; the prefixes have a space and a diacritic on purpose.
+        pub fn new(prefix: &str) -> Self {
+            static NEXT: AtomicUsize = AtomicUsize::new(0);
+            let dir = std::env::temp_dir().join(format!("{prefix} {}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::SeqCst)));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            Self(dir)
+        }
+    }
+
+    impl std::ops::Deref for TempDir {
+        type Target = Path;
+        fn deref(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl AsRef<Path> for TempDir {
+        fn as_ref(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn the_folder_is_removed_when_dropped() {
+        let dir = TempDir::new("fornax tray test-dir é");
+        std::fs::write(dir.join("a"), "x").unwrap();
+        let path = dir.to_path_buf();
+        assert!(path.join("a").exists());
+        drop(dir);
+        assert!(!path.exists());
+    }
+}
+
 #[cfg(test)]
 mod conf_tests {
     /// Spec 06 4.2 (Review Focus 5): Tauri's own file drop would take the window's drag events on Windows, and the

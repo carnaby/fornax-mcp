@@ -52,31 +52,28 @@ pub fn alive(pid: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::PathBuf;
     use std::process::Command;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{Duration, SystemTime};
 
     use super::*;
+    use crate::test_dir::TempDir;
 
-    fn temp() -> PathBuf {
-        static NEXT: AtomicUsize = AtomicUsize::new(0);
-        let dir = std::env::temp_dir().join(format!("fornax tray lock é {}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::SeqCst)));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        dir
+    fn temp() -> TempDir {
+        TempDir::new("fornax tray lock é")
     }
 
     #[test]
     fn a_fresh_lock_of_a_live_process_is_held() {
-        let file = temp().join("worker.lock");
+        let dir = temp();
+        let file = dir.join("worker.lock");
         fs::write(&file, format!("{}\n", std::process::id())).unwrap();
         assert!(held(&file, SystemTime::now()));
     }
 
     #[test]
     fn a_missing_broken_or_stale_lock_is_not_held() {
-        let file = temp().join("worker.lock");
+        let dir = temp();
+        let file = dir.join("worker.lock");
         assert!(!held(&file, SystemTime::now()), "missing");
         fs::write(&file, "").unwrap();
         assert!(!held(&file, SystemTime::now()), "empty: still being written");
@@ -91,7 +88,8 @@ mod tests {
         let mut child = Command::new("node").args(["-e", "0"]).spawn().expect("node runs");
         let pid = child.id();
         child.wait().unwrap();
-        let file = temp().join("worker.lock");
+        let dir = temp();
+        let file = dir.join("worker.lock");
         fs::write(&file, pid.to_string()).unwrap();
         assert!(!held(&file, SystemTime::now()));
         assert!(alive(std::process::id()));

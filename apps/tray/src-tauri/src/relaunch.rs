@@ -107,15 +107,12 @@ fn redirection_trust_enforced() -> bool {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
+    use crate::test_dir::TempDir;
 
-    fn temp() -> PathBuf {
-        static NEXT: AtomicUsize = AtomicUsize::new(0);
-        let dir = std::env::temp_dir().join(format!("fornax tray relaunch é {}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::SeqCst)));
-        let _ = fs::remove_dir_all(&dir);
-        dir
+    fn temp() -> TempDir {
+        TempDir::new("fornax tray relaunch é")
     }
 
     #[test]
@@ -133,7 +130,9 @@ mod tests {
 
     #[test]
     fn the_stamp_keeps_the_time_and_creates_its_folder() {
-        let file = temp().join("data").join(STAMP);
+        let dir = temp();
+        // The stamp's folder does not exist yet: write_stamp creates it.
+        let file = dir.join("data").join(STAMP);
         assert_eq!(read_stamp(&file), None);
         let at = UNIX_EPOCH + Duration::from_millis(1_800_000_000_123);
         write_stamp(&file, at).unwrap();
@@ -146,7 +145,6 @@ mod tests {
     #[test]
     fn a_broken_stamp_counts_as_none() {
         let dir = temp();
-        fs::create_dir_all(&dir).unwrap();
         let file = dir.join(STAMP);
         fs::write(&file, "yesterday").unwrap();
         assert_eq!(read_stamp(&file), None);

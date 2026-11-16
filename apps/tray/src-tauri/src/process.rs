@@ -306,28 +306,28 @@ impl CliProcess {
 pub(crate) mod testing {
     use std::fs;
     use std::path::PathBuf;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::mpsc::{self, Receiver};
     use std::sync::Arc;
     use std::time::Duration;
 
     use super::{Output, Sink};
     use crate::config::{Paths, TrayConfig};
+    use crate::test_dir::TempDir;
 
     /// The fake CLI installed as `<data>/app/fornax.mjs` in a fresh folder whose name has a space and a diacritic.
     pub struct Fake {
         pub paths: Paths,
         pub cfg: TrayConfig,
+        /// The folder of `paths`, removed with the fake.
+        _dir: TempDir,
     }
 
     pub fn fake_cli(mode: &str) -> Fake {
-        static NEXT: AtomicUsize = AtomicUsize::new(0);
-        let dir = std::env::temp_dir().join(format!("fornax tray é {}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::SeqCst)));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = TempDir::new("fornax tray é");
         let paths = Paths { config: dir.join("config"), data: dir.join("data") };
         fs::create_dir_all(paths.cli().parent().unwrap()).unwrap();
         fs::copy(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/fake-fornax.mjs"), paths.cli()).unwrap();
-        let fake = Fake { cfg: TrayConfig { node: PathBuf::from("node"), cli: paths.cli(), start_worker: true, file: paths.tray_json() }, paths };
+        let fake = Fake { cfg: TrayConfig { node: PathBuf::from("node"), cli: paths.cli(), start_worker: true, file: paths.tray_json() }, paths, _dir: dir };
         set_mode(&fake, mode);
         fake
     }

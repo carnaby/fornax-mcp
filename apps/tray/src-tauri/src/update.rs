@@ -75,11 +75,8 @@ mod tests {
     use super::*;
     use crate::state::UpdateDone;
 
-    fn dir() -> std::path::PathBuf {
-        let d = std::env::temp_dir().join(format!("fornax tray update é {}-{:?}", std::process::id(), std::thread::current().id()));
-        let _ = fs::remove_dir_all(&d);
-        fs::create_dir_all(&d).unwrap();
-        d
+    fn dir() -> crate::test_dir::TempDir {
+        crate::test_dir::TempDir::new("fornax tray update é")
     }
 
     #[test]

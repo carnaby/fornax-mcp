@@ -128,17 +128,13 @@ pub fn save_start_worker(paths: &Paths, on: bool) -> Result<(), String> {
 mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
-    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
+    use crate::test_dir::TempDir;
 
     /// A fresh folder whose name has a space and a diacritic.
-    fn temp() -> PathBuf {
-        static NEXT: AtomicUsize = AtomicUsize::new(0);
-        let dir = std::env::temp_dir().join(format!("fornax tray config é {}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::SeqCst)));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        dir
+    fn temp() -> TempDir {
+        TempDir::new("fornax tray config é")
     }
 
     fn paths(dir: &Path) -> Paths {
