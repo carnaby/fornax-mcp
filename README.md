@@ -197,9 +197,10 @@ running job with its time and progress, the waiting jobs in the order they will 
   also ends when its standard input closes, which is how a program that reads it stops it).
 
 `fornax worker --events` runs the worker for a program that controls it (the tray): standard output carries only JSON
-lines (`{"event":"started","version","pid"}`, `{"event":"log","line"}`, `{"event":"restarting"}`,
-`{"event":"stopped","code"}`), and a line `stop` on standard input stops it like Ctrl+C (a second one at once; closing
-standard input is one stop).
+lines (`{"event":"started","version","pid"}`, `{"event":"log","line"}`,
+`{"event":"types","types":[{"name","state","reason"}]}` with the state `offered`, `waiting` (for the card) or
+`unavailable`, `{"event":"restarting"}`, `{"event":"stopped","code"}`), and a line `stop` on standard input stops it
+like Ctrl+C (a second one at once; closing standard input is one stop).
 
 ### Updating
 
@@ -236,6 +237,10 @@ now plus some room):
 gpu:
   max_used_mib: 2048
 ```
+
+A worker that starts while the card cannot be read (an external GPU attached after sign-in) waits for it before it
+checks its job types, and checks them again whenever the card comes back, so the types that need the card are
+offered without a restart. Meanwhile the server keeps the types the worker offered last and takes jobs for them.
 
 **Lease the card for a program on this PC.** `fornax types install lease`, then store a client token (the worker
 token cannot submit jobs):
@@ -333,7 +338,8 @@ On the worker's PC the tray app starts the worker and shows the whole queue: the
 progress, the waiting jobs in the order they will run (drag them, or use ⤒ and ⤓), the finished ones with their
 result page and error. Pause queue lets the running job finish and starts no other; Stop worker gives the running job
 back to the queue. It tells you when a job fails, and when jobs wait while the worker is stopped or the queue is
-paused.
+paused. The Types section lists the job types the worker offers, the ones waiting for the card (orange) and the ones
+whose check failed (red, click for the reason); the icon turns orange while the worker waits for the card.
 
 1. Install `fornax` 0.5.0 or newer and pair this PC (see [Run the worker](#run-the-worker)); the tray runs the
    installed `fornax.mjs` with Node.js 22 or newer.
