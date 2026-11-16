@@ -12,10 +12,10 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const tauri = join(root, 'node_modules', '@tauri-apps', 'cli', 'tauri.js');
 const template = readFileSync(join(root, 'icons', 'tray.svg'), 'utf8');
 
-// State colours (spec 06 4.3): darker ones for a light taskbar, lighter ones for a dark taskbar.
+// State colours (spec 06 4.3, 06c 4.1): darker ones for a light taskbar, lighter ones for a dark taskbar.
 const COLORS = {
-  light: { stopped: '#57534e', idle: '#15803d', busy: '#1d4ed8', paused: '#a16207', error: '#b91c1c', dot: '#d97706' },
-  dark: { stopped: '#c4bfbb', idle: '#4ade80', busy: '#93c5fd', paused: '#facc15', error: '#f87171', dot: '#f59e0b' },
+  light: { stopped: '#57534e', idle: '#15803d', busy: '#1d4ed8', paused: '#a16207', card: '#ea580c', error: '#b91c1c', dot: '#d97706' },
+  dark: { stopped: '#c4bfbb', idle: '#4ade80', busy: '#93c5fd', paused: '#facc15', card: '#fb923c', error: '#f87171', dot: '#f59e0b' },
 };
 /** [file name, colour, with the badge] */
 const STATES = [
@@ -24,6 +24,7 @@ const STATES = [
   ['idle', 'idle', false],
   ['busy', 'busy', false],
   ['paused', 'paused', false],
+  ['card', 'card', false],
   ['error', 'error', false],
 ];
 /** The app icon: the queue in the colour of a furnace. */

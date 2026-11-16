@@ -5,7 +5,7 @@ use std::collections::{BTreeSet, VecDeque};
 
 use serde::Serialize;
 
-use crate::protocol::{iso_ms, version_of, Job, Queue, WatchLine, WorkerEvent, MIN_CLI};
+use crate::protocol::{iso_ms, version_of, Job, Queue, Waiting, WatchLine, WorkerEvent, MIN_CLI};
 
 /// Lines of the log the window keeps.
 pub const LOG_LINES: usize = 200;
@@ -120,6 +120,8 @@ pub enum Icon {
     Idle,
     Busy,
     Paused,
+    /// The worker runs and waits for the card (spec 06c 4.1).
+    Card,
     Error,
 }
 
@@ -157,6 +159,18 @@ pub struct JobView {
     pub action_error: Option<String>,
 }
 
+/// One job type for the window (spec 06c 4.3): `state` is `offered`, `waiting` or `unavailable`.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TypeView {
+    pub name: String,
+    pub state: String,
+    pub reason: Option<String>,
+}
+
+/// The states of a type this tray knows; a row with another one (a newer CLI) is dropped.
+const TYPE_STATES: [&str; 3] = ["offered", "waiting", "unavailable"];
+
 /// What the window and the tray show (src/types.ts mirrors it).
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -187,6 +201,9 @@ pub struct Snapshot {
     pub queued: Vec<JobView>,
     pub finished: Vec<JobView>,
     pub log: Vec<LogLine>,
+    /// The worker's types (spec 06c 4.3); empty with `types_note` when there is no list.
+    pub types: Vec<TypeView>,
+    pub types_note: Option<String>,
 }
 
 /// The queue reader's failures (`"ok": false` lines) since its last queue line.
@@ -235,6 +252,10 @@ pub struct Model {
     confirm_quit: bool,
     quitting: bool,
     log: VecDeque<LogLine>,
+    /// The last types event of the tray's worker; None before it and after the worker stopped.
+    types: Option<Vec<TypeView>>,
+    /// The worker printed its offering line (`offering: …`): a CLI that sends no types event is older.
+    offering_seen: bool,
 }
 
 impl Default for Model {
@@ -313,6 +334,8 @@ impl Model {
             confirm_quit: false,
             quitting: false,
             log: VecDeque::new(),
+            types: None,
+            offering_seen: false,
         }
     }
 
@@ -461,6 +484,8 @@ impl Model {
         self.own = Own::Starting;
         self.exit_note = None;
         self.last_line = None;
+        self.types = None;
+        self.offering_seen = false;
         self.push_log(now, "starting the worker".to_string(), false);
         vec![Effect::SpawnWorker]
     }
@@ -535,6 +560,9 @@ impl Model {
                 self.push_log(now, format!("worker {version} started"), false);
             }
             WorkerEvent::Log { line } => {
+                if line.starts_with("offering") {
+                    self.offering_seen = true;
+                }
                 self.last_line = Some(line.clone());
                 self.push_log(now, line, false);
             }
@@ -544,7 +572,19 @@ impl Model {
                 }
                 self.push_log(now, "the worker restarts for a new version".to_string(), false);
             }
-            WorkerEvent::Stopped { code } => self.push_log(now, format!("the worker stopped (code {code})"), code != 0),
+            WorkerEvent::Stopped { code } => {
+                self.types = None;
+                self.push_log(now, format!("the worker stopped (code {code})"), code != 0);
+            }
+            WorkerEvent::Types { types } => {
+                self.types = Some(
+                    types
+                        .into_iter()
+                        .filter(|t| TYPE_STATES.contains(&t.state.as_str()))
+                        .map(|t| TypeView { name: t.name, state: t.state, reason: t.reason })
+                        .collect(),
+                );
+            }
             WorkerEvent::Other => {}
         }
     }
@@ -553,6 +593,7 @@ impl Model {
         let asked = matches!(self.own, Own::Stopping | Own::StoppingNow);
         self.own = Own::Stopped;
         self.stop_deadline = None;
+        self.types = None;
         if !asked && code != Some(0) {
             let code = code.map_or_else(|| "?".to_string(), |c| c.to_string());
             self.exit_note = Some(self.last_line.clone().unwrap_or_else(|| format!("the worker ended with code {code}")));
@@ -689,9 +730,52 @@ impl Model {
         }
     }
 
+    /// Spec 06c 4.1: the worker runs (the tray's own, or one outside the tray), nothing runs, and the server passes on
+    /// the worker's reason to take no job.
+    fn card_wait(&self) -> Option<&Waiting> {
+        let runs = self.own == Own::Running || (self.own == Own::Stopped && self.external);
+        let q = self.queue.as_ref().filter(|q| runs && q.running.is_none())?;
+        q.worker.waiting.as_ref()
+    }
+
+    /// Spec 06c 4.2: the headline and tooltip while the worker waits for the card, from the reason's fields.
+    fn card_text(w: &Waiting) -> String {
+        match (w.reason.as_str(), w.used_mib, w.total_mib, w.limit_mib) {
+            ("gpu_busy", Some(used), Some(total), Some(limit)) => {
+                format!("Waiting for the card: {used} of {total} MiB in use by other programs, limit {limit} MiB")
+            }
+            ("gpu_unreadable", ..) => match &w.error {
+                Some(error) => format!("Waiting for the card: it cannot be read ({error})"),
+                None => "Waiting for the card: it cannot be read".to_string(),
+            },
+            _ => "Waiting for the card".to_string(),
+        }
+    }
+
+    /// Spec 06c 4.3: why the Types section has no list.
+    fn types_note(&self) -> Option<String> {
+        if self.types.is_some() {
+            return None;
+        }
+        Some(
+            match self.own {
+                Own::Stopped if self.external => "The worker runs outside the tray; its types show only when the tray runs it.",
+                Own::Stopped => "The worker is stopped.",
+                _ if self.offering_seen => "This fornax does not report its types; update it.",
+                _ => "Checking the types…",
+            }
+            .to_string(),
+        )
+    }
+
     fn headline(&self) -> String {
         if self.quitting {
             return "Stopping the worker and quitting…".to_string();
+        }
+        if self.cli == Cli::Ready {
+            if let Some(w) = self.card_wait() {
+                return Self::card_text(w);
+            }
         }
         let worker = match self.own {
             Own::Starting => "Starting the worker…",
@@ -736,7 +820,7 @@ impl Model {
         })
     }
 
-    /// Spec 06 4.3, first match wins.
+    /// Spec 06 4.3 and 06c 4.1, first match wins.
     fn icon(&self) -> Icon {
         let q = self.queue.as_ref();
         let queue_lost = q.is_none() && (self.server_down.is_some() || matches!(self.watch, Watch::Waiting { .. }) || self.watch_problem.is_some());
@@ -746,6 +830,9 @@ impl Model {
         }
         if q.is_some_and(|q| q.running.is_some()) {
             return Icon::Busy;
+        }
+        if self.card_wait().is_some() {
+            return Icon::Card;
         }
         if q.is_some_and(|q| q.paused) {
             return Icon::Paused;
@@ -791,6 +878,8 @@ impl Model {
             queued: q.map_or_else(Vec::new, |q| q.queued.iter().map(|j| self.view(j)).collect()),
             finished: q.map_or_else(Vec::new, |q| q.finished.iter().map(|j| self.view(j)).collect()),
             log: self.log.iter().cloned().collect(),
+            types: self.types.clone().unwrap_or_default(),
+            types_note: self.types_note(),
         }
     }
 }
@@ -800,7 +889,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
-    use crate::protocol::WorkerInfo;
+    use crate::protocol::{TypeInfo, Waiting, WorkerInfo};
 
     const NOW: i64 = 1_800_000_000_000;
     /// 2026-11-15T14:00:00.000Z, the fixtures' server time.
@@ -826,6 +915,37 @@ mod tests {
             queued,
             finished,
         })))
+    }
+
+    /// A queue line in which the worker is online and reports why it takes no job.
+    fn waiting_queue(waiting: Waiting, running: Option<Job>, paused: bool) -> Input {
+        Input::Watch(WatchLine::Queue(Box::new(Queue {
+            server_time: "2026-11-15T14:00:00.000Z".into(),
+            change: "0123456789abcdef".into(),
+            paused,
+            worker: WorkerInfo { online: true, last_seen: None, version: None, waiting: Some(waiting) },
+            running,
+            queued: vec![],
+            finished: vec![],
+        })))
+    }
+
+    fn unreadable(error: Option<&str>) -> Waiting {
+        Waiting {
+            reason: "gpu_unreadable".into(), message: "waiting: the worker cannot read the card".into(), error: error.map(Into::into),
+            used_mib: None, total_mib: None, limit_mib: Some(768),
+        }
+    }
+
+    fn busy_card() -> Waiting {
+        Waiting {
+            reason: "gpu_busy".into(), message: "waiting: in use".into(), error: None,
+            used_mib: Some(9000), total_mib: Some(16311), limit_mib: Some(768),
+        }
+    }
+
+    fn type_info(name: &str, state: &str, reason: Option<&str>) -> TypeInfo {
+        TypeInfo { name: name.into(), state: state.into(), reason: reason.map(Into::into) }
     }
 
     fn launched(start_worker: bool) -> Input {
@@ -1007,6 +1127,104 @@ mod tests {
         m.apply(Input::StartWorker, NOW);
         m.apply(queue(None, vec![], vec![], false), NOW);
         assert_eq!(m.snapshot().icon, Icon::Idle);
+    }
+
+    #[test]
+    fn the_card_wait_shows_in_the_icon_headline_and_tooltip() {
+        let mut m = running_worker();
+        m.apply(waiting_queue(unreadable(Some("nvidia-smi: exit code 4")), None, false), NOW);
+        let s = m.snapshot();
+        assert_eq!(s.icon, Icon::Card);
+        assert_eq!(s.headline, "Waiting for the card: it cannot be read (nvidia-smi: exit code 4)");
+        assert_eq!(s.tooltip, "Fornax: Waiting for the card: it cannot be read (nvidia-smi: exit code 4)");
+        // A server older than 0.6.0 sends no error: no empty parenthesis.
+        m.apply(waiting_queue(unreadable(None), None, false), NOW);
+        assert_eq!(m.snapshot().headline, "Waiting for the card: it cannot be read");
+        m.apply(waiting_queue(busy_card(), None, false), NOW);
+        assert_eq!(m.snapshot().headline, "Waiting for the card: 9000 of 16311 MiB in use by other programs, limit 768 MiB");
+        // A reason this tray does not know.
+        let mut other = busy_card();
+        other.reason = "gpu_something".into();
+        m.apply(waiting_queue(other, None, false), NOW);
+        assert_eq!(m.snapshot().headline, "Waiting for the card");
+        // The card comes before a pause; the pause button still says what it does.
+        m.apply(waiting_queue(unreadable(Some("nvidia-smi: exit code 4")), None, true), NOW);
+        let s = m.snapshot();
+        assert_eq!((s.icon, s.pause_label.as_str()), (Icon::Card, "Resume queue"));
+        // A running job comes before the card.
+        m.apply(waiting_queue(unreadable(Some("nvidia-smi: exit code 4")), Some(job("R1", "running")), false), NOW);
+        assert_eq!(m.snapshot().icon, Icon::Busy);
+        // A long error still fits a Windows tooltip.
+        let long = "x".repeat(300);
+        m.apply(waiting_queue(unreadable(Some(&long)), None, false), NOW);
+        assert!(m.snapshot().tooltip.encode_utf16().count() <= TOOLTIP_UNITS);
+    }
+
+    #[test]
+    fn the_card_wait_needs_a_running_worker() {
+        // The tray's own worker stopped: the server's last reason is no card state.
+        let mut m = ready(false);
+        m.apply(waiting_queue(unreadable(Some("nvidia-smi: exit code 4")), None, false), NOW);
+        let s = m.snapshot();
+        assert_eq!((s.icon, s.headline.as_str()), (Icon::Stopped, "Worker stopped · queue active"));
+        // A worker outside the tray that waits for the card.
+        let mut m = Model::new();
+        m.apply(launched(false), NOW);
+        m.apply(checked("0.6.0", true), NOW);
+        m.apply(waiting_queue(unreadable(Some("nvidia-smi: exit code 4")), None, false), NOW);
+        assert_eq!(m.snapshot().icon, Icon::Card);
+        // While the tray's worker starts, the worker's phrase wins.
+        let mut m = ready(true);
+        m.apply(waiting_queue(unreadable(Some("nvidia-smi: exit code 4")), None, false), NOW);
+        let s = m.snapshot();
+        assert_eq!((s.icon, s.headline.as_str()), (Icon::Idle, "Starting the worker… · queue active"));
+    }
+
+    #[test]
+    fn the_types_section_follows_the_worker() {
+        let mut m = ready(false);
+        let s = m.snapshot();
+        assert_eq!((s.types.len(), s.types_note.as_deref()), (0, Some("The worker is stopped.")));
+        m.apply(Input::StartWorker, NOW);
+        assert_eq!(m.snapshot().types_note.as_deref(), Some("Checking the types…"));
+        m.apply(Input::WorkerEvent(WorkerEvent::Started { version: "0.6.0".into(), pid: 7 }), NOW);
+        let types = vec![
+            type_info("lease", "offered", None),
+            type_info("newer", "sleeping", Some("a state of a newer CLI")),
+            type_info("transcribe", "unavailable", Some("check failed (exit code 3)")),
+            type_info("upscale", "waiting", Some("waiting for the card")),
+        ];
+        m.apply(Input::WorkerEvent(WorkerEvent::Types { types }), NOW);
+        let s = m.snapshot();
+        assert_eq!(s.types_note, None);
+        assert_eq!(
+            s.types,
+            vec![
+                TypeView { name: "lease".into(), state: "offered".into(), reason: None },
+                TypeView { name: "transcribe".into(), state: "unavailable".into(), reason: Some("check failed (exit code 3)".into()) },
+                TypeView { name: "upscale".into(), state: "waiting".into(), reason: Some("waiting for the card".into()) },
+            ]
+        );
+        // A restart keeps the list until the new worker reports its own.
+        m.apply(Input::WorkerEvent(WorkerEvent::Restarting), NOW);
+        assert_eq!(m.snapshot().types.len(), 3);
+        // The worker stopped: the list is gone.
+        m.apply(Input::WorkerEvent(WorkerEvent::Stopped { code: 0 }), NOW);
+        m.apply(Input::WorkerExited { code: Some(0) }, NOW);
+        let s = m.snapshot();
+        assert_eq!((s.types.len(), s.types_note.as_deref()), (0, Some("The worker is stopped.")));
+        // An older CLI offers types but never reports them.
+        m.apply(Input::StartWorker, NOW);
+        m.apply(Input::WorkerEvent(WorkerEvent::Log { line: "offering: echo".into() }), NOW);
+        assert_eq!(m.snapshot().types_note.as_deref(), Some("This fornax does not report its types; update it."));
+        // An empty list is a list: the window says there are no packs.
+        m.apply(Input::WorkerEvent(WorkerEvent::Types { types: vec![] }), NOW);
+        assert_eq!(m.snapshot().types_note, None);
+        // A worker outside the tray.
+        let mut m = Model::new();
+        m.apply(launched(false), NOW);
+        m.apply(checked("0.6.0", true), NOW);
+        assert_eq!(m.snapshot().types_note.as_deref(), Some("The worker runs outside the tray; its types show only when the tray runs it."));
     }
 
     #[test]
@@ -1314,7 +1532,7 @@ mod tests {
             [
                 "canPause", "canStart", "canStop", "confirmQuit", "finished", "headline", "icon", "log", "note", "offsetMs",
                 "pauseError", "pauseLabel", "paused", "queueKnown", "queueNote", "queued", "running", "serverDownSinceMs",
-                "serverMessage", "serverRefused", "startWorker", "stopLabel", "tooltip",
+                "serverMessage", "serverRefused", "startWorker", "stopLabel", "tooltip", "types", "typesNote",
             ]
         );
         let mut job_keys: Vec<&str> = v["running"].as_object().unwrap().keys().map(String::as_str).collect();

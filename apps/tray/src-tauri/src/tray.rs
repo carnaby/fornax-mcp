@@ -58,6 +58,8 @@ fn icon_png(icon: Icon, light: bool) -> &'static [u8] {
         (Icon::Busy, false) => include_bytes!("../icons/tray/busy-dark.png"),
         (Icon::Paused, true) => include_bytes!("../icons/tray/paused-light.png"),
         (Icon::Paused, false) => include_bytes!("../icons/tray/paused-dark.png"),
+        (Icon::Card, true) => include_bytes!("../icons/tray/card-light.png"),
+        (Icon::Card, false) => include_bytes!("../icons/tray/card-dark.png"),
         (Icon::Error, true) => include_bytes!("../icons/tray/error-light.png"),
         (Icon::Error, false) => include_bytes!("../icons/tray/error-dark.png"),
     }

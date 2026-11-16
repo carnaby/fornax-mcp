@@ -17,6 +17,8 @@ pub enum WorkerEvent {
     Restarting,
     /// The supervisor's last line. i64: a Windows crash code (e.g. 3221225477) does not fit an i32.
     Stopped { code: i64 },
+    /// The worker's job types and their state, whenever they change (spec 06c 2.2).
+    Types { types: Vec<TypeInfo> },
     /// An event a newer CLI may add.
     #[serde(other)]
     Other,
@@ -26,11 +28,30 @@ pub fn parse_event(line: &str) -> Option<WorkerEvent> {
     serde_json::from_str(line).ok()
 }
 
-/// Why the worker takes no job now (more fields on the wire are ignored).
+/// One job type as the worker reports it (spec 06c 2.2). `state` stays a string: a newer CLI may add a state, and the
+/// model drops only that row.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct TypeInfo {
+    pub name: String,
+    pub state: String,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+/// Why the worker takes no job now (more fields on the wire are ignored). The figures come with `gpu_busy`, `error`
+/// with `gpu_unreadable` from server 0.6.0 on.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub struct Waiting {
     pub reason: String,
     pub message: String,
+    #[serde(default)]
+    pub error: Option<String>,
+    #[serde(default)]
+    pub used_mib: Option<u64>,
+    #[serde(default)]
+    pub total_mib: Option<u64>,
+    #[serde(default)]
+    pub limit_mib: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
@@ -176,9 +197,29 @@ mod tests {
         assert_eq!(parse_event(r#"{"event":"stopped","code":130}"#), Some(WorkerEvent::Stopped { code: 130 }));
         // A Windows crash code (0xC0000005) is larger than an i32.
         assert_eq!(parse_event(r#"{"event":"stopped","code":3221225477}"#), Some(WorkerEvent::Stopped { code: 3_221_225_477 }));
+        assert_eq!(
+            parse_event(r#"{"event":"types","types":[{"name":"lease","state":"offered"},{"name":"upscale","state":"waiting","reason":"waiting for the card"}]}"#),
+            Some(WorkerEvent::Types {
+                types: vec![
+                    TypeInfo { name: "lease".into(), state: "offered".into(), reason: None },
+                    TypeInfo { name: "upscale".into(), state: "waiting".into(), reason: Some("waiting for the card".into()) },
+                ]
+            })
+        );
         assert_eq!(parse_event(r#"{"event":"something-new","x":1}"#), Some(WorkerEvent::Other));
         assert_eq!(parse_event("not json"), None);
         assert_eq!(parse_event(r#"{"event":"started"}"#), None, "a started event without its fields");
+    }
+
+    #[test]
+    fn reads_the_fields_of_the_workers_reason_to_wait() {
+        let busy: Waiting = serde_json::from_str(r#"{"reason":"gpu_busy","message":"m","used_mib":9000,"total_mib":16311,"limit_mib":768}"#).unwrap();
+        assert_eq!((busy.used_mib, busy.total_mib, busy.limit_mib, busy.error), (Some(9000), Some(16311), Some(768), None));
+        let unreadable: Waiting = serde_json::from_str(r#"{"reason":"gpu_unreadable","message":"m","error":"nvidia-smi: exit code 4","limit_mib":768}"#).unwrap();
+        assert_eq!(unreadable.error.as_deref(), Some("nvidia-smi: exit code 4"));
+        // A server older than 0.6.0 sends no error.
+        let old: Waiting = serde_json::from_str(r#"{"reason":"gpu_unreadable","message":"m","limit_mib":768}"#).unwrap();
+        assert_eq!(old.error, None);
     }
 
     #[test]
