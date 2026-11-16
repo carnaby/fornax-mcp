@@ -16,6 +16,7 @@ import { queueCommand, workerCommand } from './commands/worker.js';
 import { ConfigError } from './config.js';
 import { eventLine, onInputEnd, readStops, type WorkerEvent } from './events.js';
 import { InstallError } from './install/errors.js';
+import type { TypeState } from './loop.js';
 import { PackError } from './pack.js';
 import { resolvePaths } from './paths.js';
 import { hasRunning, killRunning } from './process.js';
@@ -342,8 +343,13 @@ if (isMainModule()) {
       return code;
     },
     // The child under the tray says which version started once it holds worker.lock: a refused second worker reports
-    // only its log line and stopped 1 (spec 06 3.2).
-    ...(events && isChild ? { onWorkerStarted: () => emit({ event: 'started', version: FORNAX_VERSION, pid: process.pid }) } : {}),
+    // only its log line and stopped 1 (spec 06 3.2). It also reports its types (spec 06c 2.2).
+    ...(events && isChild
+      ? {
+          onWorkerStarted: () => emit({ event: 'started', version: FORNAX_VERSION, pid: process.pid }),
+          onTypes: (types: TypeState[]) => emit({ event: 'types', types }),
+        }
+      : {}),
   };
   // Linux: the worker child has a process group of its own; a supervisor gone without passing a signal on (SIGKILL)
   // must not leave it claiming jobs where Ctrl+C no longer reaches it. Its parent gone counts as a first stop.

@@ -1,4 +1,5 @@
 import { createInterface } from 'node:readline';
+import type { TypeState } from './loop.js';
 
 /**
  * Calls `onEnd` once when `input` ends, closes or fails: `fornax queue --json --watch` under the tray ends when the
@@ -24,10 +25,11 @@ export function onInputEnd(input: NodeJS.ReadableStream, onEnd: () => void): () 
   };
 }
 
-/** Spec 06 3.2: what `fornax worker --events` writes to stdout, one JSON object per line. */
+/** Spec 06 3.2 and 06c 2.2: what `fornax worker --events` writes to stdout, one JSON object per line. */
 export type WorkerEvent =
   | { event: 'started'; version: string; pid: number }
   | { event: 'log'; line: string }
+  | { event: 'types'; types: TypeState[] }
   | { event: 'restarting' }
   | { event: 'stopped'; code: number };
 

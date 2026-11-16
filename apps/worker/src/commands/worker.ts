@@ -42,7 +42,7 @@ export async function workerCommand(ctx: Ctx, once: boolean, opts: { child?: boo
     const limit = config.gpu.maxUsedMib;
     const gpu = limit === null ? undefined : { maxUsedMib: limit, measure: () => readGpu({ command: ctx.nvidiaSmi }) };
     if (gpu) ctx.out(`the card is checked before each job: no job while more than ${limit} MiB of it are in use`);
-    return await runWorker({ api, paths: ctx.paths, tools: config.tools, out: ctx.out, signal: ctx.signal, once, gpu, restart, ...ctx.loopOptions });
+    return await runWorker({ api, paths: ctx.paths, tools: config.tools, out: ctx.out, signal: ctx.signal, once, gpu, restart, onTypes: ctx.onTypes, ...ctx.loopOptions });
   } finally {
     process.off('exit', onExit);
     lock.release();

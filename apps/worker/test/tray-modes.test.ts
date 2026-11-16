@@ -80,7 +80,7 @@ describe('fornax worker --events (spec 06 3.2)', () => {
     const events = w.events();
     expect(events[0]).toMatchObject({ event: 'started', version: FORNAX_VERSION, pid: expect.any(Number) });
     expect(events.at(-1)).toEqual({ event: 'stopped', code: 0 });
-    expect(events.every((e) => ['started', 'log', 'restarting', 'stopped'].includes(e.event))).toBe(true);
+    expect(events.every((e) => ['started', 'log', 'types', 'restarting', 'stopped'].includes(e.event))).toBe(true);
     expect(await client.job(job.id)).toMatchObject({ state: 'queued', attempts: 0 });
   }, 90_000);
 
@@ -97,6 +97,15 @@ describe('fornax worker --events (spec 06 3.2)', () => {
     expect(events.at(-1)).toEqual({ event: 'stopped', code: 130 });
     expect(events.some((e) => e.event === 'log' && e.line === 'stopping: the running job is stopped and given back (a second stop quits at once)')).toBe(true);
   }, 90_000);
+
+  test('the types the worker offers come as a types event (spec 06c 2.2)', async () => {
+    const { env } = await setup();
+    const w = start(['worker', '--events'], env);
+    await waitFor(() => w.events().some((e) => e.event === 'types'), 30_000, 'a types event');
+    w.p.stdin.end();
+    expect(await w.exited).toBe(0);
+    expect(w.events().filter((e) => e.event === 'types')).toEqual([{ event: 'types', types: [{ name: 'echo', state: 'offered' }] }]);
+  }, 60_000);
 
   test('a closed stdin stops it like a stop line', async () => {
     const { env } = await setup();

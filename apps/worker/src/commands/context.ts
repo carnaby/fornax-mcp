@@ -4,7 +4,7 @@ import { ConfigError, readToken, readWorkerConfig, serverWarning, type WorkerCon
 import type { SwapDeps } from '../install/app.js';
 import type { PathDeps } from '../install/path-entry.js';
 import type { LeaseTimings } from '../lease/run.js';
-import type { LoopOptions } from '../loop.js';
+import type { LoopOptions, TypeState } from '../loop.js';
 import type { Paths } from '../paths.js';
 
 /** What every command gets: directories, output, the stop signal; tests replace the rest. */
@@ -46,6 +46,8 @@ export type Ctx = {
    * for the child under the tray: its `started` event (spec 06 3.2) must not come from a worker that is refused.
    */
   onWorkerStarted?: () => void;
+  /** Spec 06c 2.2: the worker's types whenever they change (the child under the tray emits them as a types event). */
+  onTypes?: (types: TypeState[]) => void;
 };
 
 export const apiFor = (ctx: Ctx, server: string, token: string): WorkerApi =>
