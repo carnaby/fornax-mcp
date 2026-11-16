@@ -9,7 +9,15 @@ import { jobChanges } from './signal.js';
 export const WORKER_ONLINE_MS = 90_000;
 
 /** Spec 05a 2.4: what clients see of the worker's reason to wait, with a ready sentence. */
-export type WaitingView = { reason: WorkerWaiting['reason']; message: string; used_mib?: number; total_mib?: number; limit_mib: number };
+export type WaitingView = {
+  reason: WorkerWaiting['reason'];
+  message: string;
+  used_mib?: number;
+  total_mib?: number;
+  limit_mib: number;
+  /** Spec 06c 3: the worker's error when it cannot read the card (the tray builds its own sentence from it). */
+  error?: string;
+};
 export type WorkerView = { online: boolean; last_seen: string | null; waiting: WaitingView | null };
 
 export function waitingView(w: WorkerWaiting): WaitingView {
@@ -22,10 +30,12 @@ export function waitingView(w: WorkerWaiting): WaitingView {
       limit_mib: w.limit_mib,
     };
   }
+  // The worker's error text inside a sentence: one line, no control characters.
+  const error = oneLine(w.error, 200) ?? 'unknown error';
   return {
     reason: w.reason,
-    // The worker's error text inside a sentence: one line, no control characters.
-    message: `waiting: the card cannot be read (${oneLine(w.error, 200) ?? 'unknown error'}), limit ${w.limit_mib} MiB`,
+    message: `waiting: the worker cannot read the card (${error}); no job starts until it can, asking again changes nothing`,
+    error,
     limit_mib: w.limit_mib,
   };
 }

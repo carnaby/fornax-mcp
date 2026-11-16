@@ -34,7 +34,8 @@ test('a card that cannot be read is reported with the error, flattened to one li
   await status({ reason: 'gpu_unreadable', error: 'nvidia-smi:\nnot found', limit_mib: 2048 });
   expect((await queue()).worker.waiting).toEqual({
     reason: 'gpu_unreadable',
-    message: 'waiting: the card cannot be read (nvidia-smi: not found), limit 2048 MiB',
+    message: 'waiting: the worker cannot read the card (nvidia-smi: not found); no job starts until it can, asking again changes nothing',
+    error: 'nvidia-smi: not found',
     limit_mib: 2048,
   });
 });
