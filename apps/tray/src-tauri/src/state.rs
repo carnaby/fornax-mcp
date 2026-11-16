@@ -25,6 +25,8 @@ pub const ERROR_CHARS: usize = 120;
 pub const PAUSE: &str = "pause";
 /// Spec 06 § 5: what the window says when the server refuses the worker token (401/403).
 pub const TOKEN_REFUSED: &str = "The server refused the worker token: pair again (fornax worker pair)";
+/// What the menu shows when no update is offered (spec 06d 4.2).
+pub const NO_UPDATE: &str = "No update";
 
 /// Where a waiting job moves.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -37,8 +39,9 @@ pub enum MoveTo {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Input {
-    /// The tray started, with its setting and the warnings to show (Redirection Guard, tray.json).
-    Launched { start_worker: bool, warnings: Vec<String> },
+    /// The tray started, with its setting, the warnings to show (Redirection Guard, tray.json), its own version, whether
+    /// it runs as an AppImage, and what a tray update before it left (spec 06d 4.3).
+    Launched { start_worker: bool, warnings: Vec<String>, version: String, appimage: bool, update_done: Option<UpdateDone> },
     /// `fornax --version` answered (its line) or could not run (why), and whether worker.lock is held.
     CliChecked { result: Result<String, String>, lock_held: bool },
     StartWorker,
@@ -49,6 +52,15 @@ pub enum Input {
     SetStartWorker(bool),
     Quit,
     ConfirmQuit(bool),
+    /// Spec 06d 4.3: the update button, and its cancel.
+    Update,
+    CancelUpdate,
+    /// A line of `fornax update` under the tray.
+    UpdateText(String),
+    /// `fornax update` ended: Ok, or its last line.
+    UpdateRan(Result<(), String>),
+    /// The installer helper started (the marker is written), or why not.
+    TrayInstallStarted(Result<(), String>),
     WorkerEvent(WorkerEvent),
     /// A worker line that is no event, or its stderr.
     WorkerText(String),
@@ -75,6 +87,11 @@ pub enum Effect {
     KillWorker,
     SpawnWatch,
     RunAction { key: String, args: Vec<String> },
+    /// `fornax update`, its lines as [`Input::UpdateText`], answered by one [`Input::UpdateRan`].
+    RunUpdate,
+    /// Write `<data>/tray-update.json` and start `fornax tray install --wait-pid <pid> --relaunch <exe>` detached;
+    /// answered by one [`Input::TrayInstallStarted`].
+    StartTrayInstall { target: String, resume_queue: bool },
     CheckLock,
     Notify { title: String, body: String },
     ShowWindow,
@@ -123,6 +140,40 @@ pub enum Icon {
     /// The worker runs and waits for the card (spec 06c 4.1).
     Card,
     Error,
+}
+
+/// What a tray update left for the next tray (spec 06d 4.3): read and removed at its start.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UpdateDone {
+    pub target: String,
+    pub resume_queue: bool,
+    /// The installer helper's last line (`tray-update.log`).
+    pub last_line: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum UpdateKind {
+    /// fornax and the tray.
+    Both,
+    /// Only fornax: the tray is current (or an AppImage).
+    CliOnly,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum UpdatePhase {
+    /// The queue is being paused, or a job still runs.
+    Waiting,
+    Cli,
+    Installing,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Update {
+    target: String,
+    kind: UpdateKind,
+    phase: UpdatePhase,
+    /// The update paused the queue (it was not paused before): it resumes it.
+    paused_by_us: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -204,6 +255,14 @@ pub struct Snapshot {
     /// The worker's types (spec 06c 4.3); empty with `types_note` when there is no list.
     pub types: Vec<TypeView>,
     pub types_note: Option<String>,
+    /// Spec 06d 4.1: "tray 0.7.0 · fornax 0.7.0 · server 0.7.1".
+    pub versions: String,
+    /// "Update to 0.7.1" / "Update fornax to 0.7.1" when one is offered.
+    pub update_label: Option<String>,
+    pub can_update: bool,
+    pub can_cancel_update: bool,
+    /// Why the last update failed, or the AppImage's note.
+    pub update_note: Option<String>,
 }
 
 /// The queue reader's failures (`"ok": false` lines) since its last queue line.
@@ -256,6 +315,17 @@ pub struct Model {
     types: Option<Vec<TypeView>>,
     /// The worker printed its offering line (`offering: …`): a CLI that sends no types event is older.
     offering_seen: bool,
+    /// The tray's own version.
+    version: String,
+    appimage: bool,
+    /// What `fornax --version` printed, once fornax is ready.
+    cli_version: Option<String>,
+    update: Option<Update>,
+    update_note: Option<String>,
+    /// The tray before this one paused the queue for its update: resume it once it is known.
+    resume_after_update: bool,
+    /// Quit came during an update that had paused the queue: quit once the resume answered.
+    quit_after_resume: bool,
 }
 
 impl Default for Model {
@@ -336,16 +406,34 @@ impl Model {
             log: VecDeque::new(),
             types: None,
             offering_seen: false,
+            version: String::new(),
+            appimage: false,
+            cli_version: None,
+            update: None,
+            update_note: None,
+            resume_after_update: false,
+            quit_after_resume: false,
         }
     }
 
     pub fn apply(&mut self, input: Input, now: i64) -> Vec<Effect> {
         match input {
-            Input::Launched { start_worker, warnings } => {
+            Input::Launched { start_worker, warnings, version, appimage, update_done } => {
                 self.start_worker = start_worker;
                 self.auto_start = start_worker;
                 for text in warnings {
                     self.warn(now, text);
+                }
+                self.version = version;
+                self.appimage = appimage;
+                if let Some(done) = update_done {
+                    if done.target == self.version {
+                        self.push_log(now, format!("updated to {}", done.target), false);
+                    } else {
+                        let why = done.last_line.map_or_else(String::new, |line| format!(": {line}"));
+                        self.push_log(now, format!("the tray update to {} did not install{why}", done.target), true);
+                    }
+                    self.resume_after_update = done.resume_queue;
                 }
                 self.cli_checking = true;
                 vec![Effect::CheckCli]
@@ -377,6 +465,14 @@ impl Model {
             }
             Input::Quit => self.quit(),
             Input::ConfirmQuit(yes) => self.confirm_quit(yes),
+            Input::Update => self.start_update(now),
+            Input::CancelUpdate => self.cancel_update(now),
+            Input::UpdateText(line) => {
+                self.push_log(now, line, false);
+                Vec::new()
+            }
+            Input::UpdateRan(result) => self.update_ran(result, now),
+            Input::TrayInstallStarted(result) => self.install_started(result, now),
             Input::WorkerEvent(event) => {
                 self.worker_event(event, now);
                 Vec::new()
@@ -429,12 +525,27 @@ impl Model {
             }
             Input::ActionDone { key, result } => {
                 self.pending.remove(&key);
+                let failed = result.as_ref().err().cloned();
                 if let Err(message) = result {
                     self.push_log(now, message.clone(), true);
                     self.action_errors.retain(|(k, _, _)| *k != key);
-                    self.action_errors.push((key, message, now + ACTION_ERROR_MS));
+                    self.action_errors.push((key.clone(), message, now + ACTION_ERROR_MS));
                 }
-                Vec::new()
+                if key != PAUSE {
+                    return Vec::new();
+                }
+                if self.quit_after_resume {
+                    self.quit_after_resume = false;
+                    return self.quit();
+                }
+                if let (Some(message), Some(u)) = (failed, &self.update) {
+                    if u.phase == UpdatePhase::Waiting && u.paused_by_us {
+                        self.update = None;
+                        self.update_note = Some(format!("The update could not pause the queue: {message}"));
+                        return Vec::new();
+                    }
+                }
+                self.advance_update()
             }
             Input::LockChecked { held } => {
                 self.external = held && self.own == Own::Stopped;
@@ -452,6 +563,7 @@ impl Model {
         self.external = lock_held && self.own == Own::Stopped;
         self.cli_checking = false;
         self.next_check = now + LOCK_EVERY_MS;
+        let text_seen = result.as_ref().ok().map(|t| t.trim().to_string());
         self.cli = match result {
             Ok(text) => match version_of(&text) {
                 Some(v) if v >= MIN_CLI => Cli::Ready,
@@ -460,6 +572,7 @@ impl Model {
             },
             Err(message) => Cli::Problem(message),
         };
+        self.cli_version = if self.cli == Cli::Ready { text_seen } else { None };
         // The start at sign-in waits for the first good check (tick checks again while there is a problem).
         if self.cli != Cli::Ready {
             return Vec::new();
@@ -524,6 +637,22 @@ impl Model {
         if self.quitting {
             return Vec::new();
         }
+        // Spec 06d 4.3: Quit cancels an update; a queue it paused is resumed first, then the quit goes on.
+        if let Some(u) = self.update.as_ref().filter(|u| u.phase != UpdatePhase::Installing) {
+            let ours = u.paused_by_us;
+            self.update = None;
+            if ours {
+                let effects = self.action(PAUSE.to_string(), vec!["queue".into(), "resume".into()]);
+                if !effects.is_empty() {
+                    self.quit_after_resume = true;
+                    return effects;
+                }
+            }
+        }
+        if self.update.is_some() {
+            // Installing: the tray is quitting already.
+            return Vec::new();
+        }
         if self.own == Own::Stopped {
             self.quitting = true;
             return vec![Effect::Exit];
@@ -540,6 +669,11 @@ impl Model {
         if !yes {
             return Vec::new();
         }
+        self.quit_now()
+    }
+
+    /// Stop the worker (if the tray runs one) and exit.
+    fn quit_now(&mut self) -> Vec<Effect> {
         self.quitting = true;
         match self.own {
             Own::Stopped => vec![Effect::Exit],
@@ -549,6 +683,136 @@ impl Model {
                 vec![Effect::SendStop, Effect::ExitAfterStop]
             }
         }
+    }
+
+    /// Spec 06d 4.2: what update is offered, and to which version.
+    fn offer(&self) -> Option<(UpdateKind, String)> {
+        if self.cli != Cli::Ready || self.update.is_some() || self.quitting {
+            return None;
+        }
+        let server = self.queue.as_ref()?.server_version.clone()?;
+        let s = version_of(&server)?;
+        let tray_old = version_of(&self.version).is_some_and(|t| s > t);
+        let cli_old = self.cli_version.as_deref().and_then(version_of).is_some_and(|c| s > c);
+        if tray_old && !self.appimage {
+            Some((UpdateKind::Both, server))
+        } else if cli_old {
+            Some((UpdateKind::CliOnly, server))
+        } else {
+            None
+        }
+    }
+
+    fn appimage_note(&self) -> Option<String> {
+        let server = self.queue.as_ref()?.server_version.as_ref()?;
+        let newer = version_of(server).zip(version_of(&self.version)).is_some_and(|(s, t)| s > t);
+        (self.appimage && newer).then(|| format!("fornax {server} is available: update the AppImage from the GitHub release"))
+    }
+
+    fn resume_if_ours(&mut self, ours: bool) -> Vec<Effect> {
+        if ours {
+            self.action(PAUSE.to_string(), vec!["queue".into(), "resume".into()])
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn start_update(&mut self, now: i64) -> Vec<Effect> {
+        let Some((kind, target)) = self.offer().filter(|_| self.can_act()) else {
+            return Vec::new();
+        };
+        let paused = self.queue.as_ref().is_some_and(|q| q.paused);
+        self.update_note = None;
+        self.update = Some(Update { target: target.clone(), kind, phase: UpdatePhase::Waiting, paused_by_us: !paused });
+        self.push_log(now, format!("updating to {target}"), false);
+        let mut effects = if paused { Vec::new() } else { self.action(PAUSE.to_string(), vec!["queue".into(), "pause".into()]) };
+        effects.extend(self.advance_update());
+        effects
+    }
+
+    /// Spec 06d 4.3 step 2: once the queue is paused and nothing runs, fornax update.
+    fn advance_update(&mut self) -> Vec<Effect> {
+        let ready = match (&self.update, &self.queue) {
+            (Some(u), Some(q)) => u.phase == UpdatePhase::Waiting && q.paused && q.running.is_none() && !self.pending.contains(PAUSE),
+            _ => false,
+        };
+        if !ready {
+            return Vec::new();
+        }
+        if let Some(u) = &mut self.update {
+            u.phase = UpdatePhase::Cli;
+        }
+        vec![Effect::RunUpdate]
+    }
+
+    fn cancel_update(&mut self, now: i64) -> Vec<Effect> {
+        match self.update.take() {
+            Some(u) if u.phase == UpdatePhase::Waiting => {
+                self.push_log(now, "update cancelled".to_string(), false);
+                self.resume_if_ours(u.paused_by_us)
+            }
+            other => {
+                self.update = other;
+                Vec::new()
+            }
+        }
+    }
+
+    fn update_ran(&mut self, result: Result<(), String>, now: i64) -> Vec<Effect> {
+        let Some(u) = self.update.clone().filter(|u| u.phase == UpdatePhase::Cli) else {
+            return Vec::new();
+        };
+        match (result, u.kind) {
+            (Err(message), _) => {
+                self.update = None;
+                self.update_note = Some(format!("The update failed: {message}"));
+                self.push_log(now, format!("the update failed: {message}"), true);
+                self.resume_if_ours(u.paused_by_us)
+            }
+            (Ok(()), UpdateKind::CliOnly) => {
+                self.update = None;
+                let mut effects = self.resume_if_ours(u.paused_by_us);
+                self.cli_checking = true;
+                effects.push(Effect::CheckCli);
+                effects
+            }
+            (Ok(()), UpdateKind::Both) => {
+                if let Some(u) = &mut self.update {
+                    u.phase = UpdatePhase::Installing;
+                }
+                vec![Effect::StartTrayInstall { target: u.target, resume_queue: u.paused_by_us }]
+            }
+        }
+    }
+
+    fn install_started(&mut self, result: Result<(), String>, now: i64) -> Vec<Effect> {
+        let Some(u) = self.update.clone().filter(|u| u.phase == UpdatePhase::Installing) else {
+            return Vec::new();
+        };
+        match result {
+            Ok(()) => {
+                self.push_log(now, format!("installing the tray {}; it starts again by itself", u.target), false);
+                self.quit_now()
+            }
+            Err(message) => {
+                self.update = None;
+                self.update_note = Some(format!("The tray update could not start: {message}"));
+                self.push_log(now, format!("the tray update could not start: {message}"), true);
+                self.resume_if_ours(u.paused_by_us)
+            }
+        }
+    }
+
+    /// Spec 06d 4.1.
+    fn versions(&self) -> String {
+        let mut parts = vec![format!("tray {}", self.version)];
+        if let Some(cli) = &self.cli_version {
+            parts.push(format!("fornax {cli}"));
+        }
+        if let Some(server) = self.queue.as_ref().and_then(|q| q.server_version.as_ref()) {
+            parts.push(format!("server {server}"));
+        }
+        parts.join(" · ")
     }
 
     fn worker_event(&mut self, event: WorkerEvent, now: i64) {
@@ -612,8 +876,16 @@ impl Model {
         self.watch_text = None;
         self.watch_problem = None;
         self.watch_failures = 0;
-        let effects = self.notifications(&queue);
+        let mut effects = self.notifications(&queue);
         self.queue = Some(queue);
+        // Spec 06d 4.3 step 5: the queue the tray before this one paused for its update.
+        if self.resume_after_update {
+            self.resume_after_update = false;
+            if self.queue.as_ref().is_some_and(|q| q.paused) {
+                effects.extend(self.action(PAUSE.to_string(), vec!["queue".into(), "resume".into()]));
+            }
+        }
+        effects.extend(self.advance_update());
         effects
     }
 
@@ -772,6 +1044,15 @@ impl Model {
         if self.quitting {
             return "Stopping the worker and quitting…".to_string();
         }
+        if let Some(u) = &self.update {
+            let running = self.queue.as_ref().is_some_and(|q| q.running.is_some());
+            return match (u.phase, u.kind) {
+                (UpdatePhase::Installing, _) => format!("Installing the tray {}…", u.target),
+                (UpdatePhase::Waiting, UpdateKind::Both) if running => format!("Updating to {} after the running job…", u.target),
+                (UpdatePhase::Waiting, UpdateKind::CliOnly) if running => format!("Updating fornax to {} after the running job…", u.target),
+                _ => format!("Updating fornax to {}…", u.target),
+            };
+        }
         if self.cli == Cli::Ready {
             if let Some(w) = self.card_wait() {
                 return Self::card_text(w);
@@ -880,6 +1161,14 @@ impl Model {
             log: self.log.iter().cloned().collect(),
             types: self.types.clone().unwrap_or_default(),
             types_note: self.types_note(),
+            versions: self.versions(),
+            update_label: self.offer().map(|(kind, v)| match kind {
+                UpdateKind::Both => format!("Update to {v}"),
+                UpdateKind::CliOnly => format!("Update fornax to {v}"),
+            }),
+            can_update: self.offer().is_some() && self.can_act(),
+            can_cancel_update: self.update.as_ref().is_some_and(|u| u.phase == UpdatePhase::Waiting),
+            update_note: self.update_note.clone().or_else(|| self.appimage_note()),
         }
     }
 }
@@ -909,6 +1198,7 @@ mod tests {
         Input::Watch(WatchLine::Queue(Box::new(Queue {
             server_time: "2026-11-15T14:00:00.000Z".into(),
             change: "0123456789abcdef".into(),
+            server_version: None,
             paused,
             worker: WorkerInfo { online: false, last_seen: None, version: None, waiting: None },
             running,
@@ -922,6 +1212,7 @@ mod tests {
         Input::Watch(WatchLine::Queue(Box::new(Queue {
             server_time: "2026-11-15T14:00:00.000Z".into(),
             change: "0123456789abcdef".into(),
+            server_version: None,
             paused,
             worker: WorkerInfo { online: true, last_seen: None, version: None, waiting: Some(waiting) },
             running,
@@ -948,8 +1239,35 @@ mod tests {
         TypeInfo { name: name.into(), state: state.into(), reason: reason.map(Into::into) }
     }
 
+    /// A queue line from a server of `server` (None: older than 0.7.0).
+    fn versioned(server: Option<&str>, running: Option<Job>, paused: bool) -> Input {
+        Input::Watch(WatchLine::Queue(Box::new(Queue {
+            server_time: "2026-11-15T14:00:00.000Z".into(),
+            change: "0123456789abcdef".into(),
+            server_version: server.map(Into::into),
+            paused,
+            worker: WorkerInfo { online: true, last_seen: None, version: None, waiting: None },
+            running,
+            queued: vec![],
+            finished: vec![],
+        })))
+    }
+
+    /// A tray 0.7.0 with fornax 0.7.0 and its worker running.
+    fn current() -> Model {
+        let mut m = Model::new();
+        m.apply(launched(true), NOW);
+        m.apply(checked("0.7.0", false), NOW);
+        m.apply(Input::WorkerEvent(WorkerEvent::Started { version: "0.7.0".into(), pid: 7 }), NOW);
+        m
+    }
+
+    fn pause_args(paused: bool) -> Effect {
+        Effect::RunAction { key: PAUSE.into(), args: vec!["queue".into(), if paused { "pause" } else { "resume" }.into()] }
+    }
+
     fn launched(start_worker: bool) -> Input {
-        Input::Launched { start_worker, warnings: Vec::new() }
+        Input::Launched { start_worker, warnings: Vec::new(), version: "0.7.0".into(), appimage: false, update_done: None }
     }
 
     fn checked(version: &str, lock_held: bool) -> Input {
@@ -1228,6 +1546,155 @@ mod tests {
     }
 
     #[test]
+    fn the_versions_line_and_the_offer_follow_the_versions() {
+        let mut m = current();
+        m.apply(versioned(None, None, false), NOW);
+        let s = m.snapshot();
+        assert_eq!((s.versions.as_str(), s.update_label.clone(), s.can_update), ("tray 0.7.0 · fornax 0.7.0", None, false));
+        m.apply(versioned(Some("0.7.0"), None, false), NOW);
+        assert_eq!((m.snapshot().versions, m.snapshot().update_label), ("tray 0.7.0 · fornax 0.7.0 · server 0.7.0".to_string(), None));
+        m.apply(versioned(Some("0.7.1"), None, false), NOW);
+        let s = m.snapshot();
+        assert_eq!((s.update_label.as_deref(), s.can_update), (Some("Update to 0.7.1"), true));
+        // The tray is current, the CLI is not.
+        let mut m = Model::new();
+        m.apply(Input::Launched { start_worker: false, warnings: vec![], version: "0.7.1".into(), appimage: false, update_done: None }, NOW);
+        m.apply(checked("0.7.0", false), NOW);
+        m.apply(versioned(Some("0.7.1"), None, false), NOW);
+        assert_eq!(m.snapshot().update_label.as_deref(), Some("Update fornax to 0.7.1"));
+        // An AppImage tray: no tray update, a note; the CLI update is still offered.
+        let mut m = Model::new();
+        m.apply(Input::Launched { start_worker: false, warnings: vec![], version: "0.7.0".into(), appimage: true, update_done: None }, NOW);
+        m.apply(checked("0.7.0", false), NOW);
+        m.apply(versioned(Some("0.7.1"), None, false), NOW);
+        let s = m.snapshot();
+        assert_eq!(s.update_label.as_deref(), Some("Update fornax to 0.7.1"));
+        assert_eq!(s.update_note.as_deref(), Some("fornax 0.7.1 is available: update the AppImage from the GitHub release"));
+    }
+
+    #[test]
+    fn an_update_pauses_waits_for_the_running_job_updates_fornax_and_starts_the_installer() {
+        let mut m = current();
+        m.apply(versioned(Some("0.7.1"), Some(job("R1", "running")), false), NOW);
+        assert_eq!(m.apply(Input::Update, NOW), vec![pause_args(true)]);
+        let s = m.snapshot();
+        assert_eq!((s.headline.as_str(), s.can_cancel_update, s.can_update), ("Updating to 0.7.1 after the running job…", true, false));
+        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(()) }, NOW);
+        // Paused, the job still runs: nothing yet.
+        assert_eq!(m.apply(versioned(Some("0.7.1"), Some(job("R1", "running")), true), NOW), vec![]);
+        // The job is done: fornax update.
+        assert_eq!(m.apply(versioned(Some("0.7.1"), None, true), NOW), vec![Effect::RunUpdate]);
+        assert_eq!(m.snapshot().headline, "Updating fornax to 0.7.1…");
+        m.apply(Input::UpdateText("updated fornax 0.7.0 → 0.7.1".into()), NOW);
+        assert_eq!(m.snapshot().log.last().map(|l| l.text.as_str()), Some("updated fornax 0.7.0 → 0.7.1"));
+        assert_eq!(m.apply(Input::UpdateRan(Ok(())), NOW), vec![Effect::StartTrayInstall { target: "0.7.1".into(), resume_queue: true }]);
+        assert_eq!(m.snapshot().headline, "Installing the tray 0.7.1…");
+        // The helper started: stop the worker and quit, without asking.
+        assert_eq!(m.apply(Input::TrayInstallStarted(Ok(())), NOW), vec![Effect::SendStop, Effect::ExitAfterStop]);
+        assert!(!m.snapshot().confirm_quit);
+    }
+
+    #[test]
+    fn an_already_paused_queue_is_not_resumed_by_the_update() {
+        let mut m = current();
+        m.apply(versioned(Some("0.7.1"), None, true), NOW);
+        assert_eq!(m.apply(Input::Update, NOW), vec![Effect::RunUpdate]);
+        assert_eq!(m.apply(Input::UpdateRan(Ok(())), NOW), vec![Effect::StartTrayInstall { target: "0.7.1".into(), resume_queue: false }]);
+    }
+
+    #[test]
+    fn a_failed_fornax_update_or_helper_resumes_the_queue_and_says_why() {
+        let mut m = current();
+        m.apply(versioned(Some("0.7.1"), None, false), NOW);
+        m.apply(Input::Update, NOW);
+        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(()) }, NOW);
+        m.apply(versioned(Some("0.7.1"), None, true), NOW);
+        assert_eq!(m.apply(Input::UpdateRan(Err("cannot reach the server".into())), NOW), vec![pause_args(false)]);
+        let s = m.snapshot();
+        assert_eq!((s.update_note.as_deref(), s.can_cancel_update), (Some("The update failed: cannot reach the server"), false));
+        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(()) }, NOW);
+        // Again, up to the helper, which cannot start.
+        m.apply(Input::Update, NOW);
+        m.apply(Input::UpdateRan(Ok(())), NOW);
+        assert_eq!(m.apply(Input::TrayInstallStarted(Err("node was not found".into())), NOW), vec![]);
+        assert_eq!(m.snapshot().update_note.as_deref(), Some("The tray update could not start: node was not found"));
+        assert_eq!(m.snapshot().headline, "Worker running · queue paused");
+    }
+
+    #[test]
+    fn a_pause_that_fails_cancels_the_update() {
+        let mut m = current();
+        m.apply(versioned(Some("0.7.1"), None, false), NOW);
+        m.apply(Input::Update, NOW);
+        assert_eq!(m.apply(Input::ActionDone { key: PAUSE.into(), result: Err("cannot reach the server".into()) }, NOW), vec![]);
+        let s = m.snapshot();
+        assert_eq!((s.update_note.as_deref(), s.can_update), (Some("The update could not pause the queue: cannot reach the server"), true));
+    }
+
+    #[test]
+    fn cancel_and_quit_during_an_update_resume_the_queue() {
+        let mut m = current();
+        m.apply(versioned(Some("0.7.1"), Some(job("R1", "running")), false), NOW);
+        m.apply(Input::Update, NOW);
+        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(()) }, NOW);
+        assert_eq!(m.apply(Input::CancelUpdate, NOW), vec![pause_args(false)]);
+        assert_eq!(m.snapshot().headline, "Worker running · queue active");
+        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(()) }, NOW);
+        // Quit while waiting: resume first, then the usual question.
+        m.apply(Input::Update, NOW);
+        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(()) }, NOW);
+        assert_eq!(m.apply(Input::Quit, NOW), vec![pause_args(false)]);
+        assert_eq!(m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(()) }, NOW), vec![Effect::ShowWindow]);
+        assert!(m.snapshot().confirm_quit);
+        // The answer of a cancelled fornax update changes nothing.
+        assert_eq!(m.apply(Input::UpdateRan(Ok(())), NOW), vec![]);
+    }
+
+    #[test]
+    fn an_update_of_fornax_only_checks_fornax_again_and_resumes() {
+        let mut m = Model::new();
+        m.apply(Input::Launched { start_worker: false, warnings: vec![], version: "0.7.1".into(), appimage: false, update_done: None }, NOW);
+        m.apply(checked("0.7.0", false), NOW);
+        m.apply(versioned(Some("0.7.1"), None, false), NOW);
+        m.apply(Input::Update, NOW);
+        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(()) }, NOW);
+        assert_eq!(m.apply(versioned(Some("0.7.1"), None, true), NOW), vec![Effect::RunUpdate]);
+        assert_eq!(m.snapshot().headline, "Updating fornax to 0.7.1…");
+        assert_eq!(m.apply(Input::UpdateRan(Ok(())), NOW), vec![pause_args(false), Effect::CheckCli]);
+        m.apply(checked("0.7.1", false), NOW);
+        assert_eq!(m.snapshot().versions, "tray 0.7.1 · fornax 0.7.1 · server 0.7.1");
+    }
+
+    #[test]
+    fn an_update_with_a_worker_outside_the_tray_exits_at_once() {
+        let mut m = Model::new();
+        m.apply(launched(false), NOW);
+        m.apply(checked("0.7.0", true), NOW);
+        m.apply(versioned(Some("0.7.1"), None, true), NOW);
+        assert_eq!(m.apply(Input::Update, NOW), vec![Effect::RunUpdate]);
+        m.apply(Input::UpdateRan(Ok(())), NOW);
+        assert_eq!(m.apply(Input::TrayInstallStarted(Ok(())), NOW), vec![Effect::Exit]);
+    }
+
+    #[test]
+    fn the_next_tray_reads_the_marker() {
+        let done = |target: &str, resume_queue: bool| UpdateDone { target: target.into(), resume_queue, last_line: Some("the installation was cancelled".into()) };
+        let mut m = Model::new();
+        m.apply(Input::Launched { start_worker: false, warnings: vec![], version: "0.7.1".into(), appimage: false, update_done: Some(done("0.7.1", true)) }, NOW);
+        assert_eq!(m.snapshot().log.last().map(|l| l.text.as_str()), Some("updated to 0.7.1"));
+        m.apply(checked("0.7.1", false), NOW);
+        // The queue the old tray paused is resumed once it is known.
+        assert_eq!(m.apply(versioned(Some("0.7.1"), None, true), NOW), vec![pause_args(false)]);
+        assert_eq!(m.apply(versioned(Some("0.7.1"), None, true), NOW), vec![]);
+        let mut m = Model::new();
+        m.apply(Input::Launched { start_worker: false, warnings: vec![], version: "0.7.0".into(), appimage: false, update_done: Some(done("0.7.1", false)) }, NOW);
+        let last = m.snapshot().log.last().map(|l| (l.text.clone(), l.error));
+        assert_eq!(last, Some(("the tray update to 0.7.1 did not install: the installation was cancelled".to_string(), true)));
+        m.apply(checked("0.7.0", false), NOW);
+        assert_eq!(m.apply(versioned(Some("0.7.1"), None, true), NOW), vec![]);
+    }
+
+    #[test]
     fn an_unreadable_queue_is_said_once_and_cleared_by_the_next_answer() {
         let mut m = ready(false);
         m.apply(Input::Watch(WatchLine::Failed { error: "network".into(), message: "cannot reach the server: ECONNREFUSED".into() }), NOW);
@@ -1414,7 +1881,7 @@ mod tests {
     #[test]
     fn the_setting_and_warnings() {
         let mut m = Model::new();
-        m.apply(Input::Launched { start_worker: true, warnings: vec!["tray.json is not valid: expected value".into()] }, NOW);
+        m.apply(Input::Launched { start_worker: true, warnings: vec!["tray.json is not valid: expected value".into()], version: "0.7.0".into(), appimage: false, update_done: None }, NOW);
         assert_eq!(m.snapshot().note.as_deref(), Some("tray.json is not valid: expected value"));
         assert_eq!(m.apply(Input::SetStartWorker(false), NOW), vec![Effect::SaveStartWorker(false)]);
         assert!(!m.snapshot().start_worker);
@@ -1513,7 +1980,7 @@ mod tests {
         let guard = "Windows protects this tray against folder links (Redirection Guard)";
         let broken = "tray.json is not valid: expected value";
         let mut m = Model::new();
-        m.apply(Input::Launched { start_worker: true, warnings: vec![guard.into(), broken.into()] }, NOW);
+        m.apply(Input::Launched { start_worker: true, warnings: vec![guard.into(), broken.into()], version: "0.7.0".into(), appimage: false, update_done: None }, NOW);
         assert_eq!(m.snapshot().note, Some(format!("{guard}\n{broken}")));
         m.apply(Input::Warning("cannot write tray.json".into()), NOW);
         m.apply(Input::Warning("cannot write tray.json".into()), NOW);
@@ -1530,9 +1997,10 @@ mod tests {
         assert_eq!(
             keys,
             [
-                "canPause", "canStart", "canStop", "confirmQuit", "finished", "headline", "icon", "log", "note", "offsetMs",
-                "pauseError", "pauseLabel", "paused", "queueKnown", "queueNote", "queued", "running", "serverDownSinceMs",
-                "serverMessage", "serverRefused", "startWorker", "stopLabel", "tooltip", "types", "typesNote",
+                "canCancelUpdate", "canPause", "canStart", "canStop", "canUpdate", "confirmQuit", "finished", "headline", "icon",
+                "log", "note", "offsetMs", "pauseError", "pauseLabel", "paused", "queueKnown", "queueNote", "queued", "running",
+                "serverDownSinceMs", "serverMessage", "serverRefused", "startWorker", "stopLabel", "tooltip", "types",
+                "typesNote", "updateLabel", "updateNote", "versions",
             ]
         );
         let mut job_keys: Vec<&str> = v["running"].as_object().unwrap().keys().map(String::as_str).collect();

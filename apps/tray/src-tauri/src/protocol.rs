@@ -91,6 +91,9 @@ pub struct Job {
 pub struct Queue {
     pub server_time: String,
     pub change: String,
+    /// The server's version (spec 06d 2.3); None from a server older than 0.7.0.
+    #[serde(default)]
+    pub server_version: Option<String>,
     pub paused: bool,
     pub worker: WorkerInfo,
     pub running: Option<Job>,

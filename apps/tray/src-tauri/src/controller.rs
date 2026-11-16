@@ -100,7 +100,13 @@ impl Controller {
             Ok(cfg) => (cfg.start_worker, None),
             Err(message) => (true, Some(message)),
         };
-        let _ = tx.send(Input::Launched { start_worker, warnings: warning.into_iter().chain(config_warning).collect() });
+        let _ = tx.send(Input::Launched {
+            start_worker,
+            warnings: warning.into_iter().chain(config_warning).collect(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            appimage: false,
+            update_done: None,
+        });
         {
             let runner = Runner::new(paths, tx.clone(), ui, timing);
             let latest = Arc::clone(&latest);
@@ -211,6 +217,8 @@ impl Runner {
                 }
             },
             Effect::RunAction { key, args } => run_action(&self.paths, &self.tx, key, args, self.timing.action_timeout),
+            // Task 5 of plan 06d carries these out.
+            Effect::RunUpdate | Effect::StartTrayInstall { .. } => {}
             Effect::CheckLock => {
                 let _ = self.tx.send(Input::LockChecked { held: lock::held(&self.paths.lock(), SystemTime::now()) });
             }
