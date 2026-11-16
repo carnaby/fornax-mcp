@@ -2,6 +2,7 @@
 
 pub mod config;
 pub mod controller;
+pub mod gpu;
 pub mod lock;
 pub mod process;
 pub mod protocol;
