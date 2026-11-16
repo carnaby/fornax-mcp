@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Fornax window frame</title>
+  </head>
+  <body style="margin: 0; background: #000">
+    <script>
+      // The preview in a frame of exactly 400 x h px, for screenshots (a headless window's viewport is not its size).
+      const p = new URLSearchParams(location.search);
+      const f = document.createElement('iframe');
+      f.src = '/preview/?fixture=' + encodeURIComponent(p.get('fixture') ?? 'main');
+      f.width = '400';
+      f.height = p.get('h') ?? '820';
+      f.style.border = '0';
+      f.style.display = 'block';
+      document.body.append(f);
+    </script>
+  </body>
+</html>
