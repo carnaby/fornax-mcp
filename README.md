@@ -342,12 +342,16 @@ back (it returns to the queue, or fails), and once the server can be reached aga
 
 ## Tray app
 
-On the worker's PC the tray app starts the worker and shows the whole queue: the running job with its time and
-progress, the waiting jobs in the order they will run (drag them, or use ⤒ and ⤓), the finished ones with their
-result page and error. Pause queue lets the running job finish and starts no other; Stop worker gives the running job
-back to the queue. It tells you when a job fails, and when jobs wait while the worker is stopped or the queue is
-paused. The Types section lists the job types the worker offers, the ones waiting for the card (orange) and the ones
-whose check failed (red, click for the reason); the icon turns orange while the worker waits for the card.
+On the worker's PC the tray app starts the worker and shows the card and the whole queue. The header shows the
+worker's state (with Pause queue and Start/Stop worker), the GPU strip the card's memory, load and temperature and who
+holds it (a job, a lease, or programs outside Fornax, with when the next job starts), Running the job with its
+progress and time left (or the lease, with Revoke), Waiting the jobs in the order they will run (drag them, or use ⤒
+and ⤓ on hover), and the tabs History (finished jobs, their result page and error) and Worker log. Pause queue lets
+the running job finish and starts no other; Stop worker gives the running job back to the queue. It tells you when a
+job fails, and when jobs wait while the worker is stopped or the queue is paused. The footer lists the job types the
+worker offers, the ones waiting for the card (dimmed) and the ones whose check failed (red, click for the reason); the
+icon turns orange while the worker waits for the card and violet while a lease holds it. The card is read with
+`nvidia-smi` while the window is open.
 
 1. Install `fornax` 0.5.0 or newer and pair this PC (see [Run the worker](#run-the-worker)); the tray runs the
    installed `fornax.mjs` with Node.js 22 or newer.

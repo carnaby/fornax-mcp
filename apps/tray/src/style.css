@@ -16,7 +16,8 @@
 html, body, #app { height: 100%; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 13px / 1.4 var(--sans); overflow: hidden; }
 p { margin: 0; }
-.tray { height: 100%; display: flex; flex-direction: column; gap: 10px; padding: 12px; }
+/* Only when everything at once does not fit (all banners at the minimum height) does the window scroll as a whole. */
+.tray { height: 100%; display: flex; flex-direction: column; gap: 10px; padding: 12px; overflow-y: auto; }
 .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; }
 .label { margin: 0; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-2); }
 .mono { font-family: var(--mono); }
@@ -120,7 +121,9 @@ button.quit { background: var(--bad); border-color: var(--bad); color: var(--bg)
 
 /* Waiting (spec 06e § 2.5) */
 .list { margin: 0; padding: 0; list-style: none; }
-.waiting-block { flex: 0 1 auto; min-height: 0; }
+/* Waiting gives way first, down to its title; its list is cut and scrolls. */
+.waiting-block { flex: 0 1 auto; min-height: 18px; overflow: hidden; }
+.waiting-block > .label-row { flex: none; }
 .waiting-list { flex: 0 1 auto; min-height: 0; max-height: 262px; overflow: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
 .wrow { display: flex; align-items: center; gap: 8px; padding: 9px 8px 9px 12px; border-bottom: 1px solid var(--row-line); }
 .wrow:last-child { border-bottom: none; }
