@@ -17,3 +17,6 @@ setBridge({
 });
 document.title = `Fornax · ${name}`;
 await import('../src/main');
+// ?click=<data-key> clicks one control after the first paint, to show the window's own state (e.g. a cancel question).
+const click = new URLSearchParams(location.search).get('click');
+if (click) setTimeout(() => document.querySelector<HTMLElement>(`[data-key="${CSS.escape(click)}"]`)?.click(), 100);

@@ -17,7 +17,7 @@ html, body, #app { height: 100%; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 13px / 1.4 var(--sans); overflow: hidden; }
 p { margin: 0; }
 /* Only when everything at once does not fit (all banners at the minimum height) does the window scroll as a whole. */
-.tray { height: 100%; display: flex; flex-direction: column; gap: 10px; padding: 12px; overflow-y: auto; }
+.tray { height: 100%; display: flex; flex-direction: column; gap: 10px; padding: 12px; overflow-x: hidden; overflow-y: auto; }
 .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; }
 .label { margin: 0; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-2); }
 .mono { font-family: var(--mono); }
@@ -82,9 +82,11 @@ button.quit { background: var(--bad); border-color: var(--bad); color: var(--bg)
 .label-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .label-note { color: var(--text-3); font-size: 11.5px; }
 .label-note.lease { color: var(--lease-text); }
+/* A long type name is cut with "…" (a pack may name its type with up to 40 characters). */
 .chip {
-  display: inline-flex; flex: none; align-items: center; height: 20px; padding: 0 7px; border: none; border-radius: 5px;
-  background: rgba(168, 162, 156, 0.14); color: var(--text-2); font-size: 11.5px; font-weight: 600; white-space: nowrap;
+  display: inline-block; flex: none; max-width: 180px; height: 20px; padding: 0 7px; overflow: hidden; border: none;
+  border-radius: 5px; background: rgba(168, 162, 156, 0.14); color: var(--text-2); font-size: 11.5px; font-weight: 600;
+  line-height: 20px; text-overflow: ellipsis; vertical-align: middle; white-space: nowrap;
 }
 .chip-lease { background: rgba(245, 185, 87, 0.14); color: #f5b957; }
 .chip-render { background: rgba(157, 190, 255, 0.14); color: #9dbeff; }
@@ -108,6 +110,9 @@ button.quit { background: var(--bad); border-color: var(--bad); color: var(--bg)
 .run-card .track > div { background: var(--accent); }
 .run-meta { display: flex; justify-content: space-between; gap: 8px; color: var(--text-2); font-size: 12px; }
 .run-meta .mono { font-size: 11.5px; }
+/* A job's own progress message is free text: it wraps, the time on the right keeps its place. */
+.run-meta > .mono:first-child { min-width: 0; overflow-wrap: anywhere; }
+.run-meta > .mono:last-child { flex: none; }
 .lease-card { gap: 12px; border-color: var(--lease-border); background: var(--lease-card); }
 .lease-top { display: flex; align-items: flex-start; gap: 12px; }
 .lease-icon { display: grid; flex: none; place-items: center; width: 36px; height: 36px; border-radius: 8px; background: rgba(245, 176, 74, 0.16); color: var(--lease-text); }
@@ -139,6 +144,9 @@ button.quit { background: var(--bad); border-color: var(--bad); color: var(--bg)
 /* opacity, not visibility: a hidden button cannot take the focus, and Tab must reach ⤒ ⤓. */
 .wrow .move { opacity: 0; }
 .wrow:hover .move, .wrow:focus-within .move { opacity: 1; }
+/* The cancel question of a waiting job takes a line of its own, under the job. */
+.wrow { flex-wrap: wrap; }
+.wrow > .confirm { flex-basis: 100%; max-width: none; }
 .wempty { padding: 10px 12px; color: var(--text-3); font-size: 12px; }
 
 /* Tabs (spec 06e § 2.6) */

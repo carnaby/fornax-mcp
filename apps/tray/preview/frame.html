@@ -9,7 +9,8 @@
       // The preview in a frame of exactly 400 x h px, for screenshots (a headless window's viewport is not its size).
       const p = new URLSearchParams(location.search);
       const f = document.createElement('iframe');
-      f.src = '/preview/?fixture=' + encodeURIComponent(p.get('fixture') ?? 'main');
+      // Every parameter goes on to the preview (fixture, click); h is the frame's height.
+      f.src = '/preview/' + location.search;
       f.width = '400';
       f.height = p.get('h') ?? '820';
       f.style.border = '0';

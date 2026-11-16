@@ -10,6 +10,7 @@ import '@fontsource/jetbrains-mono/latin-400.css';
 import '@fontsource/jetbrains-mono/latin-ext-400.css';
 import './style.css';
 import { invoke, listen } from './bridge';
+import { type DrawKeys, drawPlan } from './draw';
 import { renderFooter } from './footer';
 import { renderGpu } from './gpu';
 import { initHeader, renderHeader } from './header';
@@ -25,9 +26,9 @@ import { el, setOffset, setRerender, tickTimes } from './ui';
 import { isDragging, onDragEnd, renderWaiting } from './waiting';
 
 let current: Snapshot | null = null;
-/** The snapshot last drawn, as JSON: the core sends one every second even when nothing changed, and redrawing an
- * equal one would close open errors, drop clicks and focus for nothing. */
-let drawn = '';
+/** The keys of the snapshot last drawn: the core sends one every second even when nothing changed, and redrawing an
+ * equal one would close open errors, drop clicks and focus for nothing; the card's numbers redraw only the GPU strip. */
+let drawn: DrawKeys | null = null;
 /** A snapshot that came during a drag; drawn when it ends. */
 let held: Snapshot | null = null;
 
@@ -37,17 +38,17 @@ function render(s: Snapshot, force = false): void {
     held = s;
     return;
   }
-  const json = JSON.stringify(s);
-  if (!force && json === drawn) return;
-  drawn = json;
+  const plan = drawPlan(drawn, s);
+  drawn = plan.keys;
   current = s;
+  if (plan.gpu || force) renderGpu(s);
+  if (!plan.rest && !force) return;
   setOffset(s.offsetMs);
   const focused = document.activeElement instanceof HTMLElement ? document.activeElement.dataset.key : undefined;
   const stale = s.serverDownSinceMs !== null || s.serverRefused;
   el('tray').classList.toggle('stale', stale);
   forgetConfirm([s.running, ...s.queued].flatMap((j) => (j ? [j.id] : [])), stale);
   renderHeader(s);
-  renderGpu(s);
   renderRunning(s, stale);
   renderWaiting(s, stale);
   renderHistory(s);

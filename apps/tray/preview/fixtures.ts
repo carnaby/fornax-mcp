@@ -202,6 +202,19 @@ const crowded = (): Snapshot => {
   };
 };
 
+/** Final review 06e: an unbroken progress message and a long type name must not widen the window. */
+const long = (): Snapshot => {
+  const s = base();
+  return {
+    ...s,
+    running: s.running && {
+      ...s.running,
+      type: 'a_very_long_type_name_of_a_pack_v2',
+      progressMessage: 'processing_clip_from_the_holiday_in_the_mountains_2026_final.mp4 frame 412 / 636',
+    },
+  };
+};
+
 export const FIXTURES = {
   main: base,
   lease,
@@ -214,4 +227,5 @@ export const FIXTURES = {
   quit,
   empty,
   crowded,
+  long,
 } satisfies Record<string, () => Snapshot>;
