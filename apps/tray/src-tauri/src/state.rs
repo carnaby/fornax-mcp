@@ -488,7 +488,14 @@ impl Model {
             Input::StopWorker => self.stop(now),
             // During an update the update owns the pause (the button is off; a click on the way is dropped).
             Input::SetPaused(_) if self.update.is_some() => Vec::new(),
-            Input::SetPaused(paused) => self.action(PAUSE.to_string(), vec!["queue".into(), if paused { "pause" } else { "resume" }.into()]),
+            Input::SetPaused(paused) => {
+                let effects = self.action(PAUSE.to_string(), vec!["queue".into(), if paused { "pause" } else { "resume" }.into()]);
+                // The user took the queue over: nothing an update left is owed any more.
+                if !effects.is_empty() {
+                    self.clear_owed();
+                }
+                effects
+            }
             Input::Move { id, to } => {
                 let mut args = vec!["queue".to_string(), "move".into(), id.clone()];
                 match to {
@@ -706,11 +713,16 @@ impl Model {
         if key == PAUSE {
             self.pause_target = args.get(1).map(|a| a == "pause");
             // The answer's queue tells which queue lines are older than the action.
-            if self.cli_version.as_deref().and_then(version_of).is_some_and(|v| v >= PAUSE_JSON_CLI) {
+            if self.answers_with_time() {
                 args.push("--json".into());
             }
         }
         vec![Effect::RunAction { key, args }]
+    }
+
+    /// fornax answers pause and resume with the queue, so the tray knows which queue lines are older than the answer.
+    fn answers_with_time(&self) -> bool {
+        self.cli_version.as_deref().and_then(version_of).is_some_and(|v| v >= PAUSE_JSON_CLI)
     }
 
     fn quit(&mut self, now: i64) -> Vec<Effect> {
@@ -1029,10 +1041,11 @@ impl Model {
             self.update_note = None;
         }
         // Spec 06d 4.3: a resume owed for a queue an update paused (also by the tray before this one). A line that shows
-        // the queue running, or paused after the update ended, pays it (that pause is not undone); only a line older
-        // than the update's pause, read while that pause is still on its way, says nothing yet.
-        let pause_on_its_way = self.pending.contains(PAUSE) && self.pause_target == Some(true);
-        if self.resume_owed && !older && !pause_on_its_way {
+        // the queue running, or paused after the update ended, pays it (that pause is not undone); a line older than the
+        // update's pause, read while that pause is still on its way, says nothing yet. Without answer times (fornax
+        // before 0.7.2) no line read while a pause or resume runs can be told from an older one: its answer decides.
+        let undecided = self.pending.contains(PAUSE) && (self.pause_target == Some(true) || !self.answers_with_time());
+        if self.resume_owed && !older && !undecided {
             if let Some((paused, ours)) = self.queue.as_ref().map(|q| (q.paused, self.owed_pause(q))) {
                 if !paused || !ours {
                     self.clear_owed();
@@ -2212,6 +2225,37 @@ mod tests {
         assert_eq!(m.apply(Input::ActionDone { key: PAUSE.into(), result: Err("cannot reach the server".into()) }, NOW + 10_000), vec![]);
         let line = line_at("2026-11-15T14:00:20.000Z", Some(job("R1", "running")), Some("2026-11-15T14:00:08.000Z"));
         assert_eq!(m.apply(line, NOW + 20_000), vec![pause_args(false)]);
+    }
+
+    /// Re-review 0.7.2 Minor 1: with a server before 0.7.2 (no paused_at) a resume still owed undid the user's own pause.
+    #[test]
+    fn the_users_own_pause_or_resume_pays_an_owed_resume() {
+        let mut m = current();
+        m.apply(versioned(Some("0.7.2"), None, false), NOW);
+        m.apply(Input::Update, NOW);
+        let timeout = Input::ActionDone { key: PAUSE.into(), result: Err("fornax queue pause did not finish within 30 s".into()) };
+        assert_eq!(m.apply(timeout, NOW + 30_000), vec![pause_args(false)]);
+        assert_eq!(m.apply(Input::ActionDone { key: PAUSE.into(), result: Err("internal error".into()) }, NOW + 31_000), vec![]);
+        assert_eq!(m.apply(Input::SetPaused(true), NOW + 90_000), vec![pause_args(true)]);
+        assert_eq!(m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(None) }, NOW + 91_000), vec![]);
+        assert_eq!(m.apply(versioned(Some("0.7.2"), None, true), NOW + 92_000), vec![]);
+        assert!(!m.apply(Input::Tick, NOW + 200_000).contains(&pause_args(false)));
+    }
+
+    /// Re-review 0.7.2 Minor 2: with fornax before 0.7.2 (no answer time) a line older than the update's pause, read
+    /// while the resume ran, dropped the owed resume; the resume then failed and the queue stayed paused.
+    #[test]
+    fn without_answer_times_a_running_resume_decides_what_is_owed() {
+        let mut m = current();
+        m.apply(line_at("2026-11-15T14:00:00.000Z", Some(job("R1", "running")), None), NOW);
+        m.apply(Input::Update, NOW);
+        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(None) }, NOW + 1000);
+        assert_eq!(m.apply(Input::CancelUpdate, NOW + 2000), vec![pause_args(false)]);
+        // A progress line built before the pause, read now.
+        assert_eq!(m.apply(line_at("2026-11-15T14:00:00.500Z", Some(job("R1", "running")), None), NOW + 2500), vec![]);
+        assert_eq!(m.apply(Input::ActionDone { key: PAUSE.into(), result: Err("fornax queue resume did not finish within 30 s".into()) }, NOW + 32_000), vec![]);
+        let line = line_at("2026-11-15T14:00:40.000Z", Some(job("R1", "running")), Some("2026-11-15T14:00:01.000Z"));
+        assert_eq!(m.apply(line, NOW + 40_000), vec![pause_args(false)]);
     }
 
     #[test]
