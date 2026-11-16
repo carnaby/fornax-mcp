@@ -218,6 +218,10 @@ version); `--server <url>` asks that server instead of the one in `worker.yaml`.
 older than 0.3.0, which could not restart into a newer one: install such a version by hand from
 `<server>/downloads/fornax-worker.zip`.
 
+The server's image also carries the tray's installers of its version: `<server>/downloads/fornax-tray.msi` and `.deb`,
+described by `<server>/downloads/fornax-tray.json` (version, SHA-256 and size of each); `fornax tray install` and the
+tray's update use them.
+
 To uninstall, delete the `app` folder and remove it from your Path (Linux: `~/.local/bin/fornax`).
 
 ### Your own job types
@@ -343,8 +347,10 @@ whose check failed (red, click for the reason); the icon turns orange while the 
 
 1. Install `fornax` 0.5.0 or newer and pair this PC (see [Run the worker](#run-the-worker)); the tray runs the
    installed `fornax.mjs` with Node.js 22 or newer.
-2. Download the installer from the GitHub release: the `.msi` on Windows (it is not signed: SmartScreen asks, choose
-   More info, Run anyway), the `.deb` or the `.AppImage` on Ubuntu (they need `libwebkit2gtk-4.1-0` and
+2. Install it with `fornax tray install` (fornax 0.7.0 or newer): it downloads the installer of your server's version
+   (the `.msi` on Windows, the `.deb` on Ubuntu), checks it and runs it (Windows asks through UAC, Ubuntu for your
+   password). Or download it from the GitHub release: the `.msi` (it is not signed: SmartScreen asks, choose More info,
+   Run anyway), the `.deb` or the `.AppImage` on Ubuntu (they need `libwebkit2gtk-4.1-0` and
    `libayatana-appindicator3-1`, the `.AppImage` also `libfuse2`, on Ubuntu 24.04 `libfuse2t64`; GNOME shows tray
    icons with the AppIndicator extension, which Ubuntu enables).
 3. Start it once and tick Start at sign-in in its menu. At sign-in it starts without its window and starts the
@@ -354,6 +360,13 @@ whose check failed (red, click for the reason); the icon turns orange while the 
 Settings, all optional, go in `tray.json` next to `worker.yaml` (`%APPDATA%\fornax\tray.json` on Windows,
 `~/.config/fornax/tray.json` on Linux): `{"node": "<path to node>", "start_worker": true}`. The menu item Start
 worker with the tray writes `start_worker`.
+
+The window shows the versions of the tray, of `fornax` and of the server. When the server is newer it offers
+**Update to …** (in the window and the menu): the tray pauses the queue, lets the running job finish, runs
+`fornax update`, then `fornax tray install --wait-pid <its pid> --relaunch <its path>` installs the new tray once the old
+one has quit and starts it again (also when the installation was cancelled); the new tray says how it went and resumes
+the queue. When only `fornax` is older it offers **Update fornax to …**. A tray from the AppImage updates only `fornax`;
+get a new AppImage from the GitHub release.
 
 Quit stops the worker first; its running job goes back to the queue. A tray started by the Windows installer starts
 itself once more through Explorer, so that tools installed through folder links (scoop) work for the worker. To remove
