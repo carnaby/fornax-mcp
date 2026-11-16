@@ -4,7 +4,7 @@ import { startTestServer, type TestServer } from '@fornax/server/testing';
 import { afterEach, describe, expect, test } from 'vitest';
 import { ApiError, NetworkError, WorkerApi } from '../src/api.js';
 import type { GpuReading } from '../src/gpu.js';
-import { type LoopApi, runWorker } from '../src/loop.js';
+import { type LoopApi, runWorker, type TypeState } from '../src/loop.js';
 import { clientOf, isAlive, NODE_TOOLS, readPids, testPaths, useTempDir, waitFor, writeEchoPack } from './helpers.js';
 
 const tmp = useTempDir();
@@ -60,12 +60,17 @@ describe('runWorker', () => {
 
   test('exit code 3 withdraws the type and gives the job back without costing an attempt', async () => {
     const { paths, api, alice, say } = await setup();
-    const worker = runWorker({ api, paths, tools: NODE_TOOLS, out: say, signal: new AbortController().signal, once: true, ...fast });
+    const types: TypeState[][] = [];
+    const worker = runWorker({ api, paths, tools: NODE_TOOLS, out: say, signal: new AbortController().signal, once: true, ...fast, onTypes: (t) => types.push(t) });
     await waitFor(async () => (await alice.offered()).includes('echo'), 10_000, 'echo to be offered');
     const job = await alice.submit('echo', { mode: 'exit', code: 3 });
     expect(await worker).toBe(0);
     expect(await alice.offered()).toEqual([]);
     expect(await alice.job(job.id)).toMatchObject({ state: 'queued', attempts: 0, type_unavailable: true });
+    expect(types).toEqual([
+      [{ name: 'echo', state: 'offered' }],
+      [{ name: 'echo', state: 'unavailable', reason: 'a job found its environment broken: fix it, check it with fornax doctor echo, then restart the worker' }],
+    ]);
   });
 
   test('exit code 4 fails the job after its first attempt', async () => {
@@ -199,6 +204,8 @@ describe('runWorker', () => {
     const stop = new AbortController();
     const worker = runWorker({ api, paths, tools: NODE_TOOLS, out: say, signal: stop.signal, ...fast, gpu: { maxUsedMib: 2048, measure: async () => card, pollMs: 50 } });
     await waitFor(async () => (await alice.call('GET', '/api/queue')).worker.waiting?.reason === 'gpu_busy', 10_000, 'the reason in the queue');
+    // Spec 06c 2.1: the card is measured (and the reason sent) before the types are checked and announced.
+    await waitFor(async () => (await alice.offered()).includes('echo'), 10_000, 'echo to be offered');
     const job = await alice.submit('echo', { mode: 'ok' });
     await sleep(300);
     expect(await alice.job(job.id)).toMatchObject({

@@ -25,12 +25,15 @@ const waitingLine = (w: WorkerWaiting): string =>
     ? `waiting: ${w.used_mib} MiB of ${w.total_mib} MiB of the card in use by other programs, limit ${w.limit_mib} MiB; no job is taken`
     : `waiting: the card cannot be read (${w.error}), limit ${w.limit_mib} MiB; no job is taken`;
 
+/** What one reading of the card means for the loop (spec 06c 2.1): an unreadable card also stops the type checks. */
+export type CardState = { kind: 'free' } | { kind: 'busy' } | { kind: 'unreadable'; error: string };
+
 /**
  * Before every claim (spec 05a 2.3): the card is measured. Above the limit, or when it cannot be read (closed on error:
- * the author set the limit to protect the PC), no job is taken, the server is told why, and the worker pauses.
- * One console line per change of state, not per measurement.
+ * the author set the limit to protect the PC), no job is taken, the server is told why, and the loop pauses
+ * (`pause()`). One console line per change of state, not per measurement.
  */
-export function cardGate(o: CardGateOptions): { ready(): Promise<boolean> } {
+export function cardGate(o: CardGateOptions): { check(): Promise<CardState>; pause(): Promise<void> } {
   const pollMs = o.pollMs ?? CARD_POLL_MS;
   const resendMs = o.resendMs ?? STATUS_RESEND_MS;
   /** What the console last heard: null at start, then 'free' or a reason. */
@@ -66,13 +69,13 @@ export function cardGate(o: CardGateOptions): { ready(): Promise<boolean> } {
   };
 
   return {
-    async ready(): Promise<boolean> {
+    async check(): Promise<CardState> {
       const r = await o.measure();
       if (r.ok && r.used_mib <= o.maxUsedMib) {
         if (shown !== null && shown !== 'free') o.out(`the card is free again (${r.used_mib} of ${r.total_mib} MiB in use, limit ${o.maxUsedMib} MiB); taking jobs`);
         shown = 'free';
         if (told !== null) await tell(null);
-        return true;
+        return { kind: 'free' };
       }
       const waiting: WorkerWaiting = r.ok
         ? { reason: 'gpu_busy', used_mib: r.used_mib, total_mib: r.total_mib, limit_mib: o.maxUsedMib }
@@ -80,12 +83,14 @@ export function cardGate(o: CardGateOptions): { ready(): Promise<boolean> } {
       if (shown !== waiting.reason) o.out(waitingLine(waiting));
       shown = waiting.reason;
       if (told === null || told.reason !== waiting.reason || Date.now() - toldAt >= resendMs) await tell(waiting);
+      return r.ok ? { kind: 'busy' } : { kind: 'unreadable', error: r.error.slice(0, 200) };
+    },
+    async pause(): Promise<void> {
       try {
         await sleep(pollMs, undefined, { signal: o.signal });
       } catch {
         // Stopped: the loop ends.
       }
-      return false;
     },
   };
 }
