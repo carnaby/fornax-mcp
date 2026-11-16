@@ -53,6 +53,16 @@ test('the worker waits for the card: its sentence', async () => {
   expect((await submit()).note).toBe('waiting: 5120 MiB of 16311 MiB of the card in use by other programs, limit 2048 MiB');
 });
 
+test('MCP: a card that cannot be read is the note of submit_job and get_job', async () => {
+  const { alice, w } = setup();
+  await w('PUT', '/status', { waiting: { reason: 'gpu_unreadable', error: 'nvidia-smi: exit code 4', limit_mib: 2048 } });
+  const note = 'waiting: the worker cannot read the card (nvidia-smi: exit code 4); no job starts until it can, asking again changes nothing';
+  const client = await mcp.connect('/mcp', bearerHeader(alice));
+  const sub = await callJson(client, 'submit_job', { type: 'lease', params: { minutes: 5 } });
+  expect(sub).toMatchObject({ state: 'queued', worker: { online: true, waiting: { reason: 'gpu_unreadable' } }, note });
+  expect(await callJson(client, 'get_job', { job_id: sub.job_id })).toMatchObject({ state: 'queued', note });
+});
+
 test('the queue: what runs since when, or who goes next; nothing once the job runs', async () => {
   const { submit, get, w } = setup();
   await w('GET', '/ping');

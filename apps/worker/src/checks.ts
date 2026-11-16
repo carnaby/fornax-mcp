@@ -38,10 +38,14 @@ const isFile = (p: string): boolean => {
   }
 };
 
-/** One console-safe line: control characters (and so line breaks) become spaces, at most `max` characters. */
+/**
+ * One console-safe line: control characters (and so line breaks) become spaces, at most `max` characters. Characters
+ * are code points: a cut through a surrogate pair would leave a lone half that JSON parsers (serde_json) reject.
+ */
 export function oneLine(text: string, max = 200): string {
   const flat = text.replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ').replace(/ {2,}/g, ' ').trim();
-  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+  const chars = Array.from(flat);
+  return chars.length > max ? `${chars.slice(0, max - 1).join('')}…` : flat;
 }
 
 /**

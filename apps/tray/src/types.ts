@@ -61,6 +61,8 @@ export type Snapshot = {
   updateLabel: string | null;
   canUpdate: boolean;
   canCancelUpdate: boolean;
+  /** An update runs, in any phase. */
+  updating: boolean;
   /** Why the last update failed, or the AppImage's note. */
   updateNote: string | null;
 };

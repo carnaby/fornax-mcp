@@ -224,8 +224,8 @@ impl Ui for TrayUi {
             let _ = self.pause.set_text(&s.pause_label);
             shown.pause_label = s.pause_label.clone();
         }
-        // During an update the item shows its phase (the headline), disabled.
-        let update_label = s.update_label.clone().unwrap_or_else(|| if s.can_cancel_update { s.headline.clone() } else { NO_UPDATE.to_string() });
+        // During an update, in every phase, the item shows it (the headline), disabled.
+        let update_label = s.update_label.clone().unwrap_or_else(|| if s.updating { s.headline.clone() } else { NO_UPDATE.to_string() });
         if shown.update_label != update_label {
             let _ = self.update.set_text(&update_label);
             shown.update_label = update_label;

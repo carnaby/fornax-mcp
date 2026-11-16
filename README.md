@@ -39,6 +39,8 @@ Configuration is environment variables only; `.env.example` lists every one with
 | `TRUST_PROXY` | `0` | how many reverse proxies may set `X-Forwarded-*` |
 | `FORNAX_MAX_UPLOAD_MB` | `4096` | largest input file |
 | `FORNAX_WEBHOOK_PREFIXES` | empty (off) | allowed `callback_url` prefixes, comma-separated, each ending with `/` |
+| `FORNAX_WORKER_ZIP` | the image's `downloads/fornax-worker.zip` | the worker bundle served at `/downloads/fornax-worker.zip`; leave it empty in the image |
+| `FORNAX_TRAY_MSI`, `FORNAX_TRAY_DEB` | the image's `downloads/fornax-tray.msi` and `.deb` | the tray's installers served at `/downloads/fornax-tray.msi` and `.deb`; leave them empty in the image |
 
 The image runs as a non-root user (any UID works), writes only to `DATA_DIR` and `/tmp`, migrates its database at
 start, answers `GET /healthz` (health command in the image: `node /app/dist/src/healthcheck.js`), and stops within

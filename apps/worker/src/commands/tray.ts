@@ -20,8 +20,8 @@ export type TrayDeps = {
   install: (kind: TrayKind, file: string, log: string) => Promise<number | null>;
   /** Whether the process still runs. */
   alive: (pid: number) => boolean;
-  /** Starts the tray, detached: a non-detached child of Node dies with it on Windows. */
-  launch: (path: string) => void;
+  /** Starts the tray, detached (a non-detached child of Node dies with it on Windows); false when it could not start. */
+  launch: (path: string) => Promise<boolean>;
   /** How long --wait-pid waits. */
   waitMs: number;
 };
@@ -52,9 +52,16 @@ export const systemTray: TrayDeps = {
       return (e as NodeJS.ErrnoException).code === 'EPERM';
     }
   },
-  launch: (path) => {
-    spawn(path, [], { detached: true, stdio: 'ignore' }).unref();
-  },
+  launch: (path) =>
+    new Promise((resolve) => {
+      // Without an 'error' listener a missing program (ENOENT) would end this helper with an uncaught error.
+      const child = spawn(path, [], { detached: true, stdio: 'ignore' });
+      child.once('error', () => resolve(false));
+      child.once('spawn', () => {
+        child.unref();
+        resolve(true);
+      });
+    }),
   waitMs: 60_000,
 };
 
@@ -126,11 +133,8 @@ export async function trayInstallCommand(ctx: Ctx, opts: { waitPid?: number; rel
       if (await oldTrayGone()) {
         // Not in the log: the next tray shows the log's last line, which must stay the reason.
         ctx.out('starting the tray again');
-        try {
-          deps.launch(relaunch);
-        } catch {
-          ctx.out('the tray could not be started again: start it from the Start menu');
-        }
+        const started = await deps.launch(relaunch).catch(() => false);
+        if (!started) ctx.out('the tray could not be started again: start it from the Start menu');
       } else {
         say('the tray did not exit; it is not started again');
       }

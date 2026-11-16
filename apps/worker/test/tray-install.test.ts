@@ -5,7 +5,7 @@ import { startTestServer, type TestServer } from '@fornax/server/testing';
 import { afterEach, describe, expect, test } from 'vitest';
 import { runCli } from '../src/cli.js';
 import type { Ctx } from '../src/commands/context.js';
-import type { TrayDeps, TrayKind } from '../src/commands/tray.js';
+import { systemTray, type TrayDeps, type TrayKind } from '../src/commands/tray.js';
 import { testPaths, useTempDir } from './helpers.js';
 
 const tmp = useTempDir();
@@ -18,7 +18,7 @@ afterEach(async () => {
  * A server with a fake MSI and deb, a paired PC, and stand-ins for the system: `kind` is what this PC takes, `code`
  * what the installer returns, `alive` whether the waited-for process still runs.
  */
-async function setup(opts: { kind?: TrayKind | null; code?: number | null; alive?: () => boolean; paired?: boolean; msi?: Buffer | null } = {}) {
+async function setup(opts: { kind?: TrayKind | null; code?: number | null; alive?: () => boolean; paired?: boolean; msi?: Buffer | null; launches?: boolean } = {}) {
   const dir = tmp();
   const trayMsi = join(dir, 'fornax-tray.msi');
   const trayDeb = join(dir, 'fornax-tray.deb');
@@ -41,7 +41,10 @@ async function setup(opts: { kind?: TrayKind | null; code?: number | null; alive
       return opts.code === undefined ? 0 : opts.code;
     },
     alive: opts.alive ?? (() => false),
-    launch: (path) => launched.push(path),
+    launch: async (path) => {
+      launched.push(path);
+      return opts.launches ?? true;
+    },
     waitMs: 300,
   };
   const lines: string[] = [];
@@ -159,6 +162,18 @@ describe('fornax tray install (spec 06d 3)', () => {
       expect([r.code, r.text.includes(line)], `${kind} ${installerCode}`).toEqual([exit, true]);
       expect(w.launched).toEqual(['/opt/tray']);
     }
+  });
+
+  test('a tray that cannot be started again is said on the console, not in the log', async () => {
+    const w = await setup({ code: 1602, launches: false });
+    const r = await w.run('tray', 'install', '--wait-pid', '4242', '--relaunch', '/opt/tray');
+    expect(r.code).toBe(1);
+    expect(r.text).toContain('the tray could not be started again: start it from the Start menu');
+    expect(w.log().trim().split('\n').at(-1)).toBe('the installation was cancelled');
+  });
+
+  test('the system launch answers false for a program that does not exist, instead of an uncaught error', async () => {
+    expect(await systemTray.launch(join(tmp(), 'no-such-tray.exe'))).toBe(false);
   });
 
   test('a bad --wait-pid is a usage error', async () => {

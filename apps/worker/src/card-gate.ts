@@ -79,11 +79,11 @@ export function cardGate(o: CardGateOptions): { check(): Promise<CardState>; pau
       }
       const waiting: WorkerWaiting = r.ok
         ? { reason: 'gpu_busy', used_mib: r.used_mib, total_mib: r.total_mib, limit_mib: o.maxUsedMib }
-        : { reason: 'gpu_unreadable', error: r.error.slice(0, 200), limit_mib: o.maxUsedMib };
+        : { reason: 'gpu_unreadable', error: oneLine(r.error, 200), limit_mib: o.maxUsedMib };
       if (shown !== waiting.reason) o.out(waitingLine(waiting));
       shown = waiting.reason;
       if (told === null || told.reason !== waiting.reason || Date.now() - toldAt >= resendMs) await tell(waiting);
-      return r.ok ? { kind: 'busy' } : { kind: 'unreadable', error: r.error.slice(0, 200) };
+      return r.ok ? { kind: 'busy' } : { kind: 'unreadable', error: oneLine(r.error, 200) };
     },
     async pause(): Promise<void> {
       try {

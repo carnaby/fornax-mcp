@@ -91,6 +91,15 @@ describe('oneLine', () => {
     expect(long).toHaveLength(200);
     expect(long.endsWith('…')).toBe(true);
   });
+
+  test('the cap counts characters, so an emoji is never cut in half (JSON would get a lone surrogate)', () => {
+    const cut = oneLine(`${'x'.repeat(198)}🔥🔥`, 200);
+    expect(cut).toBe(`${'x'.repeat(198)}🔥🔥`);
+    const longer = oneLine(`${'x'.repeat(198)}🔥🔥🔥`, 200);
+    expect(longer).toBe(`${'x'.repeat(198)}🔥…`);
+    // encodeURIComponent throws on a lone surrogate.
+    expect(() => encodeURIComponent(longer)).not.toThrow();
+  });
 });
 
 describe('check isolation', () => {

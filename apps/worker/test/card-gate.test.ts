@@ -85,6 +85,16 @@ describe('the card check before a claim', () => {
     expect(w.lines).toContain('waiting: the card cannot be read (nvidia-smi: not found), limit 2048 MiB; no job is taken');
   });
 
+  test('a long reason is cut by characters: an emoji is never split (the tray reads it as JSON)', async () => {
+    const w = start([{ ok: false, error: `${'x'.repeat(199)}🔥🔥` }]);
+    await waitFor(() => w.sent.length >= 1, 5000, 'a status');
+    await w.stop();
+    const sent = w.sent[0] as { error: string };
+    expect(Array.from(sent.error)).toHaveLength(200);
+    // encodeURIComponent throws on a lone surrogate.
+    expect(() => encodeURIComponent(sent.error)).not.toThrow();
+  });
+
   test('while waiting, the status goes out again every resend period (it keeps the worker online)', async () => {
     const w = start([busy]);
     await waitFor(() => w.sent.length >= 3, 5000, 'three statuses');
