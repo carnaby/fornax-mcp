@@ -10,8 +10,17 @@ import { symbolsOf, symbolText, type TemplateSymbol, wholeSymbol } from './templ
 export type PackImpl = { tools: string[]; setup?: string[]; check?: string[]; run: string[] };
 export type Pack = { contract: JobTypeContract; impl: PackImpl; dir: string };
 
-/** A pack cannot be used; the message names the pack and the problem. */
-export class PackError extends Error {}
+/** A type pack that cannot be used, and why (spec 06c 2.2 reports it per type). */
+export type PackProblem = { name: string; reason: string };
+
+/** A pack cannot be used; the message names the pack and the problem, `reason` is the problem alone. */
+export class PackError extends Error {
+  readonly reason: string;
+  constructor(message: string, reason: string = message) {
+    super(message);
+    this.reason = reason;
+  }
+}
 
 const argv = z
   .array(z.string().max(4000))
@@ -103,7 +112,7 @@ function elementProblem(element: string, where: Where, impl: PackImpl, contract:
 /** Load one pack directory and apply the load-time rules of spec 6.2 and 6.3. */
 export function loadPack(dir: string): Pack {
   const label = basename(dir);
-  const problem = (msg: string) => new PackError(`type pack ${label}: ${msg}`);
+  const problem = (msg: string) => new PackError(`type pack ${label}: ${msg}`, msg);
   const file = join(dir, 'type.yaml');
   if (!existsSync(file)) throw problem('type.yaml is missing');
   let text: string;
@@ -152,10 +161,11 @@ export function loadPack(dir: string): Pack {
 }
 
 /** Every pack under <data>/types. A broken pack is reported, not fatal. A pack's name must match its directory. */
-export function loadPacks(typesDir: string): { packs: Pack[]; errors: string[] } {
+export function loadPacks(typesDir: string): { packs: Pack[]; errors: string[]; failed: PackProblem[] } {
   const packs: Pack[] = [];
   const errors: string[] = [];
-  if (!existsSync(typesDir)) return { packs, errors };
+  const failed: PackProblem[] = [];
+  if (!existsSync(typesDir)) return { packs, errors, failed };
   const names = readdirSync(typesDir, { withFileTypes: true })
     .filter((d) => d.isDirectory())
     .map((d) => d.name)
@@ -163,14 +173,18 @@ export function loadPacks(typesDir: string): { packs: Pack[]; errors: string[] }
   for (const name of names) {
     try {
       const pack = loadPack(join(typesDir, name));
-      if (pack.contract.name !== name) throw new PackError(`type pack ${name}: its name is ${pack.contract.name}; the directory must have the same name`);
+      if (pack.contract.name !== name) {
+        const reason = `its name is ${pack.contract.name}; the directory must have the same name`;
+        throw new PackError(`type pack ${name}: ${reason}`, reason);
+      }
       packs.push(pack);
     } catch (e) {
       if (!(e instanceof PackError)) throw e;
       errors.push(e.message);
+      failed.push({ name, reason: e.reason });
     }
   }
-  return { packs, errors };
+  return { packs, errors, failed };
 }
 
 /** Tools the pack lists that worker.yaml does not give a path for. */

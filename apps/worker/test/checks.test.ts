@@ -161,7 +161,7 @@ describe('packs', () => {
     writeEchoPack(types, { name: 'sick', check: ['{tool.node}', '-e', 'process.exit(1)'] });
     const r = await preparePacks(types, NODE_TOOLS);
     expect(r.ready.map((p) => p.contract.name)).toEqual(['echo']);
-    expect(r.problems).toEqual([expect.stringMatching(/^type pack sick: check failed \(exit code 1\)/)]);
+    expect(r.problems).toEqual([{ name: 'sick', reason: expect.stringMatching(/^check failed \(exit code 1\)/) }]);
   });
 
   test('the signature changes when a pack is added or its type.yaml changes', () => {

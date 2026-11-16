@@ -114,6 +114,7 @@ describe('loadPacks', () => {
     const r = loadPacks(root);
     expect(r.packs.map((p) => p.contract.name)).toEqual(['render']);
     expect(r.errors).toEqual([expect.stringMatching(/^type pack broken: type.yaml cannot be read/)]);
+    expect(r.failed).toEqual([{ name: 'broken', reason: expect.stringMatching(/^type.yaml cannot be read/) }]);
   });
 
   test('loads good packs; reports broken ones and a name that differs from its directory', () => {
@@ -124,10 +125,15 @@ describe('loadPacks', () => {
     const r = loadPacks(root);
     expect(r.packs.map((p) => p.contract.name)).toEqual(['render']);
     expect(r.errors).toEqual([expect.stringMatching(/^type pack bad: /), expect.stringMatching(/^type pack other: its name is render/)]);
+    expect(r.failed).toEqual([
+      { name: 'bad', reason: expect.any(String) },
+      { name: 'other', reason: 'its name is render; the directory must have the same name' },
+    ]);
+    expect(r.failed.map((f) => `type pack ${f.name}: ${f.reason}`)).toEqual(r.errors);
   });
 
   test('no types directory yet', () => {
-    expect(loadPacks(join(tmp(), 'nothing'))).toEqual({ packs: [], errors: [] });
+    expect(loadPacks(join(tmp(), 'nothing'))).toEqual({ packs: [], errors: [], failed: [] });
   });
 
   test('missingTools', () => {

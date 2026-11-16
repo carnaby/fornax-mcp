@@ -1,6 +1,6 @@
 import { accessSync, constants, existsSync, readdirSync, statSync } from 'node:fs';
 import { delimiter, extname, isAbsolute, join } from 'node:path';
-import { loadPacks, missingTools, type Pack } from './pack.js';
+import { loadPacks, missingTools, type Pack, type PackProblem } from './pack.js';
 import { childEnv, runProcess } from './process.js';
 import { expandArgv } from './template.js';
 
@@ -100,15 +100,15 @@ export async function checkPack(pack: Pack, tools: Record<string, string>, opts:
   return null;
 }
 
-/** Load every pack and run its check; the ready ones can be announced. */
-export async function preparePacks(typesDir: string, tools: Record<string, string>, opts: CheckOptions = {}): Promise<{ ready: Pack[]; problems: string[] }> {
-  const { packs, errors } = loadPacks(typesDir);
+/** Load every pack and run its check; the ready ones can be announced, the others say why not (per type). */
+export async function preparePacks(typesDir: string, tools: Record<string, string>, opts: CheckOptions = {}): Promise<{ ready: Pack[]; problems: PackProblem[] }> {
+  const { packs, failed } = loadPacks(typesDir);
   const ready: Pack[] = [];
-  const problems = errors.map((e) => oneLine(e));
+  const problems: PackProblem[] = failed.map((f) => ({ name: f.name, reason: oneLine(f.reason) }));
   for (const pack of packs) {
     if (opts.signal?.aborted) break;
     const problem = await checkPack(pack, tools, opts);
-    if (problem) problems.push(`type pack ${pack.contract.name}: ${problem}`);
+    if (problem) problems.push({ name: pack.contract.name, reason: problem });
     else ready.push(pack);
   }
   return { ready, problems };
