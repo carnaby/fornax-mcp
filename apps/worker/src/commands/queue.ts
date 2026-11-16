@@ -101,10 +101,14 @@ export async function queueCancel(ctx: Ctx, id: string): Promise<number> {
   return 0;
 }
 
-/** `fornax queue pause` / `fornax queue resume`. */
-export async function queuePause(ctx: Ctx, paused: boolean): Promise<number> {
+/**
+ * `fornax queue pause|resume [--json]`. With --json the queue the server answered with, as one line like `queue --json`:
+ * the tray reads from its server_time which queue lines are older than the action.
+ */
+export async function queuePause(ctx: Ctx, paused: boolean, o: { json: boolean } = { json: false }): Promise<number> {
   const q = await connectOperator(ctx).api.setPaused(paused);
-  ctx.out(paused ? (q.running ? 'the queue is paused: the running job finishes, no other job starts' : 'the queue is paused: no job starts') : 'the queue runs again');
+  if (o.json) ctx.out(jsonLine(q));
+  else ctx.out(paused ? (q.running ? 'the queue is paused: the running job finishes, no other job starts' : 'the queue is paused: no job starts') : 'the queue runs again');
   return 0;
 }
 

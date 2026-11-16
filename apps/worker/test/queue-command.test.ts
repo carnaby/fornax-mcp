@@ -113,6 +113,16 @@ describe('fornax queue (spec 06 3.1)', () => {
     ]);
   });
 
+  test('pause and resume --json print the queue the server answered with (the tray reads its time)', async () => {
+    const { ctx, out } = await setup();
+    expect(await runCli(['queue', 'pause', '--json'], ctx)).toBe(0);
+    expect(await runCli(['queue', 'resume', '--json'], ctx)).toBe(0);
+    expect(out).toHaveLength(2);
+    const [paused, resumed] = out.map((l) => JSON.parse(l));
+    expect(paused).toMatchObject({ ok: true, paused: true, paused_at: expect.any(String), server_time: expect.any(String) });
+    expect(resumed).toMatchObject({ ok: true, paused: false, paused_at: null });
+  });
+
   test('an error of the server is the last line on stderr, exit 1', async () => {
     const { ctx, err, client } = await setup();
     const a = await client.submit('echo', { mode: 'ok' });

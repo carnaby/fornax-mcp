@@ -30,7 +30,7 @@ export const USAGE = usageText([
   'fornax queue [--json] [--watch]',
   'fornax queue move <id> (--top | --bottom | --before <id> | --after <id>)',
   'fornax queue cancel <id>',
-  'fornax queue pause | resume',
+  'fornax queue pause | resume [--json]',
   'fornax doctor [type]',
   'fornax types list',
   'fornax types install <name> [--from <dir>]',
@@ -146,7 +146,7 @@ export async function runCli(argv: string[], ctx: Ctx): Promise<number> {
       const target = moveTargetOf(flags);
       if (sub === 'move' && arg !== undefined && target && shape(3, 'top', 'bottom', 'before', 'after')) return await queueMove(ctx, arg, target);
       if (sub === 'cancel' && arg !== undefined && shape(3)) return await queueCancel(ctx, arg);
-      if ((sub === 'pause' || sub === 'resume') && shape(2)) return await queuePause(ctx, sub === 'pause');
+      if ((sub === 'pause' || sub === 'resume') && shape(2, 'json')) return await queuePause(ctx, sub === 'pause', { json: flags.json === true });
     } catch (e) {
       return reportError(e, ctx.err ?? ctx.out);
     }
