@@ -10,6 +10,7 @@ import { installCommand } from './commands/install.js';
 import { LEASE_FORMS, leaseCommand, usageText } from './commands/lease.js';
 import { pair } from './commands/pair.js';
 import { queueCancel, queueMove, queuePause, queueShow, queueWatch } from './commands/queue.js';
+import { trayInstallCommand } from './commands/tray.js';
 import { typesAdd, typesInstall, typesList } from './commands/types.js';
 import { updateCommand } from './commands/update.js';
 import { queueCommand, workerCommand } from './commands/worker.js';
@@ -36,6 +37,7 @@ export const USAGE = usageText([
   'fornax types add <name>',
   'fornax install',
   'fornax update [--force] [--server <url>]',
+  'fornax tray install',
   ...LEASE_FORMS,
   'fornax --version',
 ]);
@@ -56,6 +58,8 @@ type Flags = {
   before?: string;
   after?: string;
   events?: boolean;
+  'wait-pid'?: string;
+  relaunch?: string;
 };
 
 /** How a command's error ends: our own errors with their message, anything else only with its class (it may hold paths or tool output). */
@@ -112,6 +116,8 @@ export async function runCli(argv: string[], ctx: Ctx): Promise<number> {
         before: { type: 'string' },
         after: { type: 'string' },
         events: { type: 'boolean' },
+        'wait-pid': { type: 'string' },
+        relaunch: { type: 'string' },
       },
     });
     flags = parsed.values;
@@ -150,6 +156,12 @@ export async function runCli(argv: string[], ctx: Ctx): Promise<number> {
   try {
     if (group === 'install' && shape(1)) return await installCommand(ctx);
     if (group === 'update' && shape(1, 'force', 'server')) return await updateCommand(ctx, { force: flags.force === true, server: flags.server });
+    // --wait-pid and --relaunch are the tray's (spec 06d 4.3): wait for the old tray, start the new one afterwards.
+    if (group === 'tray' && sub === 'install' && shape(2, 'wait-pid', 'relaunch')) {
+      const raw = flags['wait-pid'];
+      const waitPid = raw === undefined ? undefined : /^[1-9][0-9]{0,9}$/.test(raw) ? Number(raw) : null;
+      if (waitPid !== null) return await trayInstallCommand(ctx, { waitPid, relaunch: flags.relaunch });
+    }
     if (group === 'worker' && sub === 'pair' && shape(2, 'server', 'name', 'force') && flags.server && flags.name) {
       return await pair(ctx, { server: flags.server, name: flags.name, force: flags.force === true });
     }

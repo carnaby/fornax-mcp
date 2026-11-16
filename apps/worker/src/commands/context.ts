@@ -6,6 +6,7 @@ import type { PathDeps } from '../install/path-entry.js';
 import type { LeaseTimings } from '../lease/run.js';
 import type { LoopOptions, TypeState } from '../loop.js';
 import type { Paths } from '../paths.js';
+import type { TrayDeps } from './tray.js';
 
 /** What every command gets: directories, output, the stop signal; tests replace the rest. */
 export type Ctx = {
@@ -48,6 +49,8 @@ export type Ctx = {
   onWorkerStarted?: () => void;
   /** Spec 06c 2.2: the worker's types whenever they change (the child under the tray emits them as a types event). */
   onTypes?: (types: TypeState[]) => void;
+  /** Spec 06d 3: what fornax tray install needs of the system (tests replace it). */
+  tray?: Partial<TrayDeps>;
 };
 
 export const apiFor = (ctx: Ctx, server: string, token: string): WorkerApi =>

@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { networkErrorOf } from '../api.js';
 import { ConfigError, readWorkerConfig } from '../config.js';
 import { bundleVersion, cleanLeftovers, isInstalledCopy, isWorkerDir, removeDir, swapDir } from '../install/app.js';
 import { compareVersions, fetchBundleInfo } from '../install/bundle-info.js';
+import { downloadBytes } from '../install/download.js';
 import { InstallError } from '../install/errors.js';
 import { syncPacksUnderLock } from '../install/packs.js';
 import { extractWorkerZip } from '../install/unzip.js';
@@ -15,32 +15,6 @@ import { localTools } from './types.js';
 
 /** The oldest worker fornax update installs: the first with fornax update and the restart between jobs (spec 05c 5). */
 const MIN_UPDATE_VERSION = '0.3.0';
-
-/** GET <server>/downloads/fornax-worker.zip, read in chunks and stopped once it is clearly larger than announced. */
-async function downloadZip(ctx: Ctx, base: string, size: number): Promise<Buffer> {
-  const signal = AbortSignal.any([ctx.signal, AbortSignal.timeout(300_000)]);
-  const limit = size + 1024 * 1024;
-  let res: Response;
-  try {
-    res = await (ctx.fetch ?? fetch)(`${base}/downloads/fornax-worker.zip`, { signal });
-  } catch (e) {
-    throw networkErrorOf(e, signal);
-  }
-  if (!res.ok) throw new InstallError(`the server has no worker bundle (HTTP ${res.status})`);
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  try {
-    for await (const chunk of res.body ?? []) {
-      total += chunk.length;
-      if (total > limit) throw new InstallError('the worker bundle is larger than the server announced');
-      chunks.push(chunk);
-    }
-  } catch (e) {
-    if (e instanceof InstallError) throw e;
-    throw networkErrorOf(e, signal);
-  }
-  return Buffer.concat(chunks);
-}
 
 /** `fornax update [--force] [--server <url>]` (spec 05c 4): the server's worker into <data>/app, packs, restart request. */
 export async function updateCommand(ctx: Ctx, opts: { force: boolean; server?: string }): Promise<number> {
@@ -73,7 +47,7 @@ export async function updateCommand(ctx: Ctx, opts: { force: boolean; server?: s
     return 0;
   }
 
-  const zip = await downloadZip(ctx, base, info.size);
+  const zip = await downloadBytes(ctx, `${base}/downloads/fornax-worker.zip`, info.size, 'worker bundle');
   if (zip.length !== info.size || createHash('sha256').update(zip).digest('hex') !== info.sha256) {
     throw new InstallError('the download does not match the checksum the server announced; nothing was changed (run fornax update again)');
   }
