@@ -38,8 +38,11 @@ export function cardGate(o: CardGateOptions): { check(): Promise<CardState>; pau
   const resendMs = o.resendMs ?? STATUS_RESEND_MS;
   /** What the console last heard: null at start, then 'free' or a reason. */
   let shown: 'free' | WorkerWaiting['reason'] | null = null;
-  /** What the server was last told; null also while it was told nothing. */
-  let told: WorkerWaiting | null = null;
+  /**
+   * What the server was last told; undefined while this worker told it nothing. The server may still show the reason a
+   * worker before this one reported (a quick restart): a free card clears it once, before the types are checked.
+   */
+  let told: WorkerWaiting | null | undefined;
   let toldAt = 0;
   let serverTakesStatus = true;
 
@@ -82,7 +85,7 @@ export function cardGate(o: CardGateOptions): { check(): Promise<CardState>; pau
         : { reason: 'gpu_unreadable', error: oneLine(r.error, 200), limit_mib: o.maxUsedMib };
       if (shown !== waiting.reason) o.out(waitingLine(waiting));
       shown = waiting.reason;
-      if (told === null || told.reason !== waiting.reason || Date.now() - toldAt >= resendMs) await tell(waiting);
+      if (!told || told.reason !== waiting.reason || Date.now() - toldAt >= resendMs) await tell(waiting);
       return r.ok ? { kind: 'busy' } : { kind: 'unreadable', error: oneLine(r.error, 200) };
     },
     async pause(): Promise<void> {

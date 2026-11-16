@@ -20,7 +20,10 @@ function start(
   const sent: (WorkerWaiting | null)[] = [];
   const lines: string[] = [];
   const api = {
-    announce: async () => [],
+    announce: async () => {
+      events.push('announce');
+      return [];
+    },
     claim: async () => {
       events.push('claim');
       await sleep(20);
@@ -65,15 +68,27 @@ describe('the card check before a claim', () => {
     const w = start([busy, busy, free], undefined, { resendMs: 1000 });
     await waitFor(() => w.events.includes('claim'), 5000, 'a claim');
     await w.stop();
-    expect(w.events.slice(0, w.events.indexOf('claim') + 1)).toEqual(['status gpu_busy', 'status null', 'claim']);
+    expect(w.events.slice(0, w.events.indexOf('claim') + 1)).toEqual(['status gpu_busy', 'announce', 'status null', 'claim']);
     expect(w.lines).toContain('the card is free again (1130 of 16311 MiB in use, limit 2048 MiB); taking jobs');
   });
 
-  test('a card free from the start needs no status at all', async () => {
+  test('a card free from the start clears the reason the server last heard (a quick restart), once, before the type checks', async () => {
     const w = start([free]);
-    await waitFor(() => w.events.includes('claim'), 5000, 'a claim');
+    await waitFor(() => w.events.filter((e) => e === 'claim').length >= 2, 5000, 'two claims');
     await w.stop();
-    expect(w.sent).toEqual([]);
+    expect(w.events.slice(0, 3)).toEqual(['status null', 'announce', 'claim']);
+    expect(w.sent).toEqual([null]);
+  });
+
+  test('a free card the server could not be told about yet is told on the next pass', async () => {
+    let fails = 1;
+    const w = start([free], async () => {
+      if (fails-- > 0) throw new NetworkError('cannot reach the server: ECONNREFUSED');
+    });
+    await waitFor(() => w.sent.length >= 2, 5000, 'a second status');
+    await sleep(100);
+    await w.stop();
+    expect(w.sent).toEqual([null, null]);
   });
 
   test('a card that cannot be read is waited for like a busy one, with the reason', async () => {
