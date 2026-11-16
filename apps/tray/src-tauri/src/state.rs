@@ -5,6 +5,7 @@ use std::collections::{BTreeSet, VecDeque};
 
 use serde::Serialize;
 
+use crate::gpu::{GpuInfo, GpuProblem};
 use crate::protocol::{iso_ms, version_of, Job, Queue, Waiting, WatchLine, WorkerEvent, MIN_CLI};
 
 /// Lines of the log the window keeps.
@@ -30,6 +31,8 @@ pub const PAUSE_JSON_CLI: (u32, u32, u32) = (0, 7, 2);
 pub const OWED_MARGIN_MS: i64 = 5_000;
 /// After an owed resume failed, the next one goes after this long (the last value repeats).
 pub const OWED_RETRY_MS: [i64; 4] = [5_000, 15_000, 30_000, 60_000];
+/// Spec 06e § 3.1: how often the card is read while the window is on screen.
+pub const GPU_EVERY_MS: i64 = 5_000;
 /// Spec 06 § 5: what the window says when the server refuses the worker token (401/403).
 pub const TOKEN_REFUSED: &str = "The server refused the worker token: pair again (fornax worker pair)";
 /// What the menu shows when no update is offered (spec 06d 4.2).
@@ -85,6 +88,10 @@ pub enum Input {
     Warning(String),
     /// Every second: deadlines, the reader's restart, the lock check, old action errors.
     Tick,
+    /// The window was shown (true) or hidden (false); the card is read only while it is on screen.
+    WindowShown(bool),
+    /// The answer to a [`Effect::ReadGpu`].
+    GpuRead(Result<GpuInfo, GpuProblem>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -97,6 +104,8 @@ pub enum Effect {
     RunAction { key: String, args: Vec<String> },
     /// `fornax update`, its lines as [`Input::UpdateText`], answered by one [`Input::UpdateRan`].
     RunUpdate,
+    /// Read the card with `nvidia-smi`; answered by one [`Input::GpuRead`].
+    ReadGpu,
     /// Write `<data>/tray-update.json` and start `fornax tray install --wait-pid <pid> --relaunch <exe>` detached;
     /// answered by one [`Input::TrayInstallStarted`]. `resume_before`: the next tray resumes the queue the update paused,
     /// unless it was paused again after this server time (ms).
@@ -230,6 +239,28 @@ pub struct TypeView {
     pub reason: Option<String>,
 }
 
+/// The card as the window shows it (spec 06e § 2.3): `state` is `reading`, `ok`, `missing` or `failed`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GpuView {
+    pub state: String,
+    pub name: Option<String>,
+    pub used_mib: Option<u64>,
+    pub total_mib: Option<u64>,
+    pub utilization: Option<u32>,
+    pub temperature: Option<u32>,
+    pub problem: Option<String>,
+}
+
+/// The tray's last reading of the card.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Gpu {
+    Reading,
+    Read(GpuInfo),
+    Missing,
+    Failed(String),
+}
+
 /// The states of a type this tray knows; a row with another one (a newer CLI) is dropped.
 const TYPE_STATES: [&str; 3] = ["offered", "waiting", "unavailable"];
 
@@ -276,6 +307,8 @@ pub struct Snapshot {
     pub updating: bool,
     /// Why the last update failed, or the AppImage's note.
     pub update_note: Option<String>,
+    /// Spec 06e § 2.3: the card.
+    pub gpu: GpuView,
 }
 
 /// The queue reader's failures (`"ok": false` lines) since its last queue line.
@@ -357,6 +390,13 @@ pub struct Model {
     /// or a job claimed right after a resume), so no update starts or advances from it until the next line. An action
     /// that changes nothing brings no line (`--watch` prints changes only), so it does not set this.
     pause_unseen: bool,
+    /// The window is on screen (spec 06e § 3.1).
+    window_shown: bool,
+    gpu: Gpu,
+    /// A [`Effect::ReadGpu`] is out.
+    gpu_reading: bool,
+    /// When the next reading may go.
+    gpu_next: i64,
 }
 
 impl Default for Model {
@@ -451,6 +491,10 @@ impl Model {
             quit_after_resume: false,
             pause_target: None,
             pause_unseen: false,
+            window_shown: false,
+            gpu: Gpu::Reading,
+            gpu_reading: false,
+            gpu_next: 0,
         }
     }
 
@@ -633,6 +677,18 @@ impl Model {
             }
             Input::Warning(text) => {
                 self.warn(now, text);
+                Vec::new()
+            }
+            Input::WindowShown(shown) => {
+                self.window_shown = shown;
+                if shown {
+                    self.read_gpu(now, true)
+                } else {
+                    Vec::new()
+                }
+            }
+            Input::GpuRead(result) => {
+                self.gpu_read(result, now);
                 Vec::new()
             }
             Input::Tick => self.tick(now),
@@ -1102,6 +1158,64 @@ impl Model {
         self.watch = Watch::Waiting { retry_at: now + delay };
     }
 
+    /// Spec 06e § 3.1: a reading while the window is on screen, at once when it shows (`at_once`), else once the 5 s
+    /// since the last answer are over; never two at a time, never while quitting.
+    fn read_gpu(&mut self, now: i64, at_once: bool) -> Vec<Effect> {
+        if !self.window_shown || self.gpu_reading || self.quitting || (!at_once && now < self.gpu_next) {
+            return Vec::new();
+        }
+        self.gpu_reading = true;
+        vec![Effect::ReadGpu]
+    }
+
+    /// Spec 06e § 5: a card that cannot be read is said once in the log, and once that it can be read again.
+    fn gpu_read(&mut self, result: Result<GpuInfo, GpuProblem>, now: i64) {
+        self.gpu_reading = false;
+        self.gpu_next = now + GPU_EVERY_MS;
+        let was_failed = matches!(self.gpu, Gpu::Failed(_));
+        let next = match result {
+            Ok(info) => Gpu::Read(info),
+            Err(GpuProblem::Missing) => Gpu::Missing,
+            Err(GpuProblem::Failed(message)) => Gpu::Failed(message),
+        };
+        match &next {
+            Gpu::Failed(message) if !was_failed => self.push_log(now, format!("the card cannot be read: {message}"), true),
+            Gpu::Read(_) if was_failed => self.push_log(now, "the card can be read again".to_string(), false),
+            _ => {}
+        }
+        self.gpu = next;
+    }
+
+    /// Spec 06e § 2.3: the worker's "cannot read the card" wins over the tray's own reading.
+    fn gpu_view(&self) -> GpuView {
+        let blank = |state: &str, problem: Option<String>| GpuView {
+            state: state.to_string(),
+            name: None,
+            used_mib: None,
+            total_mib: None,
+            utilization: None,
+            temperature: None,
+            problem,
+        };
+        if let Some(w) = self.card_wait().filter(|w| w.reason == "gpu_unreadable") {
+            return blank("failed", Some(w.error.clone().unwrap_or_else(|| "the worker cannot read it".to_string())));
+        }
+        match &self.gpu {
+            Gpu::Reading => blank("reading", None),
+            Gpu::Missing => blank("missing", None),
+            Gpu::Failed(message) => blank("failed", Some(message.clone())),
+            Gpu::Read(g) => GpuView {
+                state: "ok".to_string(),
+                name: Some(g.name.clone()),
+                used_mib: Some(g.used_mib),
+                total_mib: Some(g.total_mib),
+                utilization: g.utilization,
+                temperature: g.temperature,
+                problem: None,
+            },
+        }
+    }
+
     fn tick(&mut self, now: i64) -> Vec<Effect> {
         let mut effects = Vec::new();
         if self.own == Own::StoppingNow && self.stop_deadline.is_some_and(|d| now >= d) {
@@ -1131,6 +1245,7 @@ impl Model {
         }
         // A failed owed resume goes out again once its pause is over, also when no queue line comes.
         effects.extend(self.send_owed(now));
+        effects.extend(self.read_gpu(now, false));
         self.action_errors.retain(|(_, _, until)| *until > now);
         effects
     }
@@ -1346,6 +1461,7 @@ impl Model {
             can_cancel_update: self.update.as_ref().is_some_and(|u| u.phase == UpdatePhase::Waiting),
             updating: self.update.is_some(),
             update_note: self.shown_update_note().or_else(|| self.appimage_note()),
+            gpu: self.gpu_view(),
         }
     }
 }
@@ -1355,6 +1471,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
+    use crate::gpu::{GpuInfo, GpuProblem};
     use crate::protocol::{TypeInfo, Waiting, WorkerInfo};
 
     const NOW: i64 = 1_800_000_000_000;
@@ -2561,7 +2678,7 @@ mod tests {
         assert_eq!(
             keys,
             [
-                "canCancelUpdate", "canPause", "canStart", "canStop", "canUpdate", "confirmQuit", "finished", "headline", "icon",
+                "canCancelUpdate", "canPause", "canStart", "canStop", "canUpdate", "confirmQuit", "finished", "gpu", "headline", "icon",
                 "log", "note", "offsetMs", "pauseError", "pauseLabel", "paused", "queueKnown", "queueNote", "queued", "running",
                 "serverDownSinceMs", "serverMessage", "serverRefused", "startWorker", "stopLabel", "tooltip", "types",
                 "typesNote", "updateLabel", "updateNote", "updating", "versions",
@@ -2576,7 +2693,75 @@ mod tests {
                 "progressMessage", "resultUrl", "retryAtMs", "startedAtMs", "state", "type", "typeUnavailable", "what",
             ]
         );
+        let mut gpu_keys: Vec<&str> = v["gpu"].as_object().unwrap().keys().map(String::as_str).collect();
+        gpu_keys.sort_unstable();
+        assert_eq!(gpu_keys, ["name", "problem", "state", "temperature", "totalMib", "usedMib", "utilization"]);
         assert_eq!(v["icon"], "busy");
         assert_eq!(v["log"][0].as_object().unwrap().keys().cloned().collect::<Vec<_>>().len(), 3);
+    }
+
+    fn gpu_info() -> GpuInfo {
+        GpuInfo { name: "NVIDIA GeForce RTX 5060 Ti".into(), used_mib: 6400, total_mib: 16311, utilization: Some(94), temperature: Some(71) }
+    }
+
+    /// Spec 06e § 3.1: read at once when the window shows, then every 5 s while it is on screen; one at a time.
+    #[test]
+    fn the_card_is_read_while_the_window_is_on_screen() {
+        let mut m = ready(false);
+        assert!(!m.apply(Input::Tick, NOW).contains(&Effect::ReadGpu), "a hidden window reads nothing");
+        assert_eq!(m.apply(Input::WindowShown(true), NOW), vec![Effect::ReadGpu]);
+        assert_eq!(m.apply(Input::WindowShown(true), NOW), vec![], "one reading at a time");
+        assert!(!m.apply(Input::Tick, NOW + 10_000).contains(&Effect::ReadGpu), "not while one runs");
+        m.apply(Input::GpuRead(Ok(gpu_info())), NOW + 300);
+        assert!(!m.apply(Input::Tick, NOW + 5_299).contains(&Effect::ReadGpu));
+        assert!(m.apply(Input::Tick, NOW + 5_300).contains(&Effect::ReadGpu));
+        m.apply(Input::GpuRead(Ok(gpu_info())), NOW + 5_400);
+        m.apply(Input::WindowShown(false), NOW + 6_000);
+        assert!(!m.apply(Input::Tick, NOW + 60_000).contains(&Effect::ReadGpu), "hidden again");
+        // Shown again: at once, without waiting for the 5 s.
+        assert_eq!(m.apply(Input::WindowShown(true), NOW + 60_100), vec![Effect::ReadGpu]);
+    }
+
+    #[test]
+    fn no_reading_while_quitting() {
+        let mut m = ready(false);
+        m.apply(Input::Quit, NOW);
+        assert_eq!(m.apply(Input::WindowShown(true), NOW), vec![]);
+        assert!(!m.apply(Input::Tick, NOW + 10_000).contains(&Effect::ReadGpu));
+    }
+
+    /// Spec 06e § 2.3 and § 5: the view follows the last reading; a card that cannot be read is logged once.
+    #[test]
+    fn the_gpu_view_follows_the_last_reading_and_a_failure_is_logged_once() {
+        let mut m = ready(false);
+        assert_eq!(m.snapshot().gpu.state, "reading");
+        m.apply(Input::GpuRead(Ok(gpu_info())), NOW);
+        let g = m.snapshot().gpu;
+        assert_eq!(
+            (g.state.as_str(), g.name.as_deref(), g.used_mib, g.total_mib, g.utilization, g.temperature, g.problem),
+            ("ok", Some("NVIDIA GeForce RTX 5060 Ti"), Some(6400), Some(16311), Some(94), Some(71), None)
+        );
+        let failed = || Input::GpuRead(Err(GpuProblem::Failed("No devices were found".into())));
+        m.apply(failed(), NOW + 5_000);
+        m.apply(failed(), NOW + 10_000);
+        let s = m.snapshot();
+        assert_eq!((s.gpu.state.as_str(), s.gpu.problem.as_deref(), s.gpu.name), ("failed", Some("No devices were found"), None));
+        assert_eq!(s.log.iter().filter(|l| l.text == "the card cannot be read: No devices were found").count(), 1);
+        m.apply(Input::GpuRead(Ok(gpu_info())), NOW + 15_000);
+        assert_eq!(m.snapshot().log.last().map(|l| l.text.as_str()), Some("the card can be read again"));
+        m.apply(Input::GpuRead(Err(GpuProblem::Missing)), NOW + 20_000);
+        let s = m.snapshot();
+        assert_eq!(s.gpu.state, "missing");
+        assert_eq!(s.log.last().map(|l| l.text.as_str()), Some("the card can be read again"), "a missing nvidia-smi is not logged");
+    }
+
+    /// Spec 06e § 2.3: the worker decides about jobs, so its "cannot read the card" wins over the tray's reading.
+    #[test]
+    fn a_card_the_worker_cannot_read_is_not_connected_even_when_the_tray_reads_it() {
+        let mut m = running_worker();
+        m.apply(Input::GpuRead(Ok(gpu_info())), NOW);
+        m.apply(waiting_queue(unreadable(Some("nvidia-smi: exit 4")), None, false), NOW);
+        let g = m.snapshot().gpu;
+        assert_eq!((g.state.as_str(), g.problem.as_deref()), ("failed", Some("nvidia-smi: exit 4")));
     }
 }

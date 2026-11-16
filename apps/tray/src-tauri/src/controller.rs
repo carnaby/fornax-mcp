@@ -226,6 +226,8 @@ impl Runner {
             },
             Effect::RunAction { key, args } => run_action(&self.paths, &self.tx, key, args, self.timing.action_timeout),
             Effect::RunUpdate => run_update(&self.paths, &self.tx, self.timing.update_timeout),
+            // Task 4 of plan 06e carries it out.
+            Effect::ReadGpu => {}
             Effect::StartTrayInstall { target, resume_before } => {
                 let result = start_tray_install(&self.paths, &target, resume_before);
                 let _ = self.tx.send(Input::TrayInstallStarted(result));
