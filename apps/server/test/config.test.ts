@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
-import { CONFIG_VARIABLES, defaultWorkerZip, loadConfig } from '../src/config.js';
+import { CONFIG_VARIABLES, defaultTrayFile, defaultWorkerZip, loadConfig } from '../src/config.js';
 
 const MB = 1024 * 1024;
 const HOUR = 3_600_000;
@@ -24,6 +24,8 @@ describe('loadConfig', () => {
     expect(c.retention).toEqual({ finishedMs: 14 * DAY, orphanUploadMs: 24 * HOUR, unavailableTypeMs: 7 * DAY, pendingTokenMs: 7 * DAY });
     expect(c.webhooks.allowedPrefixes).toEqual([]);
     expect(c.workerZip).toBe(defaultWorkerZip());
+    expect(c.trayMsi).toBe(defaultTrayFile('msi'));
+    expect(c.trayDeb).toBe(defaultTrayFile('deb'));
   });
 
   test('reads every variable', () => {
@@ -43,6 +45,8 @@ describe('loadConfig', () => {
         FORNAX_PENDING_TOKEN_DAYS: '1',
         FORNAX_WEBHOOK_PREFIXES: 'https://app.example.com/hooks/, https://other.example.com/',
         FORNAX_WORKER_ZIP: '/opt/fornax-worker.zip',
+        FORNAX_TRAY_MSI: '/opt/fornax-tray.msi',
+        FORNAX_TRAY_DEB: '/opt/fornax-tray.deb',
       }),
     );
     expect(c.publicUrl).toBe('https://fornax.example.com');
@@ -53,6 +57,7 @@ describe('loadConfig', () => {
     expect(c.retention).toEqual({ finishedMs: 2 * DAY, orphanUploadMs: HOUR / 2, unavailableTypeMs: 3 * DAY, pendingTokenMs: DAY });
     expect(c.webhooks.allowedPrefixes).toEqual(['https://app.example.com/hooks/', 'https://other.example.com/']);
     expect(c.workerZip).toBe('/opt/fornax-worker.zip');
+    expect([c.trayMsi, c.trayDeb]).toEqual(['/opt/fornax-tray.msi', '/opt/fornax-tray.deb']);
   });
 
   test('PUBLIC_URL keeps the origin only; an empty value counts as unset', () => {

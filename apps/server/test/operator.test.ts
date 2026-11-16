@@ -1,3 +1,4 @@
+import { FORNAX_VERSION } from '@fornax/protocol';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, test } from 'vitest';
 import { jobs } from '../src/db/schema.js';
@@ -48,6 +49,7 @@ describe('operatorQueue (spec 06 2.3)', () => {
 
     const q = view();
     expect(q.server_time).toBe(t.clock.now.toISOString());
+    expect(q.server_version).toBe(FORNAX_VERSION);
     expect(q.change).toMatch(/^[0-9a-f]{16}$/);
     expect(q).toMatchObject({ paused: false, worker: { online: true, version: '0.5.0', waiting: null }, finished: [] });
     expect(q.running).toMatchObject({

@@ -24,6 +24,8 @@ export const CONFIG_VARIABLES = [
   'FORNAX_PENDING_TOKEN_DAYS',
   'FORNAX_WEBHOOK_PREFIXES',
   'FORNAX_WORKER_ZIP',
+  'FORNAX_TRAY_MSI',
+  'FORNAX_TRAY_DEB',
 ] as const;
 
 export type Config = {
@@ -44,6 +46,9 @@ export type Config = {
   webhooks: { allowedPrefixes: string[] };
   /** The worker bundle served at /downloads/fornax-worker.zip. */
   workerZip: string;
+  /** Spec 06d 2.1: the tray's installers served at /downloads/fornax-tray.msi|deb. */
+  trayMsi: string;
+  trayDeb: string;
 };
 
 type Env = Record<string, string | undefined>;
@@ -54,6 +59,11 @@ const here = dirname(fileURLToPath(import.meta.url));
 export function defaultWorkerZip(): string {
   const candidates = [join(here, '..', 'downloads', 'fornax-worker.zip'), join(here, '..', '..', 'downloads', 'fornax-worker.zip')];
   return candidates.find((p) => existsSync(p)) ?? candidates[1]!;
+}
+
+/** Spec 06d 2.1: a tray installer next to the worker bundle (downloads/fornax-tray.msi|deb). */
+export function defaultTrayFile(kind: 'msi' | 'deb'): string {
+  return join(dirname(defaultWorkerZip()), `fornax-tray.${kind}`);
 }
 
 /** The trimmed value; undefined when unset or blank. */
@@ -147,5 +157,7 @@ export function loadConfig(env: Env = process.env): Config {
     },
     webhooks: { allowedPrefixes: webhookPrefixes(valueOf(env, 'FORNAX_WEBHOOK_PREFIXES')) },
     workerZip: valueOf(env, 'FORNAX_WORKER_ZIP') ?? defaultWorkerZip(),
+    trayMsi: valueOf(env, 'FORNAX_TRAY_MSI') ?? defaultTrayFile('msi'),
+    trayDeb: valueOf(env, 'FORNAX_TRAY_DEB') ?? defaultTrayFile('deb'),
   };
 }

@@ -46,6 +46,8 @@ export async function startTestServer(overrides: Partial<Config> = {}): Promise<
     host: '127.0.0.1',
     trustProxy: 0,
     workerZip: join(dir, 'fornax-worker.zip'),
+    trayMsi: join(dir, 'fornax-tray.msi'),
+    trayDeb: join(dir, 'fornax-tray.deb'),
     limits: { maxUploadBytes: 16 * 1024 * 1024, maxOutputBytes: 16 * 1024 * 1024, maxQueuedPerToken: 50 },
     retention: { finishedMs: 14 * 86_400_000, orphanUploadMs: 24 * 3_600_000, unavailableTypeMs: 7 * 86_400_000, pendingTokenMs: 7 * 86_400_000 },
     webhooks: { allowedPrefixes: [] },

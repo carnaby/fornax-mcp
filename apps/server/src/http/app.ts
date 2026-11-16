@@ -9,6 +9,7 @@ import { clientRoutes } from './client-api.js';
 import { downloadRoutes } from './downloads.js';
 import type { RouteDeps } from './deps.js';
 import { pairPageRoutes } from './pages/pair.js';
+import { trayDownloadRoutes } from './tray-download.js';
 import { workerDownloadRoutes } from './worker-download.js';
 import { resultPageRoutes } from './pages/result.js';
 import { uploadLinkRoutes } from './uploads.js';
@@ -106,5 +107,6 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   await app.register(resultPageRoutes, routeDeps);
   await app.register(pairPageRoutes, routeDeps);
   await app.register(workerDownloadRoutes, routeDeps);
+  await app.register(trayDownloadRoutes, routeDeps);
   return app;
 }

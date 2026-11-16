@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { type OperatorJob, type OperatorQueue, PRIORITIES } from '@fornax/protocol';
+import { FORNAX_VERSION, type OperatorJob, type OperatorQueue, PRIORITIES } from '@fornax/protocol';
 import { asc, desc, eq, inArray } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { files, jobs, tokens, workerState } from '../db/schema.js';
@@ -71,6 +71,7 @@ export function operatorQueue(db: Db, now: Date, resultUrlOf: (job: JobRow) => s
   const linked = (v: Seen, row: JobRow): OperatorJob => ({ ...v, result_url: resultUrlOf(row) });
   return {
     server_time: now.toISOString(),
+    server_version: FORNAX_VERSION,
     change,
     paused: body.paused,
     worker: body.worker,

@@ -70,6 +70,10 @@ export const statusBody = z.strictObject({ waiting: workerWaiting.nullable() });
 
 /** GET /downloads/fornax-worker.json (spec 05c 6): what `fornax update` checks before it downloads the zip. */
 export type WorkerBundleInfo = { version: string; sha256: string; size: number };
+/** Spec 06d 2.1: one tray installer the server carries. */
+export type TrayInstallerInfo = { sha256: string; size: number };
+/** Spec 06d 2.1: GET /downloads/fornax-tray.json; an installer the server does not have is null. */
+export type TrayBundleInfo = { version: string; msi: TrayInstallerInfo | null; deb: TrayInstallerInfo | null };
 
 /** Spec 06 2.3: where the operator moves a waiting job (exactly one of these). */
 export const moveBody = z.union([
@@ -112,6 +116,8 @@ export type OperatorJob = {
 /** Spec 06 2.3: GET /api/worker/jobs. */
 export type OperatorQueue = {
   server_time: string;
+  /** Spec 06d 2.3: the server's version; the tray offers an update when it is newer than the tray or the CLI. */
+  server_version: string;
   /** 16 hex digits; changes exactly when something the operator sees changes (not time, last_seen or result links). */
   change: string;
   paused: boolean;

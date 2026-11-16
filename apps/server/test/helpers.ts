@@ -26,6 +26,8 @@ export function testConfig(dataDir: string, overrides: Partial<Config> = {}): Co
     host: '127.0.0.1',
     trustProxy: 0,
     workerZip: join(dataDir, 'fornax-worker.zip'),
+    trayMsi: join(dataDir, 'fornax-tray.msi'),
+    trayDeb: join(dataDir, 'fornax-tray.deb'),
     limits: { maxUploadBytes: 1024 * 1024, maxOutputBytes: 1024 * 1024, maxQueuedPerToken: 50 },
     retention: { finishedMs: 14 * 86_400_000, orphanUploadMs: 24 * 3_600_000, unavailableTypeMs: 7 * 86_400_000, pendingTokenMs: 7 * 86_400_000 },
     webhooks: { allowedPrefixes: [] },
