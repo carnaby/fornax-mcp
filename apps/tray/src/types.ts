@@ -55,4 +55,12 @@ export type Snapshot = {
   types: TypeView[];
   /** Why there is no list of types (worker stopped, outside the tray, checking, old CLI); null when there is one. */
   typesNote: string | null;
+  /** Spec 06d 4.1: "tray 0.7.0 · fornax 0.7.0 · server 0.7.1". */
+  versions: string;
+  /** "Update to 0.7.1" / "Update fornax to 0.7.1" when one is offered. */
+  updateLabel: string | null;
+  canUpdate: boolean;
+  canCancelUpdate: boolean;
+  /** Why the last update failed, or the AppImage's note. */
+  updateNote: string | null;
 };

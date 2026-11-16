@@ -12,12 +12,16 @@
           <span id="dot" class="dot" data-icon="stopped"></span>
           <h1 id="headline">Fornax</h1>
         </div>
+        <p id="versions" class="versions"></p>
         <p id="server" class="server" hidden></p>
         <p id="note" class="note" hidden></p>
+        <p id="update-note" class="note" hidden></p>
         <div class="buttons">
           <button id="start" type="button" class="primary" disabled>Start worker</button>
           <button id="stop" type="button" disabled>Stop worker</button>
           <button id="pause" type="button" disabled>Pause queue</button>
+          <button id="update" type="button" hidden></button>
+          <button id="cancel-update" type="button" hidden>Cancel update</button>
         </div>
         <p id="pause-error" class="action-error" hidden></p>
         <div id="quit" class="quit" hidden>

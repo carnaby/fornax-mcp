@@ -114,6 +114,15 @@ const actionError = (j: JobView): HTMLElement[] => (j.actionError ? [make('p', '
 function renderHeader(s: Snapshot): void {
   el('dot').dataset.icon = s.icon;
   el('headline').textContent = s.headline;
+  el('versions').textContent = s.versions;
+  const update = el<HTMLButtonElement>('update');
+  update.hidden = s.updateLabel === null;
+  update.disabled = !s.canUpdate;
+  update.textContent = s.updateLabel ?? '';
+  el('cancel-update').hidden = !s.canCancelUpdate;
+  const updateNote = el('update-note');
+  updateNote.hidden = s.updateNote === null;
+  updateNote.textContent = s.updateNote ?? '';
   const server = el('server');
   server.hidden = s.serverDownSinceMs === null && !s.serverRefused;
   if (s.serverRefused) server.textContent = s.serverMessage ?? '';
@@ -328,6 +337,8 @@ function render(s: Snapshot, force = false): void {
 el('start').addEventListener('click', () => call('start_worker'));
 el('stop').addEventListener('click', () => call('stop_worker'));
 el('pause').addEventListener('click', () => call('set_paused', { paused: !(current?.paused ?? false) }));
+el('update').addEventListener('click', () => call('update'));
+el('cancel-update').addEventListener('click', () => call('cancel_update'));
 el('quit-yes').addEventListener('click', () => call('confirm_quit', { yes: true }));
 el('quit-no').addEventListener('click', () => call('confirm_quit', { yes: false }));
 // A closed log has no height, so it cannot follow the new lines: an opened one starts at its newest line, and
