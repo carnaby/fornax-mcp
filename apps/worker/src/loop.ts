@@ -150,18 +150,21 @@ export async function runWorker(o: LoopOptions): Promise<number> {
           await gate.pause();
           continue;
         }
-        // The card is there (at the start, or back): the types are checked with it before the next claim.
-        if (cardMissing || checked === null) {
+        // The card is there (also over the limit): the types are checked with it at the start, after it came back, or
+        // after a pack changed. The checks take a while (real ones load models), so the card is measured again before
+        // the claim.
+        if (cardMissing || checked === null || packsSignature(o.paths.typesDir) !== signature) {
           cardMissing = false;
           await refresh();
-          if (o.signal.aborted) break;
+          continue;
         }
         if (card.kind === 'busy') {
           await gate.pause();
           continue;
         }
+      } else if (packsSignature(o.paths.typesDir) !== signature) {
+        await refresh();
       }
-      if (packsSignature(o.paths.typesDir) !== signature) await refresh();
       const job = await retrying(() => o.api.claim(o.claimWaitS ?? CLAIM_WAIT_S, o.signal));
       if (job) await handle(job);
       if (o.once) break;

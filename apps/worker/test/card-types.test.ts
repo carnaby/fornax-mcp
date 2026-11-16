@@ -27,6 +27,7 @@ function start(card: () => GpuReading, opts: { gpu?: boolean; brokenPack?: boole
   const announced: string[][] = [];
   const types: TypeState[][] = [];
   const lines: string[] = [];
+  let claims = 0;
   const api = {
     announce: async (contracts: { name: string }[]) => {
       const names = contracts.map((c) => c.name);
@@ -34,6 +35,7 @@ function start(card: () => GpuReading, opts: { gpu?: boolean; brokenPack?: boole
       return names;
     },
     claim: async () => {
+      claims++;
       await sleep(20);
       return null;
     },
@@ -47,6 +49,7 @@ function start(card: () => GpuReading, opts: { gpu?: boolean; brokenPack?: boole
   });
   return {
     paths, announced, types, lines,
+    claims: () => claims,
     checks: () => (existsSync(counter) ? readFileSync(counter, 'utf8').length : 0),
     stop: async () => {
       stop.abort();
@@ -126,6 +129,27 @@ describe('the types and the card (spec 06c 2)', () => {
     await waitFor(() => w.announced.length >= 2, 10_000, 'the second announcement');
     await w.stop();
     expect(w.announced[1]).toEqual(['echo', 'late']);
+  });
+
+  test('the card is measured again after the types are checked, before a claim', async () => {
+    // The checks take a while (real ones load models): a card gone meanwhile must stop the claim.
+    let readings = 0;
+    const w = start(() => (readings++ === 0 ? free : gone));
+    await waitFor(() => w.announced.length >= 1, 10_000, 'the announcement');
+    await sleep(150);
+    await w.stop();
+    expect(w.claims()).toBe(0);
+    expect(readings).toBeGreaterThan(1);
+  });
+
+  test('a new pack while the card is busy is checked: the card is there', async () => {
+    const w = start(() => busy);
+    await waitFor(() => w.announced.length >= 1, 10_000, 'the first announcement');
+    writeEchoPack(w.paths.typesDir, { name: 'late' });
+    await waitFor(() => w.announced.length >= 2, 10_000, 'the second announcement');
+    await w.stop();
+    expect(w.announced[1]).toEqual(['echo', 'late']);
+    expect(w.claims()).toBe(0);
   });
 
   test('a card over the limit at the start: it is there, so the types are checked', async () => {
