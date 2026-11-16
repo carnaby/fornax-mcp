@@ -95,6 +95,10 @@ pub struct Queue {
     #[serde(default)]
     pub server_version: Option<String>,
     pub paused: bool,
+    /// Since when the queue is paused (a second pause keeps the first time); None while it runs, and from a server
+    /// older than 0.7.2.
+    #[serde(default)]
+    pub paused_at: Option<String>,
     pub worker: WorkerInfo,
     pub running: Option<Job>,
     pub queued: Vec<Job>,

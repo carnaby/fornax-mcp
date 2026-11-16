@@ -23,6 +23,11 @@ pub const WATCH_RETRY_MS: [i64; 4] = [2_000, 5_000, 10_000, 30_000];
 pub const ERROR_CHARS: usize = 120;
 /// The key of the pause action; job actions use the job's id.
 pub const PAUSE: &str = "pause";
+/// fornax from this version answers pause and resume with the queue (`--json`).
+pub const PAUSE_JSON_CLI: (u32, u32, u32) = (0, 7, 2);
+/// How much later than the tray's idea of the server time an update's own pause may be (the time of a queue line comes
+/// a little before the line is read): a pause later than that is someone else's.
+pub const OWED_MARGIN_MS: i64 = 5_000;
 /// Spec 06 § 5: what the window says when the server refuses the worker token (401/403).
 pub const TOKEN_REFUSED: &str = "The server refused the worker token: pair again (fornax worker pair)";
 /// What the menu shows when no update is offered (spec 06d 4.2).
@@ -71,8 +76,9 @@ pub enum Input {
     WatchText(String),
     WatchExited,
     WatchSpawnFailed(String),
-    /// The answer to a [`Effect::RunAction`]; main.rs also sends a failed one for a result page that did not open.
-    ActionDone { key: String, result: Result<(), String> },
+    /// The answer to a [`Effect::RunAction`]; main.rs also sends a failed one for a result page that did not open. Ok
+    /// holds the server time of the queue the action answered with (pause and resume with fornax 0.7.2 or newer).
+    ActionDone { key: String, result: Result<Option<String>, String> },
     LockChecked { held: bool },
     Warning(String),
     /// Every second: deadlines, the reader's restart, the lock check, old action errors.
@@ -90,8 +96,9 @@ pub enum Effect {
     /// `fornax update`, its lines as [`Input::UpdateText`], answered by one [`Input::UpdateRan`].
     RunUpdate,
     /// Write `<data>/tray-update.json` and start `fornax tray install --wait-pid <pid> --relaunch <exe>` detached;
-    /// answered by one [`Input::TrayInstallStarted`].
-    StartTrayInstall { target: String, resume_queue: bool },
+    /// answered by one [`Input::TrayInstallStarted`]. `resume_before`: the next tray resumes the queue the update paused,
+    /// unless it was paused again after this server time (ms).
+    StartTrayInstall { target: String, resume_before: Option<i64> },
     CheckLock,
     Notify { title: String, body: String },
     ShowWindow,
@@ -147,6 +154,8 @@ pub enum Icon {
 pub struct UpdateDone {
     pub target: String,
     pub resume_queue: bool,
+    /// The server time (ms) after which a pause is not the update's; None from a tray before 0.7.2 (any pause).
+    pub resume_before: Option<i64>,
     /// The installer helper's last line (`tray-update.log`).
     pub last_line: Option<String>,
 }
@@ -325,9 +334,14 @@ pub struct Model {
     update: Option<Update>,
     /// Why the update to a version failed: (that version, the sentence). Shown while that version is offered.
     update_note: Option<(String, String)>,
-    /// A resume of a queue an update paused that could not run yet (the tray before this one paused it, a pause still
-    /// runs, the server is down): sent as soon as it can be.
+    /// A resume of a queue an update paused that has not gone through yet (the tray before this one paused it, a pause
+    /// still runs, the server is down, the resume failed): sent as soon as it can be, until one answers.
     resume_owed: bool,
+    /// The owed resume undoes only a pause from no later than this server time (ms): a pause made after the update
+    /// ended is someone else's. None: any pause (a marker of a tray before 0.7.2).
+    resume_before: Option<i64>,
+    /// The server time (ms) of the pause or resume answer a queue line must not be older than to clear `pause_unseen`.
+    answer_time: Option<i64>,
     /// Quit came during an update that had paused the queue: quit once the resume answered.
     quit_after_resume: bool,
     /// What the pause action on its way asks for (true: paused).
@@ -422,6 +436,8 @@ impl Model {
             update: None,
             update_note: None,
             resume_owed: false,
+            resume_before: None,
+            answer_time: None,
             quit_after_resume: false,
             pause_target: None,
             pause_unseen: false,
@@ -446,6 +462,7 @@ impl Model {
                         self.push_log(now, format!("the tray update to {} did not install{why}", done.target), true);
                     }
                     self.resume_owed = done.resume_queue;
+                    self.resume_before = done.resume_before;
                 }
                 self.cli_checking = true;
                 vec![Effect::CheckCli]
@@ -477,7 +494,7 @@ impl Model {
                 self.start_worker = on;
                 vec![Effect::SaveStartWorker(on)]
             }
-            Input::Quit => self.quit(),
+            Input::Quit => self.quit(now),
             Input::ConfirmQuit(yes) => self.confirm_quit(yes),
             Input::Update => self.start_update(now),
             Input::CancelUpdate => self.cancel_update(now),
@@ -540,6 +557,7 @@ impl Model {
             Input::ActionDone { key, result } => {
                 self.pending.remove(&key);
                 let failed = result.as_ref().err().cloned();
+                let answered_at = result.as_ref().ok().and_then(|t| t.as_deref()).and_then(iso_ms);
                 if let Err(message) = result {
                     self.push_log(now, message.clone(), true);
                     self.action_errors.retain(|(k, _, _)| *k != key);
@@ -552,9 +570,16 @@ impl Model {
                 // Set from this answer, not added to: a resume that undid a pause no line showed leaves the line right.
                 if failed.is_none() {
                     self.pause_unseen = target.is_some_and(|t| self.queue.as_ref().is_some_and(|q| q.paused != t));
+                    self.answer_time = answered_at.filter(|_| self.pause_unseen);
+                    // A resume that went through pays what was owed.
+                    if target == Some(false) {
+                        self.resume_owed = false;
+                        self.resume_before = None;
+                    }
                 }
-                if self.resume_owed && self.can_act() {
-                    self.resume_owed = false;
+                // A resume owed while a pause ran goes out once that pause answered. A failed resume waits for the next
+                // queue line: sent again now, it would fail the same way.
+                if self.resume_owed && target == Some(true) && self.can_act() {
                     let effects = self.action(PAUSE.to_string(), vec!["queue".into(), "resume".into()]);
                     if !effects.is_empty() {
                         return effects;
@@ -562,7 +587,7 @@ impl Model {
                 }
                 if self.quit_after_resume {
                     self.quit_after_resume = false;
-                    return self.quit();
+                    return self.quit(now);
                 }
                 // During the wait the only pause action is the update's own (Pause/Resume are off, and Update is off
                 // while one runs): without it, fornax update could run with jobs starting.
@@ -573,7 +598,7 @@ impl Model {
                         self.update_note = Some((target, format!("The update could not pause the queue: {message}")));
                         // The pause may have gone through anyway (an answer lost on the way, a timeout): resume, which
                         // a queue that is not paused ignores; with the server down it is owed to a paused queue.
-                        return self.resume_if_ours(ours);
+                        return self.resume_if_ours(ours, now);
                     }
                 }
                 self.advance_update()
@@ -656,18 +681,22 @@ impl Model {
     }
 
     /// One action per key at a time, only while [`Model::can_act`].
-    fn action(&mut self, key: String, args: Vec<String>) -> Vec<Effect> {
+    fn action(&mut self, key: String, mut args: Vec<String>) -> Vec<Effect> {
         if !self.can_act() || !self.pending.insert(key.clone()) {
             return Vec::new();
         }
         self.action_errors.retain(|(k, _, _)| *k != key);
         if key == PAUSE {
             self.pause_target = args.get(1).map(|a| a == "pause");
+            // The answer's queue tells which queue lines are older than the action.
+            if self.cli_version.as_deref().and_then(version_of).is_some_and(|v| v >= PAUSE_JSON_CLI) {
+                args.push("--json".into());
+            }
         }
         vec![Effect::RunAction { key, args }]
     }
 
-    fn quit(&mut self) -> Vec<Effect> {
+    fn quit(&mut self, now: i64) -> Vec<Effect> {
         if self.quitting {
             return Vec::new();
         }
@@ -676,14 +705,13 @@ impl Model {
             let ours = u.paused_by_us;
             self.update = None;
             if ours {
-                let effects = self.action(PAUSE.to_string(), vec!["queue".into(), "resume".into()]);
+                let effects = self.resume_if_ours(true, now);
                 if !effects.is_empty() {
                     self.quit_after_resume = true;
                     return effects;
                 }
                 // The pause still runs: resume once it answered, then quit.
                 if self.pending.contains(PAUSE) {
-                    self.resume_owed = true;
                     self.quit_after_resume = true;
                     return Vec::new();
                 }
@@ -755,16 +783,29 @@ impl Model {
         (self.appimage && newer).then(|| format!("fornax {server} is available: update the AppImage from the GitHub release"))
     }
 
-    /// Resume a queue the update paused; when that cannot run now (a pause still runs, the server is down), it is owed.
-    fn resume_if_ours(&mut self, ours: bool) -> Vec<Effect> {
+    /// The server time now as far as the tray knows it, plus a margin: the update's own pause is never later than this.
+    fn owed_bound(&self, now: i64) -> i64 {
+        now + self.offset_ms + OWED_MARGIN_MS
+    }
+
+    /// Resume a queue the update paused. It is owed until a resume answers: when it cannot run now (a pause still runs,
+    /// the server is down) or fails, it goes out later, for a pause no later than now.
+    fn resume_if_ours(&mut self, ours: bool, now: i64) -> Vec<Effect> {
         if !ours {
             return Vec::new();
         }
-        let effects = self.action(PAUSE.to_string(), vec!["queue".into(), "resume".into()]);
-        if effects.is_empty() {
-            self.resume_owed = true;
+        self.resume_owed = true;
+        self.resume_before = Some(self.owed_bound(now));
+        self.action(PAUSE.to_string(), vec!["queue".into(), "resume".into()])
+    }
+
+    /// Whether the paused queue of a line is still the pause an owed resume is for.
+    fn owed_pause(&self, q: &Queue) -> bool {
+        match (self.resume_before, q.paused_at.as_deref().and_then(iso_ms)) {
+            (Some(bound), Some(at)) => at <= bound,
+            // A server before 0.7.2 or a marker of a tray before 0.7.2: any pause.
+            _ => true,
         }
-        effects
     }
 
     /// Update is off while a pause action runs and until a queue line shows its answer: the update reads from the line
@@ -807,7 +848,7 @@ impl Model {
         match self.update.take() {
             Some(u) if u.phase == UpdatePhase::Waiting => {
                 self.push_log(now, "update cancelled".to_string(), false);
-                self.resume_if_ours(u.paused_by_us)
+                self.resume_if_ours(u.paused_by_us, now)
             }
             other => {
                 self.update = other;
@@ -825,11 +866,11 @@ impl Model {
                 self.update = None;
                 self.update_note = Some((u.target.clone(), format!("The update failed: {message}")));
                 self.push_log(now, format!("the update failed: {message}"), true);
-                self.resume_if_ours(u.paused_by_us)
+                self.resume_if_ours(u.paused_by_us, now)
             }
             (Ok(()), UpdateKind::CliOnly) => {
                 self.update = None;
-                let mut effects = self.resume_if_ours(u.paused_by_us);
+                let mut effects = self.resume_if_ours(u.paused_by_us, now);
                 self.cli_checking = true;
                 effects.push(Effect::CheckCli);
                 effects
@@ -838,7 +879,7 @@ impl Model {
                 if let Some(u) = &mut self.update {
                     u.phase = UpdatePhase::Installing;
                 }
-                vec![Effect::StartTrayInstall { target: u.target, resume_queue: u.paused_by_us }]
+                vec![Effect::StartTrayInstall { target: u.target, resume_before: u.paused_by_us.then(|| self.owed_bound(now)) }]
             }
         }
     }
@@ -856,7 +897,7 @@ impl Model {
                 self.update = None;
                 self.update_note = Some((u.target.clone(), format!("The tray update could not start: {message}")));
                 self.push_log(now, format!("the tray update could not start: {message}"), true);
-                self.resume_if_ours(u.paused_by_us)
+                self.resume_if_ours(u.paused_by_us, now)
             }
         }
     }
@@ -935,18 +976,30 @@ impl Model {
         self.watch_problem = None;
         self.watch_failures = 0;
         let mut effects = self.notifications(&queue);
+        // A line built before the last pause or resume answered (read after it) does not show that action yet.
+        let older = self.answer_time.zip(iso_ms(&queue.server_time)).is_some_and(|(answer, line)| line < answer);
         self.queue = Some(queue);
-        self.pause_unseen = false;
+        if !older {
+            self.pause_unseen = false;
+            self.answer_time = None;
+        }
         // The note of a failed update goes once its version is no longer the one offered.
         if self.update_note.is_some() && self.shown_update_note().is_none() {
             self.update_note = None;
         }
-        // Spec 06d 4.3: a resume owed for a queue an update paused (also by the tray before this one). While a pause
-        // runs, its answer sends it; a queue that is not paused needs none.
+        // Spec 06d 4.3: a resume owed for a queue an update paused (also by the tray before this one). While a pause or
+        // resume runs, its answer decides; a queue that is not paused needs none; a pause made after the update ended
+        // is not undone.
         if self.resume_owed && self.can_act() && !self.pending.contains(PAUSE) {
-            self.resume_owed = false;
-            if self.queue.as_ref().is_some_and(|q| q.paused) {
+            let (paused, ours) = self.queue.as_ref().map_or((false, true), |q| (q.paused, self.owed_pause(q)));
+            if paused && ours {
                 effects.extend(self.action(PAUSE.to_string(), vec!["queue".into(), "resume".into()]));
+            } else {
+                self.resume_owed = false;
+                self.resume_before = None;
+                if paused {
+                    self.push_log(now, "the queue was paused again after the update: it stays paused".to_string(), false);
+                }
             }
         }
         effects.extend(self.advance_update());
@@ -1268,6 +1321,7 @@ mod tests {
             change: "0123456789abcdef".into(),
             server_version: None,
             paused,
+            paused_at: None,
             worker: WorkerInfo { online: false, last_seen: None, version: None, waiting: None },
             running,
             queued,
@@ -1282,6 +1336,7 @@ mod tests {
             change: "0123456789abcdef".into(),
             server_version: None,
             paused,
+            paused_at: None,
             worker: WorkerInfo { online: true, last_seen: None, version: None, waiting: Some(waiting) },
             running,
             queued: vec![],
@@ -1314,6 +1369,7 @@ mod tests {
             change: "0123456789abcdef".into(),
             server_version: server.map(Into::into),
             paused,
+            paused_at: None,
             worker: WorkerInfo { online: true, last_seen: None, version: None, waiting: None },
             running,
             queued: vec![],
@@ -1332,6 +1388,11 @@ mod tests {
 
     fn pause_args(paused: bool) -> Effect {
         Effect::RunAction { key: PAUSE.into(), args: vec!["queue".into(), if paused { "pause" } else { "resume" }.into()] }
+    }
+
+    /// A pause or resume with fornax 0.7.2 or newer: the answer's queue as JSON.
+    fn pause_json(paused: bool) -> Effect {
+        Effect::RunAction { key: PAUSE.into(), args: vec!["queue".into(), if paused { "pause" } else { "resume" }.into(), "--json".into()] }
     }
 
     fn launched(start_worker: bool) -> Input {
@@ -1647,7 +1708,7 @@ mod tests {
         assert_eq!(m.apply(Input::Update, NOW), vec![pause_args(true)]);
         let s = m.snapshot();
         assert_eq!((s.headline.as_str(), s.can_cancel_update, s.can_update), ("Updating to 0.7.1 after the running job…", true, false));
-        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(()) }, NOW);
+        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(None) }, NOW);
         // Paused, the job still runs: nothing yet.
         assert_eq!(m.apply(versioned(Some("0.7.1"), Some(job("R1", "running")), true), NOW), vec![]);
         // The job is done: fornax update.
@@ -1655,7 +1716,7 @@ mod tests {
         assert_eq!(m.snapshot().headline, "Updating fornax to 0.7.1…");
         m.apply(Input::UpdateText("updated fornax 0.7.0 → 0.7.1".into()), NOW);
         assert_eq!(m.snapshot().log.last().map(|l| l.text.as_str()), Some("updated fornax 0.7.0 → 0.7.1"));
-        assert_eq!(m.apply(Input::UpdateRan(Ok(())), NOW), vec![Effect::StartTrayInstall { target: "0.7.1".into(), resume_queue: true }]);
+        assert_eq!(m.apply(Input::UpdateRan(Ok(())), NOW), vec![Effect::StartTrayInstall { target: "0.7.1".into(), resume_before: Some(SERVER + OWED_MARGIN_MS) }]);
         assert_eq!(m.snapshot().headline, "Installing the tray 0.7.1…");
         // The helper started: stop the worker and quit, without asking.
         assert_eq!(m.apply(Input::TrayInstallStarted(Ok(())), NOW), vec![Effect::SendStop, Effect::ExitAfterStop]);
@@ -1667,7 +1728,7 @@ mod tests {
         let mut m = current();
         m.apply(versioned(Some("0.7.1"), None, true), NOW);
         assert_eq!(m.apply(Input::Update, NOW), vec![Effect::RunUpdate]);
-        assert_eq!(m.apply(Input::UpdateRan(Ok(())), NOW), vec![Effect::StartTrayInstall { target: "0.7.1".into(), resume_queue: false }]);
+        assert_eq!(m.apply(Input::UpdateRan(Ok(())), NOW), vec![Effect::StartTrayInstall { target: "0.7.1".into(), resume_before: None }]);
     }
 
     /// Review 0.7.1 Important: an Update clicked while the operator's own pause or resume is on its way, or before the
@@ -1683,16 +1744,16 @@ mod tests {
         let mut m = current();
         m.apply(versioned(Some("0.7.1"), None, true), NOW);
         m.apply(Input::SetPaused(false), NOW);
-        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(()) }, NOW);
+        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(None) }, NOW);
         assert!(!m.snapshot().can_update);
         assert_eq!(m.apply(Input::Update, NOW), vec![]);
         // The line shows the resume (and a job claimed meanwhile): the update pauses for itself and resumes afterwards.
         m.apply(versioned(Some("0.7.1"), Some(job("R1", "running")), false), NOW);
         assert_eq!(m.apply(Input::Update, NOW), vec![pause_args(true)]);
-        assert_eq!(m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(()) }, NOW), vec![]);
+        assert_eq!(m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(None) }, NOW), vec![]);
         assert_eq!(m.apply(versioned(Some("0.7.1"), Some(job("R1", "running")), true), NOW), vec![]);
         assert_eq!(m.apply(versioned(Some("0.7.1"), None, true), NOW), vec![Effect::RunUpdate]);
-        assert_eq!(m.apply(Input::UpdateRan(Ok(())), NOW), vec![Effect::StartTrayInstall { target: "0.7.1".into(), resume_queue: true }]);
+        assert_eq!(m.apply(Input::UpdateRan(Ok(())), NOW), vec![Effect::StartTrayInstall { target: "0.7.1".into(), resume_before: Some(SERVER + OWED_MARGIN_MS) }]);
     }
 
     /// Review 0.7.1: the update's pause answered while the last line says nothing runs; a job claimed just before the
@@ -1702,7 +1763,7 @@ mod tests {
         let mut m = current();
         m.apply(versioned(Some("0.7.1"), None, false), NOW);
         m.apply(Input::Update, NOW);
-        assert_eq!(m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(()) }, NOW), vec![]);
+        assert_eq!(m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(None) }, NOW), vec![]);
         assert_eq!(m.apply(versioned(Some("0.7.1"), Some(job("R1", "running")), true), NOW), vec![]);
         assert_eq!(m.apply(versioned(Some("0.7.1"), None, true), NOW), vec![Effect::RunUpdate]);
     }
@@ -1712,17 +1773,17 @@ mod tests {
         let mut m = current();
         m.apply(versioned(Some("0.7.1"), None, false), NOW);
         m.apply(Input::Update, NOW);
-        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(()) }, NOW);
+        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(None) }, NOW);
         m.apply(versioned(Some("0.7.1"), None, true), NOW);
         assert_eq!(m.apply(Input::UpdateRan(Err("cannot reach the server".into())), NOW), vec![pause_args(false)]);
         let s = m.snapshot();
         assert_eq!((s.update_note.as_deref(), s.can_cancel_update), (Some("The update failed: cannot reach the server"), false));
-        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(()) }, NOW);
+        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(None) }, NOW);
         // Again once a line shows the resume, up to the helper, which cannot start.
         assert!(!m.snapshot().can_update);
         m.apply(versioned(Some("0.7.1"), None, false), NOW);
         m.apply(Input::Update, NOW);
-        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(()) }, NOW);
+        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(None) }, NOW);
         assert_eq!(m.apply(versioned(Some("0.7.1"), None, true), NOW), vec![Effect::RunUpdate]);
         m.apply(Input::UpdateRan(Ok(())), NOW);
         // This time the update paused the queue (the line showed it active): it resumes it.
@@ -1741,7 +1802,7 @@ mod tests {
         let s = m.snapshot();
         assert_eq!((s.update_note.as_deref(), s.can_update), (Some("The update could not pause the queue: cannot reach the server"), false));
         // Update comes back once the resume answered; it changed nothing the line shows, so no line is waited for.
-        assert_eq!(m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(()) }, NOW), vec![]);
+        assert_eq!(m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(None) }, NOW), vec![]);
         assert!(m.snapshot().can_update);
     }
 
@@ -1773,7 +1834,7 @@ mod tests {
         m.apply(versioned(Some("0.7.1"), None, false), NOW);
         m.apply(Input::Update, NOW);
         m.apply(Input::ActionDone { key: PAUSE.into(), result: Err("cannot reach the server".into()) }, NOW);
-        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(()) }, NOW);
+        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(None) }, NOW);
         assert_eq!(m.snapshot().update_note.as_deref(), Some("The update could not pause the queue: cannot reach the server"));
         m.apply(versioned(Some("0.7.2"), None, false), NOW);
         let s = m.snapshot();
@@ -1789,12 +1850,12 @@ mod tests {
         let mut m = current();
         m.apply(versioned(Some("0.7.1"), Some(job("R1", "running")), false), NOW);
         m.apply(Input::Update, NOW);
-        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(()) }, NOW);
+        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(None) }, NOW);
         m.apply(versioned(Some("0.7.1"), Some(job("R1", "running")), true), NOW);
         assert!(!m.snapshot().can_pause);
         assert_eq!(m.apply(Input::SetPaused(false), NOW), vec![]);
         m.apply(Input::CancelUpdate, NOW);
-        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(()) }, NOW);
+        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(None) }, NOW);
         assert!(m.snapshot().can_pause);
     }
 
@@ -1807,7 +1868,7 @@ mod tests {
         m.apply(Input::Update, NOW);
         let s = m.snapshot();
         assert_eq!((s.updating, s.headline.as_str()), (true, "Pausing the queue to update to 0.7.1…"));
-        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(()) }, NOW);
+        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(None) }, NOW);
         // Answered, but no queue line has shown the pause yet.
         assert_eq!(m.snapshot().headline, "Pausing the queue to update to 0.7.1…");
         assert_eq!(m.apply(versioned(Some("0.7.1"), None, true), NOW), vec![Effect::RunUpdate]);
@@ -1823,16 +1884,16 @@ mod tests {
         let mut m = current();
         m.apply(versioned(Some("0.7.1"), Some(job("R1", "running")), false), NOW);
         m.apply(Input::Update, NOW);
-        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(()) }, NOW);
+        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(None) }, NOW);
         assert_eq!(m.apply(Input::CancelUpdate, NOW), vec![pause_args(false)]);
         assert_eq!(m.snapshot().headline, "Worker running · queue active");
-        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(()) }, NOW);
+        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(None) }, NOW);
         m.apply(versioned(Some("0.7.1"), Some(job("R1", "running")), false), NOW);
         // Quit while waiting: resume first, then the usual question.
         m.apply(Input::Update, NOW);
-        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(()) }, NOW);
+        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(None) }, NOW);
         assert_eq!(m.apply(Input::Quit, NOW), vec![pause_args(false)]);
-        assert_eq!(m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(()) }, NOW), vec![Effect::ShowWindow]);
+        assert_eq!(m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(None) }, NOW), vec![Effect::ShowWindow]);
         assert!(m.snapshot().confirm_quit);
         // The answer of a cancelled fornax update changes nothing.
         assert_eq!(m.apply(Input::UpdateRan(Ok(())), NOW), vec![]);
@@ -1847,11 +1908,11 @@ mod tests {
         assert_eq!(m.apply(Input::CancelUpdate, NOW), vec![]);
         // A queue line from before the pause does not drop the owed resume.
         assert_eq!(m.apply(versioned(Some("0.7.1"), Some(job("R1", "running")), false), NOW), vec![]);
-        assert_eq!(m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(()) }, NOW), vec![pause_args(false)]);
+        assert_eq!(m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(None) }, NOW), vec![pause_args(false)]);
         assert!(!m.snapshot().can_update);
         // The resume brought the queue back to what the last line says: no line comes (the watch saw no change), and
         // Update is back without one.
-        assert_eq!(m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(()) }, NOW), vec![]);
+        assert_eq!(m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(None) }, NOW), vec![]);
         assert!(m.snapshot().can_update);
     }
 
@@ -1861,8 +1922,8 @@ mod tests {
         m.apply(versioned(Some("0.7.1"), Some(job("R1", "running")), false), NOW);
         m.apply(Input::Update, NOW);
         assert_eq!(m.apply(Input::Quit, NOW), vec![]);
-        assert_eq!(m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(()) }, NOW), vec![pause_args(false)]);
-        assert_eq!(m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(()) }, NOW), vec![Effect::ShowWindow]);
+        assert_eq!(m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(None) }, NOW), vec![pause_args(false)]);
+        assert_eq!(m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(None) }, NOW), vec![Effect::ShowWindow]);
     }
 
     #[test]
@@ -1870,7 +1931,7 @@ mod tests {
         let mut m = current();
         m.apply(versioned(Some("0.7.1"), None, false), NOW);
         m.apply(Input::Update, NOW);
-        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(()) }, NOW);
+        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(None) }, NOW);
         assert_eq!(m.apply(versioned(Some("0.7.1"), None, true), NOW), vec![Effect::RunUpdate]);
         m.apply(Input::Watch(WatchLine::Failed { error: "network".into(), message: "cannot reach the server".into() }), NOW);
         assert_eq!(m.apply(Input::UpdateRan(Err("cannot reach the server".into())), NOW), vec![]);
@@ -1887,7 +1948,7 @@ mod tests {
         m.apply(versioned(Some("0.7.1"), None, false), NOW);
         m.apply(Input::Update, NOW);
         assert_eq!(m.snapshot().headline, "Pausing the queue to update fornax to 0.7.1…");
-        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(()) }, NOW);
+        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(None) }, NOW);
         assert_eq!(m.apply(versioned(Some("0.7.1"), None, true), NOW), vec![Effect::RunUpdate]);
         assert_eq!(m.snapshot().headline, "Updating fornax to 0.7.1…");
         assert_eq!(m.apply(Input::UpdateRan(Ok(())), NOW), vec![pause_args(false), Effect::CheckCli]);
@@ -1908,7 +1969,7 @@ mod tests {
 
     #[test]
     fn the_next_tray_reads_the_marker() {
-        let done = |target: &str, resume_queue: bool| UpdateDone { target: target.into(), resume_queue, last_line: Some("the installation was cancelled".into()) };
+        let done = |target: &str, resume_queue: bool| UpdateDone { target: target.into(), resume_queue, resume_before: None, last_line: Some("the installation was cancelled".into()) };
         let mut m = Model::new();
         m.apply(Input::Launched { start_worker: false, warnings: vec![], version: "0.7.1".into(), appimage: false, update_done: Some(done("0.7.1", true)) }, NOW);
         assert_eq!(m.snapshot().log.last().map(|l| l.text.as_str()), Some("updated to 0.7.1"));
@@ -1922,6 +1983,107 @@ mod tests {
         assert_eq!(last, Some(("the tray update to 0.7.1 did not install: the installation was cancelled".to_string(), true)));
         m.apply(checked("0.7.0", false), NOW);
         assert_eq!(m.apply(versioned(Some("0.7.1"), None, true), NOW), vec![]);
+    }
+
+    /// A queue line of a 0.7.2 server built at `time`, paused since `paused_at` (None: the queue runs).
+    fn line_at(time: &str, running: Option<Job>, paused_at: Option<&str>) -> Input {
+        Input::Watch(WatchLine::Queue(Box::new(Queue {
+            server_time: time.into(),
+            change: "0123456789abcdef".into(),
+            server_version: Some("0.7.2".into()),
+            paused: paused_at.is_some(),
+            paused_at: paused_at.map(Into::into),
+            worker: WorkerInfo { online: true, last_seen: None, version: None, waiting: None },
+            running,
+            queued: vec![],
+            finished: vec![],
+        })))
+    }
+
+    fn server_down() -> Input {
+        Input::Watch(WatchLine::Failed { error: "network".into(), message: "cannot reach the server".into() })
+    }
+
+    /// 0.7.1 deferred: an owed resume could undo a pause made outside the tray after the update ended.
+    #[test]
+    fn an_owed_resume_leaves_a_pause_made_after_the_update_ended() {
+        let t0 = "2026-11-15T14:00:00.000Z";
+        let failed_while_down = || {
+            let mut m = current();
+            m.apply(line_at(t0, None, None), NOW);
+            m.apply(Input::Update, NOW);
+            m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(None) }, NOW);
+            assert_eq!(m.apply(line_at(t0, None, Some("2026-11-15T13:59:59.000Z")), NOW), vec![Effect::RunUpdate]);
+            m.apply(server_down(), NOW);
+            assert_eq!(m.apply(Input::UpdateRan(Err("cannot reach the server".into())), NOW), vec![]);
+            m
+        };
+        // Back with the update's own pause: resumed.
+        let mut m = failed_while_down();
+        assert_eq!(m.apply(line_at("2026-11-15T14:01:30.000Z", None, Some("2026-11-15T13:59:59.000Z")), NOW + 90_000), vec![pause_args(false)]);
+        // Back with a pause made after the update ended (resumed and paused again by hand): it stays, nothing is owed.
+        let mut m = failed_while_down();
+        assert_eq!(m.apply(line_at("2026-11-15T14:01:30.000Z", None, Some("2026-11-15T14:01:00.000Z")), NOW + 90_000), vec![]);
+        assert_eq!(m.snapshot().log.last().map(|l| l.text.as_str()), Some("the queue was paused again after the update: it stays paused"));
+        assert_eq!(m.apply(line_at("2026-11-15T14:01:40.000Z", None, Some("2026-11-15T14:01:00.000Z")), NOW + 100_000), vec![]);
+    }
+
+    #[test]
+    fn the_next_tray_resumes_only_the_pause_the_update_made() {
+        let mut m = current();
+        m.apply(line_at("2026-11-15T14:00:00.000Z", None, None), NOW);
+        m.apply(Input::Update, NOW);
+        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(None) }, NOW);
+        m.apply(line_at("2026-11-15T14:00:00.000Z", None, Some("2026-11-15T13:59:59.000Z")), NOW);
+        let bound = SERVER + OWED_MARGIN_MS;
+        assert_eq!(m.apply(Input::UpdateRan(Ok(())), NOW), vec![Effect::StartTrayInstall { target: "0.7.2".into(), resume_before: Some(bound) }]);
+        let next = |paused_at: &str| {
+            let done = UpdateDone { target: "0.7.2".into(), resume_queue: true, resume_before: Some(bound), last_line: None };
+            let mut m = Model::new();
+            m.apply(Input::Launched { start_worker: false, warnings: vec![], version: "0.7.2".into(), appimage: false, update_done: Some(done) }, NOW);
+            m.apply(checked("0.7.2", false), NOW);
+            m.apply(line_at("2026-11-15T14:02:00.000Z", None, Some(paused_at)), NOW + 120_000)
+        };
+        assert_eq!(next("2026-11-15T13:59:59.000Z"), vec![pause_json(false)]);
+        assert_eq!(next("2026-11-15T14:01:00.000Z"), vec![]);
+    }
+
+    /// 0.7.1 deferred: no test of a failed resume after a failed update pause; it was dropped.
+    #[test]
+    fn a_failed_resume_after_a_failed_update_pause_stays_owed() {
+        let mut m = current();
+        m.apply(line_at("2026-11-15T14:00:00.000Z", None, None), NOW);
+        m.apply(Input::Update, NOW);
+        let timeout = Input::ActionDone { key: PAUSE.into(), result: Err("fornax queue pause did not finish within 30 s".into()) };
+        assert_eq!(m.apply(timeout, NOW), vec![pause_args(false)]);
+        // The resume fails too: not sent again at once (it would fail the same way), but at the next line.
+        assert_eq!(m.apply(Input::ActionDone { key: PAUSE.into(), result: Err("cannot reach the server".into()) }, NOW), vec![]);
+        // The pause had gone through.
+        assert_eq!(m.apply(line_at("2026-11-15T14:00:40.000Z", None, Some("2026-11-15T14:00:01.000Z")), NOW + 40_000), vec![pause_args(false)]);
+        assert_eq!(m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(None) }, NOW + 40_000), vec![]);
+        // Answered: nothing is owed any more.
+        assert_eq!(m.apply(line_at("2026-11-15T14:00:50.000Z", None, Some("2026-11-15T14:00:01.000Z")), NOW + 50_000), vec![]);
+    }
+
+    /// 0.7.1 deferred: a queue line built before the cancel's resume, arriving after its answer, still said paused, and
+    /// a quick Update trusted it.
+    #[test]
+    fn a_queue_line_older_than_a_resume_does_not_bring_update_back() {
+        let mut m = Model::new();
+        m.apply(launched(true), NOW);
+        m.apply(checked("0.7.2", false), NOW);
+        m.apply(line_at("2026-11-15T14:00:00.000Z", Some(job("R1", "running")), None), NOW);
+        assert_eq!(m.apply(Input::Update, NOW), vec![pause_json(true)]);
+        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(Some("2026-11-15T14:00:01.000Z".into())) }, NOW);
+        m.apply(line_at("2026-11-15T14:00:01.000Z", Some(job("R1", "running")), Some("2026-11-15T14:00:01.000Z")), NOW);
+        assert_eq!(m.apply(Input::CancelUpdate, NOW), vec![pause_json(false)]);
+        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(Some("2026-11-15T14:00:05.000Z".into())) }, NOW);
+        // Built before the resume (a job's progress), read after its answer.
+        m.apply(line_at("2026-11-15T14:00:04.000Z", Some(job("R1", "running")), Some("2026-11-15T14:00:01.000Z")), NOW);
+        assert!(!m.snapshot().can_update);
+        assert_eq!(m.apply(Input::Update, NOW), vec![]);
+        m.apply(line_at("2026-11-15T14:00:05.000Z", Some(job("R1", "running")), None), NOW);
+        assert!(m.snapshot().can_update);
     }
 
     #[test]
@@ -2046,7 +2208,7 @@ mod tests {
         assert_eq!(m.snapshot().queued[1].action_error, None);
         assert_eq!(m.apply(Input::Move { id: "Q1".into(), to: MoveTo::After("Q2".into()) }, NOW), vec![Effect::RunAction { key: "Q1".into(), args: args(&["queue", "move", "Q1", "--after", "Q2"]) }]);
         assert_eq!(m.apply(Input::Move { id: "Q2".into(), to: MoveTo::Before("Q1".into()) }, NOW), vec![Effect::RunAction { key: "Q2".into(), args: args(&["queue", "move", "Q2", "--before", "Q1"]) }]);
-        m.apply(Input::ActionDone { key: "Q2".into(), result: Ok(()) }, NOW);
+        m.apply(Input::ActionDone { key: "Q2".into(), result: Ok(None) }, NOW);
         assert_eq!(m.apply(Input::Cancel { id: "Q2".into() }, NOW), vec![Effect::RunAction { key: "Q2".into(), args: args(&["queue", "cancel", "Q2"]) }]);
         assert_eq!(m.apply(Input::SetPaused(true), NOW), vec![Effect::RunAction { key: PAUSE.into(), args: args(&["queue", "pause"]) }]);
         assert!(!m.snapshot().can_pause);

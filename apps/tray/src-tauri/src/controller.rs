@@ -226,8 +226,8 @@ impl Runner {
             },
             Effect::RunAction { key, args } => run_action(&self.paths, &self.tx, key, args, self.timing.action_timeout),
             Effect::RunUpdate => run_update(&self.paths, &self.tx, self.timing.update_timeout),
-            Effect::StartTrayInstall { target, resume_queue } => {
-                let result = start_tray_install(&self.paths, &target, resume_queue);
+            Effect::StartTrayInstall { target, resume_before } => {
+                let result = start_tray_install(&self.paths, &target, resume_before);
                 let _ = self.tx.send(Input::TrayInstallStarted(result));
             }
             Effect::CheckLock => {
@@ -388,14 +388,18 @@ fn check_cli(paths: &Paths, tx: &Sender<Input>, timeout: Duration) {
 }
 
 /// `fornax queue move|cancel|pause|resume …` on a thread of its own; always answered with one [`Input::ActionDone`],
-/// also when it ran out of time (it is then ended) or could not start.
+/// also when it ran out of time (it is then ended) or could not start. An action run with `--json` answers with the
+/// queue; its server time goes to the model.
 fn run_action(paths: &Paths, tx: &Sender<Input>, key: String, args: Vec<String>, timeout: Duration) {
     let paths = paths.clone();
     let answer = Answer::new(tx, Input::ActionDone { key: key.clone(), result: Err("the action ended without an answer".into()) });
     let _ = thread::Builder::new().name("fornax action".into()).spawn(move || {
         let refs: Vec<&str> = args.iter().map(String::as_str).collect();
         let result = match run_text(&settings(&paths), &refs, timeout) {
-            Ok(r) if r.code == Some(0) => Ok(()),
+            Ok(r) if r.code == Some(0) => Ok(r.stdout.last().and_then(|line| match crate::protocol::parse_watch_line(line) {
+                Some(crate::protocol::WatchLine::Queue(q)) => Some(q.server_time),
+                _ => None,
+            })),
             Ok(r) => Err(failure(&refs, &r)),
             Err(message) => Err(message),
         };
@@ -445,11 +449,11 @@ fn run_update(paths: &Paths, tx: &Sender<Input>, timeout: Duration) {
 }
 
 /// Spec 06d 4.3 step 4: the marker, then the detached helper; without the helper no marker stays.
-fn start_tray_install(paths: &Paths, target: &str, resume_queue: bool) -> Result<(), String> {
+fn start_tray_install(paths: &Paths, target: &str, resume_before: Option<i64>) -> Result<(), String> {
     let cfg = settings(paths);
     process::check_cli(&cfg)?;
     let exe = std::env::current_exe().map_err(|e| format!("the tray does not know its own path ({e})"))?;
-    crate::update::write_marker(&paths.data, target, resume_queue).map_err(|e| format!("cannot write {} ({e})", crate::update::MARKER))?;
+    crate::update::write_marker(&paths.data, target, resume_before).map_err(|e| format!("cannot write {} ({e})", crate::update::MARKER))?;
     crate::update::spawn_installer(&cfg, std::process::id(), &exe).map_err(|e| {
         crate::update::remove_marker(&paths.data);
         process::spawn_error(&cfg, &e)
@@ -531,7 +535,7 @@ mod tests {
     fn the_installer_helper_starts_detached_with_the_marker_written() {
         let fake = fake_cli("ok");
         let (mut r, rx) = runner(&fake);
-        r.carry_out(Effect::StartTrayInstall { target: "0.7.1".into(), resume_queue: true });
+        r.carry_out(Effect::StartTrayInstall { target: "0.7.1".into(), resume_before: Some(1_794_751_205_000) });
         let started = next_of(&rx, |i| match i {
             Input::TrayInstallStarted(result) => Some(result),
             _ => None,
@@ -548,7 +552,7 @@ mod tests {
         // Without fornax nothing starts and no marker stays.
         fs::remove_file(fake.paths.data.join(crate::update::MARKER)).unwrap();
         fs::remove_file(fake.paths.cli()).unwrap();
-        r.carry_out(Effect::StartTrayInstall { target: "0.7.1".into(), resume_queue: true });
+        r.carry_out(Effect::StartTrayInstall { target: "0.7.1".into(), resume_before: Some(1_794_751_205_000) });
         let failed = next_of(&rx, |i| match i {
             Input::TrayInstallStarted(result) => Some(result),
             _ => None,
@@ -827,6 +831,22 @@ mod tests {
             _ => None,
         });
         assert_eq!(done, ("Q1".to_string(), Err(crate::process::NOT_INSTALLED.to_string())));
+    }
+
+    /// fornax 0.7.2: a pause or resume with --json answers with the queue; the model gets its server time.
+    #[test]
+    fn a_pause_with_json_answers_with_the_servers_time() {
+        let fake = fake_cli("ok");
+        let (mut r, rx) = runner(&fake);
+        let mut done = |args: &[&str]| {
+            r.carry_out(Effect::RunAction { key: "pause".into(), args: args.iter().map(|a| a.to_string()).collect() });
+            next_of(&rx, |i| match i {
+                Input::ActionDone { result, .. } => Some(result),
+                _ => None,
+            })
+        };
+        assert_eq!(done(&["queue", "pause", "--json"]), Ok(Some("2026-11-15T14:00:05.000Z".to_string())));
+        assert_eq!(done(&["queue", "resume"]), Ok(None));
     }
 
     #[test]

@@ -7,7 +7,7 @@
 // worker holds the lock), grandchild (starts a process that sleeps, in its own process group off Windows like the
 // real worker's child, and logs "grandchild <pid>"). Reader words: down (the server cannot be reached), watch-exit
 // (exits 1 after its first line), unpaired (exits 1 with the CLI's sentence on stderr before any line). Action words:
-// failaction (exits 1 with the server's sentence), slowaction (never ends).
+// failaction (exits 1 with the server's sentence), slowaction (never ends); pause|resume --json print a queue line.
 import { spawn } from 'node:child_process';
 import { appendFileSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -114,6 +114,9 @@ if (args[0] === '--version') {
   } else if (has('failaction')) {
     process.stderr.write(`job ${args[2]} is running now; only waiting jobs move\n`);
     process.exit(1);
+  } else if (args.includes('--json')) {
+    // fornax 0.7.2: pause|resume --json print the queue the server answered with.
+    out({ ...queue(), server_time: '2026-11-15T14:00:05.000Z', paused: args[1] === 'pause' });
   } else {
     process.stdout.write(`done: ${args.slice(1).join(' ')}\n`);
   }

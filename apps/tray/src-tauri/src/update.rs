@@ -20,11 +20,16 @@ pub const LOG: &str = "tray-update.log";
 struct Marker {
     target: String,
     resume_queue: bool,
+    /// The server time (ms) after which a pause is no longer the update's own; absent in a marker of a tray before 0.7.2.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    resume_before: Option<i64>,
 }
 
-pub fn write_marker(data: &Path, target: &str, resume_queue: bool) -> io::Result<()> {
+/// `resume_before`: resume the queue the update paused, unless it was paused again after this server time (ms).
+pub fn write_marker(data: &Path, target: &str, resume_before: Option<i64>) -> io::Result<()> {
     fs::create_dir_all(data)?;
-    let text = serde_json::to_string(&Marker { target: target.to_string(), resume_queue }).map_err(io::Error::other)?;
+    let marker = Marker { target: target.to_string(), resume_queue: resume_before.is_some(), resume_before };
+    let text = serde_json::to_string(&marker).map_err(io::Error::other)?;
     fs::write(data.join(MARKER), text)
 }
 
@@ -40,7 +45,7 @@ pub fn take_done(data: &Path) -> Option<UpdateDone> {
     let last_line = fs::read_to_string(data.join(LOG))
         .ok()
         .and_then(|log| log.lines().map(str::trim).filter(|l| !l.is_empty()).last().map(String::from));
-    Some(UpdateDone { target: marker.target, resume_queue: marker.resume_queue, last_line })
+    Some(UpdateDone { target: marker.target, resume_queue: marker.resume_queue, resume_before: marker.resume_before, last_line })
 }
 
 /// `fornax tray install --wait-pid <pid> --relaunch <exe>`, detached: no window, its own process group, no pipes (it
@@ -83,10 +88,17 @@ mod tests {
     fn the_marker_is_read_once_with_the_helpers_last_line() {
         let d = dir();
         assert_eq!(take_done(&d), None);
-        write_marker(&d, "0.7.1", true).unwrap();
+        write_marker(&d, "0.7.1", Some(1_794_751_205_000)).unwrap();
         fs::write(d.join(LOG), "installing fornax tray 0.7.1\nthe installation was cancelled\n\n").unwrap();
-        assert_eq!(take_done(&d), Some(UpdateDone { target: "0.7.1".into(), resume_queue: true, last_line: Some("the installation was cancelled".into()) }));
+        let done = UpdateDone { target: "0.7.1".into(), resume_queue: true, resume_before: Some(1_794_751_205_000), last_line: Some("the installation was cancelled".into()) };
+        assert_eq!(take_done(&d), Some(done));
         assert_eq!(take_done(&d), None, "the marker is removed");
+        // Nothing to resume.
+        write_marker(&d, "0.7.1", None).unwrap();
+        assert_eq!(take_done(&d).map(|u| (u.resume_queue, u.resume_before)), Some((false, None)));
+        // The marker of a tray before 0.7.2: resume, no bound.
+        fs::write(d.join(MARKER), r#"{"target":"0.7.1","resume_queue":true}"#).unwrap();
+        assert_eq!(take_done(&d).map(|u| (u.resume_queue, u.resume_before)), Some((true, None)));
         // A broken marker is removed and ignored.
         fs::write(d.join(MARKER), "not json").unwrap();
         assert_eq!(take_done(&d), None);
