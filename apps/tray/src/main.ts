@@ -13,10 +13,13 @@ import { invoke, listen } from './bridge';
 import { renderFooter } from './footer';
 import { renderGpu } from './gpu';
 import { initHeader, renderHeader } from './header';
+import { renderHistory } from './history';
 import { forgetConfirm } from './jobs';
+import { renderLog } from './log';
 import { initQuit, renderQuit } from './quit';
 import { renderRunning } from './running';
 import { mountSkeleton } from './skeleton';
+import { initTabs } from './tabs';
 import type { Snapshot } from './types';
 import { el, setOffset, setRerender, tickTimes } from './ui';
 import { isDragging, onDragEnd, renderWaiting } from './waiting';
@@ -47,6 +50,8 @@ function render(s: Snapshot, force = false): void {
   renderGpu(s);
   renderRunning(s, stale);
   renderWaiting(s, stale);
+  renderHistory(s);
+  renderLog(s.log);
   renderFooter(s);
   if (focused !== undefined) {
     for (const node of document.querySelectorAll<HTMLElement>('[data-key]')) {
@@ -69,6 +74,7 @@ onDragEnd(() => {
 });
 initHeader();
 initQuit();
+initTabs();
 setInterval(tickTimes, 1000);
 
 // The first paint asks for the snapshot; a state event that comes first is newer, and the answer must not undo it.
