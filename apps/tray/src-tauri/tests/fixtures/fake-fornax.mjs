@@ -1,7 +1,8 @@
 // A stand-in for <data>/app/fornax.mjs in the tray's Rust tests (process.rs, controller.rs). It reads its behaviour from
 // the file `mode` next to it (words separated by spaces) and its version from `version` (default 0.5.0), and counts
 // the starts of its queue reader in `watch-starts`.
-// Commands: --version; worker --events; queue --json --watch; queue move|cancel|pause|resume <…>.
+// Commands: --version; worker --events; queue --json --watch; queue move|cancel|pause|resume <…>; update; tray install
+// <…> (writes its arguments to `tray-install-args`). Update word: failupdate (exits 1 with a sentence on stderr).
 // Worker words: stubborn (ignores stop and the end of stdin), crash (exits 1 without "stopped"), locked (another
 // worker holds the lock), grandchild (starts a process that sleeps, in its own process group off Windows like the
 // real worker's child, and logs "grandchild <pid>"). Reader words: down (the server cannot be reached), watch-exit
@@ -116,6 +117,15 @@ if (args[0] === '--version') {
   } else {
     process.stdout.write(`done: ${args.slice(1).join(' ')}\n`);
   }
+} else if (args[0] === 'update') {
+  if (has('failupdate')) {
+    process.stderr.write('cannot reach the server: ECONNREFUSED\n');
+    process.exit(1);
+  }
+  process.stdout.write('updated fornax 0.5.0 → 0.7.1\n');
+  process.stdout.write('the worker restarts between jobs (after its running job, if any)\n');
+} else if (args[0] === 'tray' && args[1] === 'install') {
+  appendFileSync(join(here, 'tray-install-args'), `${JSON.stringify(args.slice(2))}\n`);
 } else {
   process.stderr.write(`fake fornax: unknown command ${args.join(' ')}\n`);
   process.exit(2);

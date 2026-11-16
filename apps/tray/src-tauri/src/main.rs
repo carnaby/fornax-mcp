@@ -77,6 +77,17 @@ fn confirm_quit(yes: bool, ctl: State<'_, Controller>) {
     ctl.send(Input::ConfirmQuit(yes));
 }
 
+/// Spec 06d 4.3: the update the window offers, and its cancel.
+#[tauri::command]
+fn update(ctl: State<'_, Controller>) {
+    ctl.send(Input::Update);
+}
+
+#[tauri::command]
+fn cancel_update(ctl: State<'_, Controller>) {
+    ctl.send(Input::CancelUpdate);
+}
+
 fn main() {
     let paths = Paths::from_env();
     // First, before the single-instance plugin registers: a tray started by the installer starts itself again without
@@ -92,7 +103,7 @@ fn main() {
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec![BACKGROUND])))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![snapshot, start_worker, stop_worker, set_paused, move_job, cancel_job, open_result, confirm_quit])
+        .invoke_handler(tauri::generate_handler![snapshot, start_worker, stop_worker, set_paused, move_job, cancel_job, open_result, confirm_quit, update, cancel_update])
         .setup(move |app| {
             let handle = app.handle().clone();
             // A click on a notification opens the window (Windows reports it while the toast is on screen). Set up before

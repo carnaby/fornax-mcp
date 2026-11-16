@@ -41,11 +41,19 @@ pub struct Timing {
     /// How long a `fornax queue move|cancel|pause|resume` may take (spec 06 4.7).
     pub action_timeout: Duration,
     pub version_timeout: Duration,
+    /// How long `fornax update` under the tray may take (spec 06d).
+    pub update_timeout: Duration,
 }
 
 impl Default for Timing {
     fn default() -> Self {
-        Timing { tick: Duration::from_secs(1), quit_wait: Duration::from_secs(15), action_timeout: Duration::from_secs(30), version_timeout: Duration::from_secs(15) }
+        Timing {
+            tick: Duration::from_secs(1),
+            quit_wait: Duration::from_secs(15),
+            action_timeout: Duration::from_secs(30),
+            version_timeout: Duration::from_secs(15),
+            update_timeout: Duration::from_secs(600),
+        }
     }
 }
 
@@ -104,8 +112,8 @@ impl Controller {
             start_worker,
             warnings: warning.into_iter().chain(config_warning).collect(),
             version: env!("CARGO_PKG_VERSION").to_string(),
-            appimage: false,
-            update_done: None,
+            appimage: std::env::var_os("APPIMAGE").is_some(),
+            update_done: crate::update::take_done(&paths.data),
         });
         {
             let runner = Runner::new(paths, tx.clone(), ui, timing);
@@ -217,8 +225,11 @@ impl Runner {
                 }
             },
             Effect::RunAction { key, args } => run_action(&self.paths, &self.tx, key, args, self.timing.action_timeout),
-            // Task 5 of plan 06d carries these out.
-            Effect::RunUpdate | Effect::StartTrayInstall { .. } => {}
+            Effect::RunUpdate => run_update(&self.paths, &self.tx, self.timing.update_timeout),
+            Effect::StartTrayInstall { target, resume_queue } => {
+                let result = start_tray_install(&self.paths, &target, resume_queue);
+                let _ = self.tx.send(Input::TrayInstallStarted(result));
+            }
             Effect::CheckLock => {
                 let _ = self.tx.send(Input::LockChecked { held: lock::held(&self.paths.lock(), SystemTime::now()) });
             }
@@ -392,6 +403,59 @@ fn run_action(paths: &Paths, tx: &Sender<Input>, key: String, args: Vec<String>,
     });
 }
 
+/// `fornax update` on a thread of its own: every line as [`Input::UpdateText`], then one [`Input::UpdateRan`] (its last
+/// line when it failed).
+fn run_update(paths: &Paths, tx: &Sender<Input>, timeout: Duration) {
+    let paths = paths.clone();
+    let lines = tx.clone();
+    let answer = Answer::new(tx, Input::UpdateRan(Err("fornax update ended without an answer".into())));
+    let _ = thread::Builder::new().name("fornax update".into()).spawn(move || {
+        let cfg = settings(&paths);
+        let run = || -> Result<(), String> {
+            process::check_cli(&cfg)?;
+            let last = Arc::new(Mutex::new(None::<String>));
+            let code = Arc::new(Mutex::new(None::<i32>));
+            let sink: Sink = {
+                let (last, code) = (Arc::clone(&last), Arc::clone(&code));
+                Arc::new(move |out: Output| match out {
+                    Output::Stdout(line) | Output::Stderr(line) => {
+                        *guard(&last) = Some(line.clone());
+                        let _ = lines.send(Input::UpdateText(line));
+                    }
+                    Output::Exited(c) => *guard(&code) = c,
+                })
+            };
+            let p = CliProcess::start(process::command(&cfg, &["update"]), sink).map_err(|e| process::spawn_error(&cfg, &e))?;
+            p.close_input();
+            if !p.wait_exit(timeout) {
+                p.kill_tree();
+                p.wait_exit(KILL_WAIT);
+                return Err(format!("fornax update did not finish within {} s", timeout.as_secs()));
+            }
+            let code = *guard(&code);
+            match code {
+                Some(0) => Ok(()),
+                _ => Err(guard(&last)
+                    .clone()
+                    .unwrap_or_else(|| format!("fornax update ended with code {}", code.map_or_else(|| "?".to_string(), |c| c.to_string())))),
+            }
+        };
+        answer.send(Input::UpdateRan(run()));
+    });
+}
+
+/// Spec 06d 4.3 step 4: the marker, then the detached helper; without the helper no marker stays.
+fn start_tray_install(paths: &Paths, target: &str, resume_queue: bool) -> Result<(), String> {
+    let cfg = settings(paths);
+    process::check_cli(&cfg)?;
+    let exe = std::env::current_exe().map_err(|e| format!("the tray does not know its own path ({e})"))?;
+    crate::update::write_marker(&paths.data, target, resume_queue).map_err(|e| format!("cannot write {} ({e})", crate::update::MARKER))?;
+    crate::update::spawn_installer(&cfg, std::process::id(), &exe).map_err(|e| {
+        crate::update::remove_marker(&paths.data);
+        process::spawn_error(&cfg, &e)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -429,7 +493,68 @@ mod tests {
     }
 
     fn timing() -> Timing {
-        Timing { tick: Duration::from_millis(50), quit_wait: Duration::from_secs(1), action_timeout: Duration::from_secs(2), version_timeout: Duration::from_secs(15) }
+        Timing {
+            tick: Duration::from_millis(50),
+            quit_wait: Duration::from_secs(1),
+            action_timeout: Duration::from_secs(2),
+            version_timeout: Duration::from_secs(15),
+            update_timeout: Duration::from_secs(30),
+        }
+    }
+
+    #[test]
+    fn fornax_update_sends_its_lines_and_its_end() {
+        let fake = fake_cli("ok");
+        let (mut r, rx) = runner(&fake);
+        r.carry_out(Effect::RunUpdate);
+        let mut lines = Vec::new();
+        let result = next_of(&rx, |i| match i {
+            Input::UpdateText(line) => {
+                lines.push(line);
+                None
+            }
+            Input::UpdateRan(result) => Some(result),
+            _ => None,
+        });
+        assert_eq!(result, Ok(()));
+        assert_eq!(lines.first().map(String::as_str), Some("updated fornax 0.5.0 → 0.7.1"));
+        crate::process::testing::set_mode(&fake, "failupdate");
+        r.carry_out(Effect::RunUpdate);
+        let failed = next_of(&rx, |i| match i {
+            Input::UpdateRan(result) => Some(result),
+            _ => None,
+        });
+        assert_eq!(failed, Err("cannot reach the server: ECONNREFUSED".to_string()));
+    }
+
+    #[test]
+    fn the_installer_helper_starts_detached_with_the_marker_written() {
+        let fake = fake_cli("ok");
+        let (mut r, rx) = runner(&fake);
+        r.carry_out(Effect::StartTrayInstall { target: "0.7.1".into(), resume_queue: true });
+        let started = next_of(&rx, |i| match i {
+            Input::TrayInstallStarted(result) => Some(result),
+            _ => None,
+        });
+        assert_eq!(started, Ok(()));
+        assert!(fake.paths.data.join(crate::update::MARKER).exists());
+        let args_file = fake.paths.cli().with_file_name("tray-install-args");
+        until("the helper ran", Duration::from_secs(10), || args_file.exists());
+        let args: Vec<String> = serde_json::from_str(fs::read_to_string(&args_file).unwrap().trim()).unwrap();
+        assert_eq!(args[0], "--wait-pid");
+        assert_eq!(args[1], std::process::id().to_string());
+        assert_eq!(args[2], "--relaunch");
+        assert_eq!(std::path::PathBuf::from(&args[3]), std::env::current_exe().unwrap());
+        // Without fornax nothing starts and no marker stays.
+        fs::remove_file(fake.paths.data.join(crate::update::MARKER)).unwrap();
+        fs::remove_file(fake.paths.cli()).unwrap();
+        r.carry_out(Effect::StartTrayInstall { target: "0.7.1".into(), resume_queue: true });
+        let failed = next_of(&rx, |i| match i {
+            Input::TrayInstallStarted(result) => Some(result),
+            _ => None,
+        });
+        assert_eq!(failed, Err(crate::process::NOT_INSTALLED.to_string()));
+        assert!(!fake.paths.data.join(crate::update::MARKER).exists());
     }
 
     fn start(fake: &Fake) -> (Arc<Recorder>, Controller) {

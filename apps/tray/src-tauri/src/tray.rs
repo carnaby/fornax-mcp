@@ -10,7 +10,7 @@ use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_notification::NotificationExt as _;
 
 use crate::controller::{Controller, Ui};
-use crate::state::{Icon, Input, Snapshot};
+use crate::state::{Icon, Input, Snapshot, NO_UPDATE};
 
 /// The label of the window in tauri.conf.json.
 pub const WINDOW: &str = "main";
@@ -85,6 +85,8 @@ struct Shown {
     can_pause: bool,
     pause_label: String,
     start_worker: Option<bool>,
+    update_label: String,
+    can_update: bool,
 }
 
 pub struct TrayUi {
@@ -94,6 +96,8 @@ pub struct TrayUi {
     start: MenuItem<Wry>,
     stop: MenuItem<Wry>,
     pause: MenuItem<Wry>,
+    /// Spec 06d 4.2: the update, when one is offered.
+    update: MenuItem<Wry>,
     with_tray: CheckMenuItem<Wry>,
     shown: Mutex<Shown>,
 }
@@ -106,6 +110,7 @@ impl TrayUi {
         let start = item("start", "Start worker", false)?;
         let stop = item("stop", "Stop worker", false)?;
         let pause = item("pause", "Pause queue", false)?;
+        let update = item("update", NO_UPDATE, false)?;
         let open = item("open", "Open window", true)?;
         let with_tray = CheckMenuItem::with_id(app, "with_tray", "Start worker with the tray", true, true, None::<&str>)?;
         let at_sign_in = app.autolaunch().is_enabled().unwrap_or(false);
@@ -119,6 +124,7 @@ impl TrayUi {
                 &start,
                 &stop,
                 &pause,
+                &update,
                 &PredefinedMenuItem::separator(app)?,
                 &open,
                 &with_tray,
@@ -141,7 +147,7 @@ impl TrayUi {
                 }
             })
             .build(app)?;
-        Ok(TrayUi { app: app.clone(), tray, status, start, stop, pause, with_tray, shown: Mutex::new(Shown::default()) })
+        Ok(TrayUi { app: app.clone(), tray, status, start, stop, pause, update, with_tray, shown: Mutex::new(Shown::default()) })
     }
 }
 
@@ -158,6 +164,9 @@ fn on_menu(app: &AppHandle, event: &MenuEvent, with_tray: &CheckMenuItem<Wry>, a
         "pause" => {
             let paused = ctl.as_ref().is_some_and(|c| c.snapshot().paused);
             send(Input::SetPaused(!paused));
+        }
+        "update" => {
+            send(Input::Update);
         }
         "open" => show_window(app),
         "with_tray" => {
@@ -214,6 +223,16 @@ impl Ui for TrayUi {
         if shown.pause_label != s.pause_label {
             let _ = self.pause.set_text(&s.pause_label);
             shown.pause_label = s.pause_label.clone();
+        }
+        // During an update the item shows its phase (the headline), disabled.
+        let update_label = s.update_label.clone().unwrap_or_else(|| if s.can_cancel_update { s.headline.clone() } else { NO_UPDATE.to_string() });
+        if shown.update_label != update_label {
+            let _ = self.update.set_text(&update_label);
+            shown.update_label = update_label;
+        }
+        if shown.can_update != s.can_update {
+            let _ = self.update.set_enabled(s.can_update);
+            shown.can_update = s.can_update;
         }
         if shown.start_worker != Some(s.start_worker) {
             let _ = self.with_tray.set_checked(s.start_worker);
