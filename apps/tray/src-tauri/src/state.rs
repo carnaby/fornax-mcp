@@ -28,6 +28,8 @@ pub const PAUSE_JSON_CLI: (u32, u32, u32) = (0, 7, 2);
 /// How much later than the tray's idea of the server time an update's own pause may be (the time of a queue line comes
 /// a little before the line is read): a pause later than that is someone else's.
 pub const OWED_MARGIN_MS: i64 = 5_000;
+/// After an owed resume failed, the next one goes after this long (the last value repeats).
+pub const OWED_RETRY_MS: [i64; 4] = [5_000, 15_000, 30_000, 60_000];
 /// Spec 06 § 5: what the window says when the server refuses the worker token (401/403).
 pub const TOKEN_REFUSED: &str = "The server refused the worker token: pair again (fornax worker pair)";
 /// What the menu shows when no update is offered (spec 06d 4.2).
@@ -340,6 +342,11 @@ pub struct Model {
     /// The owed resume undoes only a pause from no later than this server time (ms): a pause made after the update
     /// ended is someone else's. None: any pause (a marker of a tray before 0.7.2).
     resume_before: Option<i64>,
+    /// The owed resume waits for the update's own pause action, still on its way, to answer.
+    owed_after_pause: bool,
+    /// Owed resumes that failed in a row, and when the next one may go (ms, local).
+    owed_failures: usize,
+    owed_retry_at: i64,
     /// The server time (ms) of the pause or resume answer a queue line must not be older than to clear `pause_unseen`.
     answer_time: Option<i64>,
     /// Quit came during an update that had paused the queue: quit once the resume answered.
@@ -437,6 +444,9 @@ impl Model {
             update_note: None,
             resume_owed: false,
             resume_before: None,
+            owed_after_pause: false,
+            owed_failures: 0,
+            owed_retry_at: 0,
             answer_time: None,
             quit_after_resume: false,
             pause_target: None,
@@ -573,13 +583,20 @@ impl Model {
                     self.answer_time = answered_at.filter(|_| self.pause_unseen);
                     // A resume that went through pays what was owed.
                     if target == Some(false) {
-                        self.resume_owed = false;
-                        self.resume_before = None;
+                        self.clear_owed();
                     }
                 }
-                // A resume owed while a pause ran goes out once that pause answered. A failed resume waits for the next
-                // queue line: sent again now, it would fail the same way.
-                if self.resume_owed && target == Some(true) && self.can_act() {
+                // A failed resume of what is owed goes out again after a pause that grows (sent again now, it would
+                // fail the same way; a queue line may not come for long).
+                if failed.is_some() && target == Some(false) && self.resume_owed {
+                    let wait = OWED_RETRY_MS[self.owed_failures.min(OWED_RETRY_MS.len() - 1)];
+                    self.owed_failures += 1;
+                    self.owed_retry_at = now + wait;
+                }
+                // A resume owed while the update's own pause ran goes out once that pause answered; the pause may have
+                // reached the server only now, so the bound is taken again.
+                if std::mem::take(&mut self.owed_after_pause) && self.resume_owed && target == Some(true) {
+                    self.resume_before = Some(self.owed_bound(now));
                     let effects = self.action(PAUSE.to_string(), vec!["queue".into(), "resume".into()]);
                     if !effects.is_empty() {
                         return effects;
@@ -794,8 +811,29 @@ impl Model {
         if !ours {
             return Vec::new();
         }
+        self.clear_owed();
         self.resume_owed = true;
         self.resume_before = Some(self.owed_bound(now));
+        // The update's own pause still runs: its answer sends the resume.
+        self.owed_after_pause = self.pending.contains(PAUSE) && self.pause_target == Some(true);
+        self.action(PAUSE.to_string(), vec!["queue".into(), "resume".into()])
+    }
+
+    fn clear_owed(&mut self) {
+        self.resume_owed = false;
+        self.resume_before = None;
+        self.owed_after_pause = false;
+        self.owed_failures = 0;
+        self.owed_retry_at = 0;
+    }
+
+    /// Send an owed resume when it can go: the server answers, no pause action runs, no update owns the queue, its
+    /// retry time came, and the last line shows the update's pause.
+    fn send_owed(&mut self, now: i64) -> Vec<Effect> {
+        let due = self.resume_owed && self.update.is_none() && self.can_act() && !self.pending.contains(PAUSE) && now >= self.owed_retry_at;
+        if !due || !self.queue.as_ref().is_some_and(|q| q.paused && self.owed_pause(q)) {
+            return Vec::new();
+        }
         self.action(PAUSE.to_string(), vec!["queue".into(), "resume".into()])
     }
 
@@ -819,8 +857,11 @@ impl Model {
             return Vec::new();
         };
         let paused = self.queue.as_ref().is_some_and(|q| q.paused);
+        // A pause whose resume is owed is an update's own: this update takes it over and resumes it afterwards.
+        let adopted = self.resume_owed && self.queue.as_ref().is_some_and(|q| q.paused && self.owed_pause(q));
+        self.clear_owed();
         self.update_note = None;
-        self.update = Some(Update { target: target.clone(), kind, phase: UpdatePhase::Waiting, paused_by_us: !paused });
+        self.update = Some(Update { target: target.clone(), kind, phase: UpdatePhase::Waiting, paused_by_us: !paused || adopted });
         self.push_log(now, format!("updating to {target}"), false);
         let mut effects = if paused { Vec::new() } else { self.action(PAUSE.to_string(), vec!["queue".into(), "pause".into()]) };
         effects.extend(self.advance_update());
@@ -987,21 +1028,21 @@ impl Model {
         if self.update_note.is_some() && self.shown_update_note().is_none() {
             self.update_note = None;
         }
-        // Spec 06d 4.3: a resume owed for a queue an update paused (also by the tray before this one). While a pause or
-        // resume runs, its answer decides; a queue that is not paused needs none; a pause made after the update ended
-        // is not undone.
-        if self.resume_owed && self.can_act() && !self.pending.contains(PAUSE) {
-            let (paused, ours) = self.queue.as_ref().map_or((false, true), |q| (q.paused, self.owed_pause(q)));
-            if paused && ours {
-                effects.extend(self.action(PAUSE.to_string(), vec!["queue".into(), "resume".into()]));
-            } else {
-                self.resume_owed = false;
-                self.resume_before = None;
-                if paused {
+        // Spec 06d 4.3: a resume owed for a queue an update paused (also by the tray before this one). A line that shows
+        // the queue running, or paused after the update ended, pays it (that pause is not undone); only a line older
+        // than the update's pause, read while that pause is still on its way, says nothing yet.
+        let pause_on_its_way = self.pending.contains(PAUSE) && self.pause_target == Some(true);
+        if self.resume_owed && !older && !pause_on_its_way {
+            if let Some((paused, ours)) = self.queue.as_ref().map(|q| (q.paused, self.owed_pause(q))) {
+                if !paused || !ours {
+                    self.clear_owed();
+                }
+                if paused && !ours {
                     self.push_log(now, "the queue was paused again after the update: it stays paused".to_string(), false);
                 }
             }
         }
+        effects.extend(self.send_owed(now));
         effects.extend(self.advance_update());
         effects
     }
@@ -1075,6 +1116,8 @@ impl Model {
                 _ => {}
             }
         }
+        // A failed owed resume goes out again once its pause is over, also when no queue line comes.
+        effects.extend(self.send_owed(now));
         self.action_errors.retain(|(_, _, until)| *until > now);
         effects
     }
@@ -2084,6 +2127,91 @@ mod tests {
         assert_eq!(m.apply(Input::Update, NOW), vec![]);
         m.apply(line_at("2026-11-15T14:00:05.000Z", Some(job("R1", "running")), None), NOW);
         assert!(m.snapshot().can_update);
+    }
+
+    /// The update failed; its resume went through (a line showed the queue active while the CLI still ran), but the
+    /// CLI's answer was lost.
+    fn owed_after_a_lost_resume_answer() -> Model {
+        let mut m = current();
+        m.apply(line_at("2026-11-15T14:00:00.000Z", None, None), NOW);
+        m.apply(Input::Update, NOW);
+        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(None) }, NOW);
+        assert_eq!(m.apply(line_at("2026-11-15T14:00:01.000Z", None, Some("2026-11-15T14:00:01.000Z")), NOW + 1000), vec![Effect::RunUpdate]);
+        assert_eq!(m.apply(Input::UpdateRan(Err("boom".into())), NOW + 2000), vec![pause_args(false)]);
+        assert_eq!(m.apply(line_at("2026-11-15T14:00:03.000Z", None, None), NOW + 3000), vec![]);
+        let lost = Input::ActionDone { key: PAUSE.into(), result: Err("fornax queue resume did not finish within 30 s".into()) };
+        assert_eq!(m.apply(lost, NOW + 32_000), vec![]);
+        m
+    }
+
+    /// Review 0.7.2 I1: an owed resume left over after the queue was seen active undid the user's next pause, or the
+    /// next update's own pause (which then waited forever).
+    #[test]
+    fn a_line_showing_the_queue_active_pays_an_owed_resume() {
+        let mut m = owed_after_a_lost_resume_answer();
+        assert_eq!(m.apply(Input::SetPaused(true), NOW + 40_000), vec![pause_args(true)]);
+        assert_eq!(m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(None) }, NOW + 41_000), vec![]);
+        assert_eq!(m.apply(line_at("2026-11-15T14:00:42.000Z", None, Some("2026-11-15T14:00:41.000Z")), NOW + 42_000), vec![]);
+        assert!(!m.snapshot().log.iter().any(|l| l.text.contains("paused again")), "nothing was owed any more");
+        let mut m = owed_after_a_lost_resume_answer();
+        assert_eq!(m.apply(Input::Update, NOW + 40_000), vec![pause_args(true)]);
+        assert_eq!(m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(None) }, NOW + 41_000), vec![]);
+        assert_eq!(m.apply(line_at("2026-11-15T14:00:42.000Z", None, Some("2026-11-15T14:00:41.000Z")), NOW + 42_000), vec![Effect::RunUpdate]);
+    }
+
+    /// Review 0.7.2 I2: Update clicked while a resume was owed took the pause for someone else's, and the old owed
+    /// resume let jobs start during fornax update.
+    #[test]
+    fn a_new_update_takes_over_a_pause_whose_resume_is_owed() {
+        let mut m = current();
+        m.apply(line_at("2026-11-15T14:00:00.000Z", None, None), NOW);
+        m.apply(Input::Update, NOW);
+        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(None) }, NOW);
+        m.apply(line_at("2026-11-15T14:00:01.000Z", None, Some("2026-11-15T14:00:01.000Z")), NOW + 1000);
+        assert_eq!(m.apply(Input::UpdateRan(Err("boom".into())), NOW + 2000), vec![pause_args(false)]);
+        assert_eq!(m.apply(Input::ActionDone { key: PAUSE.into(), result: Err("internal error".into()) }, NOW + 3000), vec![]);
+        assert_eq!(m.apply(Input::Update, NOW + 4000), vec![Effect::RunUpdate]);
+        // During fornax update neither a line nor a tick sends the old resume.
+        assert_eq!(m.apply(line_at("2026-11-15T14:00:20.000Z", Some(job("R1", "running")), Some("2026-11-15T14:00:01.000Z")), NOW + 20_000), vec![]);
+        assert!(!m.apply(Input::Tick, NOW + 25_000).contains(&pause_args(false)));
+        // The update owns the pause now: the next tray resumes it.
+        let install = Effect::StartTrayInstall { target: "0.7.2".into(), resume_before: Some(SERVER + 30_000 + OWED_MARGIN_MS) };
+        assert_eq!(m.apply(Input::UpdateRan(Ok(())), NOW + 30_000), vec![install]);
+    }
+
+    /// Review 0.7.2 M1/M2: a failed owed resume waited for a line that may not come, or went out again at every line.
+    #[test]
+    fn a_failed_owed_resume_is_tried_again_after_growing_pauses() {
+        let resume = pause_args(false);
+        let mut m = current();
+        m.apply(line_at("2026-11-15T14:00:00.000Z", Some(job("R1", "running")), None), NOW);
+        m.apply(Input::Update, NOW);
+        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(None) }, NOW);
+        m.apply(line_at("2026-11-15T14:00:01.000Z", Some(job("R1", "running")), Some("2026-11-15T14:00:01.000Z")), NOW + 1000);
+        assert_eq!(m.apply(Input::CancelUpdate, NOW + 2000), vec![resume.clone()]);
+        assert_eq!(m.apply(Input::ActionDone { key: PAUSE.into(), result: Err("refused".into()) }, NOW + 3000), vec![]);
+        // A progress line soon after: not yet.
+        assert_eq!(m.apply(line_at("2026-11-15T14:00:04.000Z", Some(job("R1", "running")), Some("2026-11-15T14:00:01.000Z")), NOW + 4000), vec![]);
+        assert!(!m.apply(Input::Tick, NOW + 7_999).contains(&resume));
+        assert!(m.apply(Input::Tick, NOW + 8_000).contains(&resume));
+        m.apply(Input::ActionDone { key: PAUSE.into(), result: Err("refused".into()) }, NOW + 9_000);
+        assert!(!m.apply(Input::Tick, NOW + 23_999).contains(&resume));
+        assert!(m.apply(Input::Tick, NOW + 24_000).contains(&resume));
+        m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(None) }, NOW + 25_000);
+        assert!(!m.apply(Input::Tick, NOW + 300_000).contains(&resume));
+    }
+
+    /// Review 0.7.2 M3: the bound was set at the Cancel, before the update's own pause reached the server.
+    #[test]
+    fn an_update_pause_that_lands_late_after_a_cancel_is_still_resumed() {
+        let mut m = current();
+        m.apply(line_at("2026-11-15T14:00:00.000Z", Some(job("R1", "running")), None), NOW);
+        assert_eq!(m.apply(Input::Update, NOW), vec![pause_args(true)]);
+        assert_eq!(m.apply(Input::CancelUpdate, NOW), vec![]);
+        assert_eq!(m.apply(Input::ActionDone { key: PAUSE.into(), result: Ok(None) }, NOW + 9_000), vec![pause_args(false)]);
+        assert_eq!(m.apply(Input::ActionDone { key: PAUSE.into(), result: Err("cannot reach the server".into()) }, NOW + 10_000), vec![]);
+        let line = line_at("2026-11-15T14:00:20.000Z", Some(job("R1", "running")), Some("2026-11-15T14:00:08.000Z"));
+        assert_eq!(m.apply(line, NOW + 20_000), vec![pause_args(false)]);
     }
 
     #[test]

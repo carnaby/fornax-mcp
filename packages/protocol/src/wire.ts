@@ -122,7 +122,7 @@ export type OperatorQueue = {
   change: string;
   paused: boolean;
   /** Since when the queue is paused (a second pause keeps the first time), null when it runs; absent before 0.7.2. */
-  paused_at: string | null;
+  paused_at?: string | null;
   worker: { online: boolean; last_seen: string | null; version: string | null; waiting: { reason: string; message: string } | null };
   running: OperatorJob | null;
   queued: OperatorJob[];

@@ -53,6 +53,12 @@ export function cardGate(o: CardGateOptions): { check(): Promise<CardState>; pau
       told = waiting;
       toldAt = Date.now();
     } catch (e) {
+      // The null that clears a reason a worker before this one left: a server that does not take it has none to clear.
+      // Only a reason it cannot take is worth a line (below).
+      if (waiting === null && e instanceof ApiError && e.status >= 400 && e.status < 500 && e.status !== 401 && e.status !== 403) {
+        told = null;
+        return;
+      }
       // An older server (404) or one that refuses this status (any other 4xx but a refused token): sending it again
       // would only be refused again, and the worker must go on checking the card rather than end.
       if (e instanceof ApiError && e.status === 404) {

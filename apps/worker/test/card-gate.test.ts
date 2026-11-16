@@ -80,6 +80,22 @@ describe('the card check before a claim', () => {
     expect(w.sent).toEqual([null]);
   });
 
+  test('a server without the status route or one that refuses the clearing null: no line at start, jobs are taken; a busy card says it later', async () => {
+    for (const status of [404, 422]) {
+      const w = start([free, free, free, busy], async () => {
+        throw new ApiError(status, 'x', 'no');
+      });
+      await waitFor(() => w.events.filter((e) => e === 'claim').length >= 2, 5000, 'two claims');
+      await waitFor(() => w.sent.length >= 2, 5000, 'the busy status');
+      await w.stop();
+      expect(w.sent[0]).toBeNull();
+      expect(w.sent).toHaveLength(2);
+      const said = w.lines.filter((l) => l.includes('worker status'));
+      expect(said).toHaveLength(1);
+      expect(w.lines.indexOf(said[0]!)).toBeGreaterThan(w.lines.findIndex((l) => l.startsWith('waiting:')));
+    }
+  });
+
   test('a free card the server could not be told about yet is told on the next pass', async () => {
     let fails = 1;
     const w = start([free], async () => {
