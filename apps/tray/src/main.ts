@@ -3,7 +3,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import './style.css';
-import type { JobView, LogLine, Snapshot } from './types';
+import type { JobView, LogLine, Snapshot, TypeView } from './types';
 
 function el<T extends HTMLElement = HTMLElement>(id: string): T {
   const found = document.getElementById(id);
@@ -43,6 +43,8 @@ let stale = false;
 let drawn = '';
 /** The failed jobs whose error the user opened: the rows are rebuilt on every change, the open errors stay open. */
 const expanded = new Set<string>();
+/** The unavailable types whose reason the user opened (the rows are rebuilt on every change). */
+const openReasons = new Set<string>();
 
 /** The server's clock now: the PC's corrected by the offset the core measured at the last queue line. */
 const serverNow = () => Date.now() + (current?.offsetMs ?? 0);
@@ -251,6 +253,37 @@ function renderFinished(s: Snapshot): void {
   list.replaceChildren(...(s.finished.length ? s.finished.map(finishedRow) : [make('li', 'muted', empty)]));
 }
 
+function typeRow(t: TypeView): HTMLElement {
+  const row = make('li', `job type ${t.state}`);
+  const line = make('div', 'row');
+  line.append(make('span', 'what', t.name));
+  if (t.state === 'waiting') line.append(make('span', 'state', t.reason ?? 'waiting for the card'));
+  row.append(line);
+  if (t.state === 'unavailable') {
+    const details = make('details', 'error');
+    const summary = make('summary', 'state', 'unavailable');
+    summary.dataset.key = `${t.name} reason`;
+    details.append(summary, make('p', undefined, t.reason ?? ''));
+    details.open = openReasons.has(t.name);
+    details.addEventListener('toggle', () => {
+      if (details.open) openReasons.add(t.name);
+      else openReasons.delete(t.name);
+    });
+    row.append(details);
+  }
+  return row;
+}
+
+function renderTypes(s: Snapshot): void {
+  for (const name of openReasons) if (!s.types.some((t) => t.name === name && t.state === 'unavailable')) openReasons.delete(name);
+  const list = el('types');
+  if (!s.types.length) {
+    list.replaceChildren(make('li', 'muted', s.typesNote ?? 'No type packs are installed.'));
+    return;
+  }
+  list.replaceChildren(...s.types.map(typeRow));
+}
+
 function renderLog(lines: LogLine[]): void {
   const list = el('log');
   const atEnd = list.scrollHeight - list.scrollTop - list.clientHeight < 24;
@@ -280,6 +313,7 @@ function render(s: Snapshot, force = false): void {
   el('tray').classList.toggle('stale', stale);
   if (stale || (confirming !== null && ![s.running, ...s.queued].some((j) => j?.id === confirming))) confirming = null;
   renderHeader(s);
+  renderTypes(s);
   renderRunning(s);
   renderWaiting(s);
   renderFinished(s);

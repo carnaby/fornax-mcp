@@ -1,6 +1,6 @@
 // What the Rust core sends (state.rs: Snapshot, JobView, LogLine; serde renames the fields to camelCase). A test in
 // state.rs (the_snapshot_keeps_the_names_types_ts_reads) pins the names.
-export type Icon = 'stopped' | 'attention' | 'idle' | 'busy' | 'paused' | 'error';
+export type Icon = 'stopped' | 'attention' | 'idle' | 'busy' | 'paused' | 'card' | 'error';
 
 export type LogLine = { atMs: number; text: string; error: boolean };
 
@@ -23,6 +23,9 @@ export type JobView = {
   pending: boolean;
   actionError: string | null;
 };
+
+/** One job type of the worker (spec 06c 4.3). */
+export type TypeView = { name: string; state: 'offered' | 'waiting' | 'unavailable'; reason: string | null };
 
 export type Snapshot = {
   icon: Icon;
@@ -49,4 +52,7 @@ export type Snapshot = {
   queued: JobView[];
   finished: JobView[];
   log: LogLine[];
+  types: TypeView[];
+  /** Why there is no list of types (worker stopped, outside the tray, checking, old CLI); null when there is one. */
+  typesNote: string | null;
 };
