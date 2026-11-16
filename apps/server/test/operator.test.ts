@@ -93,6 +93,23 @@ describe('operatorQueue (spec 06 2.3)', () => {
     expect(q.paused).toBe(true);
   });
 
+  test('a paused queue says since when: a second pause keeps the first time, a resume clears it', () => {
+    expect(view().paused_at).toBeNull();
+    const first = t.clock.now;
+    setQueuePaused(t.db, true, first);
+    t.clock.advance(5000);
+    setQueuePaused(t.db, true, t.clock.now);
+    expect(view().paused_at).toBe(first.toISOString());
+    const before = view().change;
+    setQueuePaused(t.db, false, t.clock.now);
+    expect(view().paused_at).toBeNull();
+    t.clock.advance(5000);
+    setQueuePaused(t.db, true, t.clock.now);
+    // A pause made again after a resume is another pause: the tray must not take it for the one it made.
+    expect(view().paused_at).toBe(t.clock.now.toISOString());
+    expect(view().change).not.toBe(before);
+  });
+
   test('the change ignores time, last_seen and result links', async () => {
     const r = await render('alice');
     const claimed = claimJob(t.db, t.clock.now)!;

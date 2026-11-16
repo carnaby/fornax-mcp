@@ -5,7 +5,7 @@ import type { Db } from '../db/client.js';
 import { files, jobs, tokens, workerState } from '../db/schema.js';
 import { isOffered } from './job-types.js';
 import type { JobRow } from './jobs.js';
-import { queuePaused } from './queue-control.js';
+import { queuePaused, queuePausedAt } from './queue-control.js';
 import { workerOnline } from './worker-state.js';
 
 /** Spec 06 2.3: how many finished jobs the operator sees, newest first. */
@@ -59,6 +59,7 @@ export function operatorQueue(db: Db, now: Date, resultUrlOf: (job: JobRow) => s
   const version = db.select({ version: workerState.version }).from(workerState).where(eq(workerState.id, 1)).get()?.version ?? null;
   const body = {
     paused: queuePaused(db),
+    paused_at: iso(queuePausedAt(db)),
     worker: { ...workerOnline(db, now), version },
     running: running[0] ? seen(running[0]) : null,
     queued: queued.map(seen),
@@ -74,6 +75,7 @@ export function operatorQueue(db: Db, now: Date, resultUrlOf: (job: JobRow) => s
     server_version: FORNAX_VERSION,
     change,
     paused: body.paused,
+    paused_at: body.paused_at,
     worker: body.worker,
     running: running[0] && body.running ? linked(body.running, running[0]) : null,
     queued: queued.map((row, i) => linked(body.queued[i]!, row)),

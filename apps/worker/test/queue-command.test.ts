@@ -37,7 +37,7 @@ async function setup(opts: { paired?: boolean } = {}) {
 }
 
 const view = (over: Partial<OperatorQueue> = {}): OperatorQueue => ({
-  server_time: '2026-11-15T14:00:00.000Z', server_version: '0.5.0', change: '0123456789abcdef', paused: false,
+  server_time: '2026-11-15T14:00:00.000Z', server_version: '0.5.0', change: '0123456789abcdef', paused: false, paused_at: null,
   worker: { online: true, last_seen: '2026-11-15T13:59:58.000Z', version: '0.5.0', waiting: null },
   running: null, queued: [], finished: [], ...over,
 });
