@@ -99,8 +99,20 @@ export async function trayInstallCommand(ctx: Ctx, opts: { waitPid?: number; rel
     }
   };
   let relaunch = opts.relaunch;
+  let gone = opts.waitPid === undefined;
+  /** Whether the old tray has exited (at most waitMs); a second call after it has answers at once. */
+  const oldTrayGone = async (): Promise<boolean> => {
+    if (gone || opts.waitPid === undefined) return true;
+    const deadline = Date.now() + deps.waitMs;
+    while (deps.alive(opts.waitPid)) {
+      if (Date.now() >= deadline) return false;
+      await sleep(Math.min(200, deps.waitMs));
+    }
+    gone = true;
+    return true;
+  };
   try {
-    return await install(ctx, deps, say, opts.waitPid, () => {
+    return await install(ctx, deps, say, oldTrayGone, () => {
       relaunch = undefined;
     });
   } catch (e) {
@@ -108,18 +120,25 @@ export async function trayInstallCommand(ctx: Ctx, opts: { waitPid?: number; rel
     say(known ? (e as Error).message : `unexpected error: ${e instanceof Error ? e.constructor.name : typeof e}`);
     return 1;
   } finally {
+    // Also after an early failure the old tray must be gone first: a second tray would only open the old one's window
+    // and end, and then the old one ends too.
     if (relaunch !== undefined) {
-      try {
-        deps.launch(relaunch);
-        say('starting the tray again');
-      } catch {
-        say('the tray could not be started again: start it from the Start menu');
+      if (await oldTrayGone()) {
+        // Not in the log: the next tray shows the log's last line, which must stay the reason.
+        ctx.out('starting the tray again');
+        try {
+          deps.launch(relaunch);
+        } catch {
+          ctx.out('the tray could not be started again: start it from the Start menu');
+        }
+      } else {
+        say('the tray did not exit; it is not started again');
       }
     }
   }
 }
 
-async function install(ctx: Ctx, deps: TrayDeps, say: (line: string) => void, waitPid: number | undefined, noRelaunch: () => void): Promise<number> {
+async function install(ctx: Ctx, deps: TrayDeps, say: (line: string) => void, oldTrayGone: () => Promise<boolean>, noRelaunch: () => void): Promise<number> {
   let server: string;
   try {
     server = readWorkerConfig(ctx.paths).server;
@@ -148,17 +167,11 @@ async function install(ctx: Ctx, deps: TrayDeps, say: (line: string) => void, wa
   mkdirSync(dir, { recursive: true });
   const file = join(dir, `fornax-tray-${info.version}.${kind}`);
   writeFileSync(file, bytes);
-  if (waitPid !== undefined) {
-    const deadline = Date.now() + deps.waitMs;
-    while (deps.alive(waitPid)) {
-      if (Date.now() >= deadline) {
-        noRelaunch();
-        rmSync(file, { force: true });
-        say('the tray did not exit; nothing was installed');
-        return 1;
-      }
-      await sleep(Math.min(200, deps.waitMs));
-    }
+  if (!(await oldTrayGone())) {
+    noRelaunch();
+    rmSync(file, { force: true });
+    say('the tray did not exit; nothing was installed');
+    return 1;
   }
   say(`installing fornax tray ${info.version}`);
   const log = join(dir, 'fornax-tray-install.log');

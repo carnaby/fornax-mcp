@@ -106,7 +106,33 @@ describe('fornax tray install (spec 06d 3)', () => {
     expect(checks).toBe(3);
     expect(w.installs).toHaveLength(1);
     expect(w.launched).toEqual(['/opt/tray']);
-    expect(w.log().trim().split('\n').at(-2)).toBe(`fornax tray ${FORNAX_VERSION} installed`);
+    expect(w.log().trim().split('\n').at(-1)).toBe(`fornax tray ${FORNAX_VERSION} installed`);
+  });
+
+  test('the log ends with the reason for the next tray, not with the relaunch', async () => {
+    const w = await setup({ code: 1602 });
+    const r = await w.run('tray', 'install', '--wait-pid', '4242', '--relaunch', '/opt/tray');
+    expect(r.code).toBe(1);
+    expect(r.text).toContain('starting the tray again');
+    expect(w.log().trim().split('\n').at(-1)).toBe('the installation was cancelled');
+  });
+
+  test('an early failure still waits for the old tray before starting it again', async () => {
+    let checks = 0;
+    const w = await setup({ alive: () => ++checks < 3 });
+    w.ctx.fetch = async (input, init) => (String(input).endsWith('/fornax-tray.msi') ? new Response('FAKE MSI') : fetch(input, init));
+    const r = await w.run('tray', 'install', '--wait-pid', '4242', '--relaunch', '/opt/tray');
+    expect(r.code).toBe(1);
+    expect(checks).toBe(3);
+    expect(w.launched).toEqual(['/opt/tray']);
+  });
+
+  test('an early failure with an old tray that does not exit starts nothing', async () => {
+    const w = await setup({ kind: null, alive: () => true });
+    const r = await w.run('tray', 'install', '--wait-pid', '4242', '--relaunch', '/opt/tray');
+    expect(r.code).toBe(1);
+    expect(r.text).toContain('the tray did not exit; it is not started again');
+    expect(w.launched).toEqual([]);
   });
 
   test('an old tray that does not exit: nothing installed, nothing started', async () => {
