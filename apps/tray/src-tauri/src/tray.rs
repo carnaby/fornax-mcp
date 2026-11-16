@@ -21,6 +21,10 @@ pub fn show_window(app: &AppHandle) {
         let _ = window.show();
         let _ = window.set_focus();
     }
+    // Spec 06e § 3.1: the card is read while the window is on screen.
+    if let Some(ctl) = app.try_state::<Controller>() {
+        ctl.send(Input::WindowShown(true));
+    }
 }
 
 /// Whether the taskbar is light: Windows says so in the registry; other panels get the icons for a dark one.
@@ -60,9 +64,8 @@ fn icon_png(icon: Icon, light: bool) -> &'static [u8] {
         (Icon::Paused, false) => include_bytes!("../icons/tray/paused-dark.png"),
         (Icon::Card, true) => include_bytes!("../icons/tray/card-light.png"),
         (Icon::Card, false) => include_bytes!("../icons/tray/card-dark.png"),
-        // Task 4 of plan 06e replaces these with lease-light.png / lease-dark.png.
-        (Icon::Lease, true) => include_bytes!("../icons/tray/busy-light.png"),
-        (Icon::Lease, false) => include_bytes!("../icons/tray/busy-dark.png"),
+        (Icon::Lease, true) => include_bytes!("../icons/tray/lease-light.png"),
+        (Icon::Lease, false) => include_bytes!("../icons/tray/lease-dark.png"),
         (Icon::Error, true) => include_bytes!("../icons/tray/error-light.png"),
         (Icon::Error, false) => include_bytes!("../icons/tray/error-dark.png"),
     }

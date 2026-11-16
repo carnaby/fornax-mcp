@@ -14,8 +14,8 @@ const template = readFileSync(join(root, 'icons', 'tray.svg'), 'utf8');
 
 // State colours (spec 06 4.3, 06c 4.1): darker ones for a light taskbar, lighter ones for a dark taskbar.
 const COLORS = {
-  light: { stopped: '#57534e', idle: '#15803d', busy: '#1d4ed8', paused: '#a16207', card: '#ea580c', error: '#b91c1c', dot: '#d97706' },
-  dark: { stopped: '#c4bfbb', idle: '#4ade80', busy: '#93c5fd', paused: '#facc15', card: '#fb923c', error: '#f87171', dot: '#f59e0b' },
+  light: { stopped: '#57534e', idle: '#15803d', busy: '#1d4ed8', paused: '#a16207', card: '#ea580c', error: '#b91c1c', dot: '#d97706', lease: '#6d28d9' },
+  dark: { stopped: '#c4bfbb', idle: '#4ade80', busy: '#93c5fd', paused: '#facc15', card: '#fb923c', error: '#f87171', dot: '#f59e0b', lease: '#c4b5fd' },
 };
 /** [file name, colour, with the badge] */
 const STATES = [
@@ -23,6 +23,7 @@ const STATES = [
   ['attention', 'stopped', true],
   ['idle', 'idle', false],
   ['busy', 'busy', false],
+  ['lease', 'lease', false],
   ['paused', 'paused', false],
   ['card', 'card', false],
   ['error', 'error', false],

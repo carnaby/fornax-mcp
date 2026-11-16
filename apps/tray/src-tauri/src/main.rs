@@ -128,6 +128,9 @@ fn main() {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = window.hide();
+                if let Some(ctl) = window.try_state::<Controller>() {
+                    ctl.send(Input::WindowShown(false));
+                }
             }
         })
         .build(tauri::generate_context!())

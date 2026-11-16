@@ -12,6 +12,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::config::{self, Paths, TrayConfig};
+use crate::gpu::{self, GpuCommand, GpuProblem};
 use crate::lock;
 use crate::process::{self, CliProcess, Output, Sink};
 use crate::protocol::{parse_event, parse_watch_line, WorkerEvent};
@@ -43,6 +44,8 @@ pub struct Timing {
     pub version_timeout: Duration,
     /// How long `fornax update` under the tray may take (spec 06d).
     pub update_timeout: Duration,
+    /// How long one nvidia-smi reading may take (spec 06e § 3.1).
+    pub gpu_timeout: Duration,
 }
 
 impl Default for Timing {
@@ -53,6 +56,7 @@ impl Default for Timing {
             action_timeout: Duration::from_secs(30),
             version_timeout: Duration::from_secs(15),
             update_timeout: Duration::from_secs(600),
+            gpu_timeout: gpu::GPU_TIMEOUT,
         }
     }
 }
@@ -180,11 +184,13 @@ struct Runner {
     timing: Timing,
     worker: Option<Worker>,
     watch: Option<Arc<CliProcess>>,
+    /// The program that reads the card; tests put a fake in its place.
+    gpu: GpuCommand,
 }
 
 impl Runner {
     fn new(paths: Paths, tx: Sender<Input>, ui: Arc<dyn Ui>, timing: Timing) -> Runner {
-        Runner { paths, tx, ui, timing, worker: None, watch: None }
+        Runner { paths, tx, ui, timing, worker: None, watch: None, gpu: GpuCommand::default() }
     }
 
     /// Forget a process once its end is applied. The model starts no other one before it saw that end, so the end
@@ -226,8 +232,7 @@ impl Runner {
             },
             Effect::RunAction { key, args } => run_action(&self.paths, &self.tx, key, args, self.timing.action_timeout),
             Effect::RunUpdate => run_update(&self.paths, &self.tx, self.timing.update_timeout),
-            // Task 4 of plan 06e carries it out.
-            Effect::ReadGpu => {}
+            Effect::ReadGpu => read_gpu(&self.gpu, &self.tx, self.timing.gpu_timeout),
             Effect::StartTrayInstall { target, resume_before } => {
                 let result = start_tray_install(&self.paths, &target, resume_before);
                 let _ = self.tx.send(Input::TrayInstallStarted(result));
@@ -409,6 +414,13 @@ fn run_action(paths: &Paths, tx: &Sender<Input>, key: String, args: Vec<String>,
     });
 }
 
+/// `nvidia-smi` on a thread of its own (spec 06e § 3.1); always answered with one [`Input::GpuRead`].
+fn read_gpu(cmd: &GpuCommand, tx: &Sender<Input>, timeout: Duration) {
+    let cmd = cmd.clone();
+    let answer = Answer::new(tx, Input::GpuRead(Err(GpuProblem::Failed("the reading of the card ended without an answer".into()))));
+    let _ = thread::Builder::new().name("fornax gpu".into()).spawn(move || answer.send(Input::GpuRead(gpu::read(&cmd, timeout))));
+}
+
 /// `fornax update` on a thread of its own: every line as [`Input::UpdateText`], then one [`Input::UpdateRan`] (its last
 /// line when it failed).
 fn run_update(paths: &Paths, tx: &Sender<Input>, timeout: Duration) {
@@ -505,6 +517,7 @@ mod tests {
             action_timeout: Duration::from_secs(2),
             version_timeout: Duration::from_secs(15),
             update_timeout: Duration::from_secs(30),
+            gpu_timeout: Duration::from_secs(5),
         }
     }
 
@@ -849,6 +862,23 @@ mod tests {
         };
         assert_eq!(done(&["queue", "pause", "--json"]), Ok(Some("2026-11-15T14:00:05.000Z".to_string())));
         assert_eq!(done(&["queue", "resume"]), Ok(None));
+    }
+
+    /// Spec 06e § 3.1: a reading of the card is answered with one GpuRead.
+    #[test]
+    fn the_card_reading_answers_with_one_input() {
+        let fake = fake_cli("ok");
+        let (mut r, rx) = runner(&fake);
+        r.gpu = crate::gpu::GpuCommand {
+            program: "node".into(),
+            prefix: vec!["-e".into(), "console.log('NVIDIA GeForce RTX 5060 Ti, 6400, 16311, 94, 71')".into(), "--".into()],
+        };
+        r.carry_out(Effect::ReadGpu);
+        let read = next_of(&rx, |i| match i {
+            Input::GpuRead(result) => Some(result),
+            _ => None,
+        });
+        assert_eq!(read.map(|g| (g.used_mib, g.total_mib)), Ok((6400, 16311)));
     }
 
     #[test]
