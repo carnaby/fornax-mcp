@@ -37,6 +37,8 @@ pub const GPU_EVERY_MS: i64 = 5_000;
 pub const TOKEN_REFUSED: &str = "The server refused the worker token: pair again (fornax worker pair)";
 /// What the menu shows when no update is offered (spec 06d 4.2).
 pub const NO_UPDATE: &str = "No update";
+/// The job type of a lease (spec 05a): its card in the window and the tray icon differ.
+const LEASE: &str = "lease";
 
 /// Where a waiting job moves.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -157,6 +159,8 @@ pub enum Icon {
     Paused,
     /// The worker runs and waits for the card (spec 06c 4.1).
     Card,
+    /// A lease holds the card (spec 06e § 3.2).
+    Lease,
     Error,
 }
 
@@ -252,6 +256,34 @@ pub struct GpuView {
     pub problem: Option<String>,
 }
 
+/// Spec 06e § 2.2: the header's status label; `tone` is `ok`, `ok-dim`, `lease`, `warn`, `error` or `off`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatusView {
+    pub label: String,
+    pub tone: String,
+}
+
+/// Spec 06e § 2.3: who holds the card: `lease` (with its owner), `fornax` (a job), `outside` (other programs, as the
+/// worker reports) or `idle`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GpuHolderView {
+    pub kind: String,
+    pub owner: Option<String>,
+}
+
+/// Spec 06e § 3.3: the worker's reason to take no job, from the last queue line.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CardWaitView {
+    pub reason: String,
+    pub used_mib: Option<u64>,
+    pub total_mib: Option<u64>,
+    pub limit_mib: Option<u64>,
+    pub error: Option<String>,
+}
+
 /// The tray's last reading of the card.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Gpu {
@@ -309,6 +341,15 @@ pub struct Snapshot {
     pub update_note: Option<String>,
     /// Spec 06e § 2.3: the card.
     pub gpu: GpuView,
+    pub status: StatusView,
+    /// "Worker running", "Worker stopped", … (spec 06e § 2.2, second header line).
+    pub worker_text: String,
+    /// "queue active", "queue paused", "pausing after the running job"; None while the queue is unknown.
+    pub queue_text: Option<String>,
+    /// PC time of the `started` event of the tray's worker, while it runs (the window counts the uptime from it).
+    pub worker_since_ms: Option<i64>,
+    pub gpu_holder: GpuHolderView,
+    pub card_wait: Option<CardWaitView>,
 }
 
 /// The queue reader's failures (`"ok": false` lines) since its last queue line.
@@ -397,6 +438,8 @@ pub struct Model {
     gpu_reading: bool,
     /// When the next reading may go.
     gpu_next: i64,
+    /// PC time of the `started` event of the tray's worker.
+    worker_since: Option<i64>,
 }
 
 impl Default for Model {
@@ -495,6 +538,7 @@ impl Model {
             gpu: Gpu::Reading,
             gpu_reading: false,
             gpu_next: 0,
+            worker_since: None,
         }
     }
 
@@ -731,6 +775,7 @@ impl Model {
 
     fn start(&mut self, now: i64) -> Vec<Effect> {
         self.own = Own::Starting;
+        self.worker_since = None;
         self.exit_note = None;
         self.last_line = None;
         self.types = None;
@@ -1028,6 +1073,7 @@ impl Model {
             WorkerEvent::Started { version, .. } => {
                 if matches!(self.own, Own::Starting | Own::Restarting) {
                     self.own = Own::Running;
+                    self.worker_since = Some(now);
                 }
                 self.push_log(now, format!("worker {version} started"), false);
             }
@@ -1064,6 +1110,7 @@ impl Model {
     fn worker_exited(&mut self, code: Option<i32>, now: i64) {
         let asked = matches!(self.own, Own::Stopping | Own::StoppingNow);
         self.own = Own::Stopped;
+        self.worker_since = None;
         self.stop_deadline = None;
         self.types = None;
         if !asked && code != Some(0) {
@@ -1349,27 +1396,32 @@ impl Model {
                 return Self::card_text(w);
             }
         }
-        let worker = match self.own {
+        match self.queue_text() {
+            Some(queue) => format!("{} · {queue}", self.worker_text()),
+            None => self.worker_text().to_string(),
+        }
+    }
+
+    fn worker_text(&self) -> &'static str {
+        match self.own {
             Own::Starting => "Starting the worker…",
             Own::Restarting => "Restarting the worker…",
             Own::Stopping | Own::StoppingNow => "Stopping the worker…",
             Own::Running => "Worker running",
             Own::Stopped if self.external => "Worker runs outside the tray",
             Own::Stopped => "Worker stopped",
-        };
-        match &self.queue {
-            Some(q) if self.cli == Cli::Ready => {
-                let queue = if q.paused && q.running.is_some() {
-                    "pausing after the running job"
-                } else if q.paused {
-                    "queue paused"
-                } else {
-                    "queue active"
-                };
-                format!("{worker} · {queue}")
-            }
-            _ => worker.to_string(),
         }
+    }
+
+    fn queue_text(&self) -> Option<&'static str> {
+        let q = self.queue.as_ref().filter(|_| self.cli == Cli::Ready)?;
+        Some(if q.paused && q.running.is_some() {
+            "pausing after the running job"
+        } else if q.paused {
+            "queue paused"
+        } else {
+            "queue active"
+        })
     }
 
     fn note(&self) -> Option<String> {
@@ -1393,12 +1445,51 @@ impl Model {
     }
 
     /// Spec 06 4.3 and 06c 4.1, first match wins.
+    fn running_job(&self) -> Option<&Job> {
+        self.queue.as_ref().and_then(|q| q.running.as_ref())
+    }
+
+    /// Spec 06e § 2.2, first match wins.
+    fn status(&self) -> StatusView {
+        let running = self.running_job();
+        let (label, tone) = if self.icon() == Icon::Error {
+            ("Error", "error")
+        } else if running.is_some_and(|j| j.kind == LEASE) {
+            ("Leased", "lease")
+        } else if running.is_some() {
+            ("Running", "ok")
+        } else if let Some(w) = self.card_wait() {
+            if w.reason == "gpu_unreadable" { ("No card", "error") } else { ("Waiting for GPU", "error") }
+        } else if self.queue.as_ref().is_some_and(|q| q.paused) {
+            ("Paused", "warn")
+        } else if self.own != Own::Stopped || self.external {
+            ("Idle", "ok-dim")
+        } else {
+            ("Stopped", "off")
+        };
+        StatusView { label: label.to_string(), tone: tone.to_string() }
+    }
+
+    /// Spec 06e § 2.3.
+    fn gpu_holder(&self) -> GpuHolderView {
+        let (kind, owner) = match self.running_job() {
+            Some(j) if j.kind == LEASE => ("lease", Some(owner_of(j))),
+            Some(_) => ("fornax", None),
+            None if self.card_wait().is_some_and(|w| w.reason == "gpu_busy") => ("outside", None),
+            None => ("idle", None),
+        };
+        GpuHolderView { kind: kind.to_string(), owner }
+    }
+
     fn icon(&self) -> Icon {
         let q = self.queue.as_ref();
         let queue_lost = q.is_none() && (self.server_down.is_some() || matches!(self.watch, Watch::Waiting { .. }) || self.watch_problem.is_some());
         let stopped = self.own == Own::Stopped && !self.external;
         if stopped && (self.exit_note.is_some() || matches!(self.cli, Cli::Problem(_)) || queue_lost) {
             return Icon::Error;
+        }
+        if q.and_then(|q| q.running.as_ref()).is_some_and(|j| j.kind == LEASE) {
+            return Icon::Lease;
         }
         if q.is_some_and(|q| q.running.is_some()) {
             return Icon::Busy;
@@ -1422,6 +1513,7 @@ impl Model {
         let q = self.queue.as_ref();
         let headline = self.headline();
         let tooltip = match q.and_then(|q| q.running.as_ref()) {
+            Some(j) if j.kind == LEASE => format!("Fornax: GPU leased by {}", owner_of(j)),
             Some(j) => format!("Fornax: {headline} · {} of {}", j.kind, owner_of(j)),
             None => format!("Fornax: {headline}"),
         };
@@ -1462,6 +1554,18 @@ impl Model {
             updating: self.update.is_some(),
             update_note: self.shown_update_note().or_else(|| self.appimage_note()),
             gpu: self.gpu_view(),
+            status: self.status(),
+            worker_text: self.worker_text().to_string(),
+            queue_text: self.queue_text().map(String::from),
+            worker_since_ms: self.worker_since.filter(|_| self.own == Own::Running),
+            gpu_holder: self.gpu_holder(),
+            card_wait: self.card_wait().map(|w| CardWaitView {
+                reason: w.reason.clone(),
+                used_mib: w.used_mib,
+                total_mib: w.total_mib,
+                limit_mib: w.limit_mib,
+                error: w.error.clone(),
+            }),
         }
     }
 }
@@ -2678,10 +2782,11 @@ mod tests {
         assert_eq!(
             keys,
             [
-                "canCancelUpdate", "canPause", "canStart", "canStop", "canUpdate", "confirmQuit", "finished", "gpu", "headline", "icon",
-                "log", "note", "offsetMs", "pauseError", "pauseLabel", "paused", "queueKnown", "queueNote", "queued", "running",
-                "serverDownSinceMs", "serverMessage", "serverRefused", "startWorker", "stopLabel", "tooltip", "types",
-                "typesNote", "updateLabel", "updateNote", "updating", "versions",
+                "canCancelUpdate", "canPause", "canStart", "canStop", "canUpdate", "cardWait", "confirmQuit", "finished", "gpu",
+                "gpuHolder", "headline", "icon", "log", "note", "offsetMs", "pauseError", "pauseLabel", "paused", "queueKnown",
+                "queueNote", "queueText", "queued", "running", "serverDownSinceMs", "serverMessage", "serverRefused", "startWorker",
+                "status", "stopLabel", "tooltip", "types", "typesNote", "updateLabel", "updateNote", "updating", "versions",
+                "workerSinceMs", "workerText",
             ]
         );
         let mut job_keys: Vec<&str> = v["running"].as_object().unwrap().keys().map(String::as_str).collect();
@@ -2763,5 +2868,91 @@ mod tests {
         m.apply(waiting_queue(unreadable(Some("nvidia-smi: exit 4")), None, false), NOW);
         let g = m.snapshot().gpu;
         assert_eq!((g.state.as_str(), g.problem.as_deref()), ("failed", Some("nvidia-smi: exit 4")));
+    }
+
+    fn lease(id: &str) -> Job {
+        Job {
+            kind: "lease".into(),
+            owner: Some("bob".into()),
+            label: Some("chrome".into()),
+            started_at: Some("2026-11-15T13:58:00.000Z".into()),
+            ..job(id, "running")
+        }
+    }
+
+    /// Spec 06e § 2.2: the status label, first match wins.
+    #[test]
+    fn the_status_label_follows_the_table() {
+        let status = |m: &Model| {
+            let s = m.snapshot().status;
+            (s.label, s.tone)
+        };
+        let pair = |label: &str, tone: &str| (label.to_string(), tone.to_string());
+        let mut m = ready(false);
+        m.apply(queue(None, vec![], vec![], false), NOW);
+        assert_eq!(status(&m), pair("Stopped", "off"));
+        let mut m = running_worker();
+        m.apply(queue(None, vec![], vec![], false), NOW);
+        assert_eq!(status(&m), pair("Idle", "ok-dim"));
+        m.apply(queue(None, vec![], vec![], true), NOW);
+        assert_eq!(status(&m), pair("Paused", "warn"));
+        m.apply(waiting_queue(busy_card(), None, true), NOW);
+        assert_eq!(status(&m), pair("Waiting for GPU", "error"));
+        m.apply(waiting_queue(unreadable(None), None, false), NOW);
+        assert_eq!(status(&m), pair("No card", "error"));
+        m.apply(queue(Some(job("R1", "running")), vec![], vec![], true), NOW);
+        assert_eq!(status(&m), pair("Running", "ok"));
+        m.apply(queue(Some(lease("L1")), vec![], vec![], false), NOW);
+        assert_eq!(status(&m), pair("Leased", "lease"));
+        let mut m = Model::new();
+        m.apply(launched(false), NOW);
+        m.apply(Input::CliChecked { result: Err(crate::process::NOT_INSTALLED.into()), lock_held: false }, NOW);
+        assert_eq!(status(&m), pair("Error", "error"));
+    }
+
+    /// Spec 06e § 2.2: the second header line; the uptime counts from the worker's `started` (PC time) while it runs.
+    #[test]
+    fn the_worker_and_queue_texts_and_the_uptime() {
+        let mut m = ready(true);
+        let s = m.snapshot();
+        assert_eq!((s.worker_text.as_str(), s.worker_since_ms), ("Starting the worker…", None));
+        m.apply(Input::WorkerEvent(WorkerEvent::Started { version: "0.8.0".into(), pid: 7 }), NOW + 1_000);
+        m.apply(queue(Some(job("R1", "running")), vec![], vec![], true), NOW + 2_000);
+        let s = m.snapshot();
+        assert_eq!(
+            (s.worker_text.as_str(), s.queue_text.as_deref(), s.worker_since_ms),
+            ("Worker running", Some("pausing after the running job"), Some(NOW + 1_000))
+        );
+        assert_eq!(s.headline, "Worker running · pausing after the running job", "the headline is unchanged");
+        m.apply(Input::StopWorker, NOW + 3_000);
+        let s = m.snapshot();
+        assert_eq!((s.worker_text.as_str(), s.worker_since_ms), ("Stopping the worker…", None), "only while the worker runs");
+        m.apply(Input::WorkerExited { code: Some(0) }, NOW + 4_000);
+        m.apply(Input::StartWorker, NOW + 5_000);
+        m.apply(Input::WorkerEvent(WorkerEvent::Started { version: "0.8.0".into(), pid: 8 }), NOW + 6_000);
+        assert_eq!(m.snapshot().worker_since_ms, Some(NOW + 6_000), "a new worker counts from its own start");
+    }
+
+    /// Spec 06e § 2.3 and § 3.2: who holds the card, the worker's reason to wait, the lease icon and tooltip.
+    #[test]
+    fn who_holds_the_gpu_and_the_lease_icon() {
+        let mut m = running_worker();
+        m.apply(queue(None, vec![], vec![], false), NOW);
+        assert_eq!(m.snapshot().gpu_holder, GpuHolderView { kind: "idle".into(), owner: None });
+        assert_eq!(m.snapshot().card_wait, None);
+        m.apply(queue(Some(job("R1", "running")), vec![], vec![], false), NOW);
+        let s = m.snapshot();
+        assert_eq!((s.gpu_holder.kind.as_str(), s.icon), ("fornax", Icon::Busy));
+        m.apply(queue(Some(lease("L1")), vec![], vec![], false), NOW);
+        let s = m.snapshot();
+        assert_eq!(s.gpu_holder, GpuHolderView { kind: "lease".into(), owner: Some("bob".into()) });
+        assert_eq!((s.icon, s.tooltip.as_str()), (Icon::Lease, "Fornax: GPU leased by bob"));
+        m.apply(waiting_queue(busy_card(), None, false), NOW);
+        let s = m.snapshot();
+        assert_eq!(s.gpu_holder.kind, "outside");
+        assert_eq!(
+            s.card_wait,
+            Some(CardWaitView { reason: "gpu_busy".into(), used_mib: Some(9000), total_mib: Some(16311), limit_mib: Some(768), error: None })
+        );
     }
 }

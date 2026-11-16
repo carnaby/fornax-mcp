@@ -60,6 +60,9 @@ fn icon_png(icon: Icon, light: bool) -> &'static [u8] {
         (Icon::Paused, false) => include_bytes!("../icons/tray/paused-dark.png"),
         (Icon::Card, true) => include_bytes!("../icons/tray/card-light.png"),
         (Icon::Card, false) => include_bytes!("../icons/tray/card-dark.png"),
+        // Task 4 of plan 06e replaces these with lease-light.png / lease-dark.png.
+        (Icon::Lease, true) => include_bytes!("../icons/tray/busy-light.png"),
+        (Icon::Lease, false) => include_bytes!("../icons/tray/busy-dark.png"),
         (Icon::Error, true) => include_bytes!("../icons/tray/error-light.png"),
         (Icon::Error, false) => include_bytes!("../icons/tray/error-dark.png"),
     }
