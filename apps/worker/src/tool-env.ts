@@ -1,7 +1,7 @@
-import { loadPacks } from './pack.js';
+import { loadPacks, type Pack } from './pack.js';
 import type { Paths } from './paths.js';
 import { childEnv } from './process.js';
-import { storedSecretNames } from './secrets.js';
+import { readSecret, storedSecretNames } from './secrets.js';
 
 /** Where the secrets and the installed packs are: every tool's environment depends on both (spec 08 § 4.2). */
 export type SecretDirs = Pick<Paths, 'secretsDir' | 'typesDir'>;
@@ -21,4 +21,17 @@ export function hiddenNames(dirs: SecretDirs, also: readonly string[] = []): Set
 /** The environment of a check or a job's tool: no FORNAX_* and no secret's name from the worker, plus `extra`. */
 export function toolEnv(dirs: SecretDirs, extra: Record<string, string> = {}): Record<string, string> {
   return childEnv(process.env, hiddenNames(dirs), extra);
+}
+
+/**
+ * Spec 08 § 4.2: a pack's setup environment (the tool environment plus the stored secrets the pack declares) and the
+ * values given, to mask in its output. A damaged secret file throws readSecret's ConfigError.
+ */
+export function setupEnv(dirs: SecretDirs, pack: Pack): { env: Record<string, string>; values: string[] } {
+  const extra: Record<string, string> = {};
+  for (const name of pack.impl.secrets) {
+    const value = readSecret(dirs.secretsDir, name);
+    if (value !== null) extra[name] = value;
+  }
+  return { env: childEnv(process.env, hiddenNames(dirs, pack.impl.secrets), extra), values: Object.values(extra) };
 }

@@ -4,6 +4,7 @@ import { describe, expect, test } from 'vitest';
 import { lockWorker } from '../src/instance.js';
 import { InstallError } from '../src/install/errors.js';
 import { ORIGIN_FILE, syncPacksUnderLock, syncShippedPacks, writeOrigin } from '../src/install/packs.js';
+import { writeSecret } from '../src/secrets.js';
 import { NODE_TOOLS, testPaths, useTempDir, writeEchoPack } from './helpers.js';
 
 const tmp = useTempDir();
@@ -213,6 +214,21 @@ describe('syncShippedPacks', () => {
     await syncShippedPacks({ shippedDir, typesDir, secretsDir: join(tmp(), 'secrets'), tools: NODE_TOOLS, out: (l) => out.push(l), signal: new AbortController().signal, rename });
     expect(out).toEqual(['WARN  echo: echo.old could not be put back (EPERM); rename it by hand']);
     expect(existsSync(join(typesDir, 'echo.old', 'type.yaml'))).toBe(true);
+  });
+
+  test('a setup run by the sync gets the declared secret (spec 08 § 4.2)', async () => {
+    const { root, shippedDir, typesDir, out } = setup();
+    const secretsDir = join(root, 'config', 'secrets');
+    writeSecret(secretsDir, 'EXAMPLE_TOKEN', 'hf_test_value_123');
+    const setupJs = [
+      "import { mkdirSync, writeFileSync } from 'node:fs';",
+      "mkdirSync('env', { recursive: true });",
+      "writeFileSync('env/got.txt', process.env.EXAMPLE_TOKEN ?? 'none');",
+    ].join('\n');
+    writeEchoPack(shippedDir, { setup: ['{tool.node}', '{pack}/scripts/setup.mjs'], secrets: ['EXAMPLE_TOKEN'] });
+    writeFileSync(join(shippedDir, 'echo', 'scripts', 'setup.mjs'), setupJs);
+    await syncShippedPacks({ shippedDir, typesDir, secretsDir, tools: NODE_TOOLS, out: (l) => out.push(l), signal: new AbortController().signal });
+    expect(readFileSync(join(typesDir, 'echo', 'env', 'got.txt'), 'utf8')).toBe('hf_test_value_123');
   });
 
   test('a changed secrets list runs the setup again (spec 08 § 4.1)', async () => {

@@ -4,6 +4,7 @@ import { describe, expect, test } from 'vitest';
 import { runCli } from '../src/cli.js';
 import { typesInstall } from '../src/commands/types.js';
 import type { Ctx } from '../src/commands/context.js';
+import { writeSecret } from '../src/secrets.js';
 import { testPaths, useTempDir, writeEchoPack } from './helpers.js';
 
 const tmp = useTempDir();
@@ -11,9 +12,11 @@ const tmp = useTempDir();
 function cli() {
   const lines: string[] = [];
   const copied: string[] = [];
+  const written: string[] = [];
   const ctx: Ctx = {
     paths: testPaths(tmp()),
     out: (l) => lines.push(l),
+    write: (t) => written.push(t),
     signal: new AbortController().signal,
     clipboard: (text) => {
       copied.push(text);
@@ -27,7 +30,7 @@ function cli() {
     const code = await runCli(argv, ctx);
     return { code, text: lines.join('\n') };
   };
-  return { ctx, run, copied };
+  return { ctx, run, copied, written };
 }
 
 const SETUP_SCRIPT = [
@@ -178,5 +181,82 @@ describe('fornax types', () => {
     expect(JSON.parse(readFileSync(join(ctx.paths.typesDir, 'lease', '.fornax-pack.json'), 'utf8'))).toEqual({ source: 'shipped' });
     expect((await run('types', 'install', 'echo', '--from', source())).code).toBe(0);
     expect(JSON.parse(readFileSync(join(ctx.paths.typesDir, 'echo', '.fornax-pack.json'), 'utf8'))).toEqual({ source: 'dir' });
+  });
+});
+
+const SECRET_SETUP = [
+  "import { mkdirSync, writeFileSync } from 'node:fs';",
+  "mkdirSync('env', { recursive: true });",
+  'const v = process.env.EXAMPLE_TOKEN;',
+  "writeFileSync('env/got.txt', v === undefined ? 'none' : v === 'hf_test_value_123' ? 'stored' : 'other');",
+  "console.log('token ' + (v ?? 'none'));",
+  "process.exitCode = process.argv[2] === 'fail' ? 1 : 0;",
+].join('\n');
+
+function secretSource(opts: { declare?: boolean; arg?: string } = {}): string {
+  const dir = writeEchoPack(tmp(), {
+    setup: ['{tool.node}', '{pack}/scripts/setup.mjs', opts.arg ?? 'ok'],
+    ...(opts.declare === false ? {} : { secrets: ['EXAMPLE_TOKEN'] }),
+  });
+  writeFileSync(join(dir, 'scripts', 'setup.mjs'), SECRET_SETUP);
+  return dir;
+}
+
+describe('secrets in the setup (spec 08 § 4.2, 4.3)', () => {
+  const V = 'hf_test_value_123';
+  const got = (ctx: Ctx) => readFileSync(join(ctx.paths.typesDir, 'echo', 'env', 'got.txt'), 'utf8');
+
+  test('a declared stored secret reaches the setup instead of the inherited one, masked in the output', async () => {
+    const { ctx, run, written } = cli();
+    writeSecret(ctx.paths.secretsDir, 'EXAMPLE_TOKEN', V);
+    process.env.EXAMPLE_TOKEN = 'inherited';
+    try {
+      expect((await run('types', 'install', 'echo', '--from', secretSource())).code).toBe(0);
+    } finally {
+      delete process.env.EXAMPLE_TOKEN;
+    }
+    expect(got(ctx)).toBe('stored');
+    expect(written.join('')).toContain('token ***');
+    expect(written.join('')).not.toContain(V);
+  });
+
+  test('not stored: the setup runs without it, and an inherited one never reaches it', async () => {
+    const { ctx, run } = cli();
+    process.env.EXAMPLE_TOKEN = 'inherited';
+    try {
+      expect((await run('types', 'install', 'echo', '--from', secretSource())).code).toBe(0);
+    } finally {
+      delete process.env.EXAMPLE_TOKEN;
+    }
+    expect(got(ctx)).toBe('none');
+  });
+
+  test('a pack that does not declare it never gets it', async () => {
+    const { ctx, run } = cli();
+    writeSecret(ctx.paths.secretsDir, 'EXAMPLE_TOKEN', V);
+    expect((await run('types', 'install', 'echo', '--from', secretSource({ declare: false }))).code).toBe(0);
+    expect(got(ctx)).toBe('none');
+  });
+
+  test('the failure reason of a setup that printed the value is masked', async () => {
+    const { ctx, run } = cli();
+    writeSecret(ctx.paths.secretsDir, 'EXAMPLE_TOKEN', V);
+    const r = await run('types', 'install', 'echo', '--from', secretSource({ arg: 'fail' }));
+    expect(r.code).toBe(1);
+    expect(r.text).toContain('the setup of echo failed (exit code 1): token ***');
+    expect(r.text).not.toContain(V);
+  });
+
+  test('a damaged secret file stops the setup: its file is named, its content never', async () => {
+    const { ctx, run, written } = cli();
+    mkdirSync(ctx.paths.secretsDir, { recursive: true });
+    writeFileSync(join(ctx.paths.secretsDir, 'EXAMPLE_TOKEN'), `${V}\nsecond line\n`);
+    const r = await run('types', 'install', 'echo', '--from', secretSource());
+    expect(r.code).toBe(1);
+    expect(r.text).toContain('the setup of echo failed (secret EXAMPLE_TOKEN)');
+    expect(r.text).toContain(join(ctx.paths.secretsDir, 'EXAMPLE_TOKEN'));
+    expect(r.text + written.join('')).not.toContain(V);
+    // The setup itself never ran.
+    expect(written.join('')).not.toContain('token');
   });
 });
