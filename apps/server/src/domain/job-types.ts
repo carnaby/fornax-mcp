@@ -1,4 +1,4 @@
-import { contractHash, type JobTypeContract } from '@fornax/protocol';
+import { contractHash, defaultPriority, type JobTypeContract } from '@fornax/protocol';
 import { and, eq, notInArray } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { jobTypes } from '../db/schema.js';
@@ -34,4 +34,5 @@ export function offeredTypes(db: Db): JobTypeContract[] {
 
 export const typeView = (c: JobTypeContract) => ({
   name: c.name, version: c.version, description: c.description, inputs: c.inputs, params: c.params, max_runtime_s: c.max_runtime_s,
+  default_priority: defaultPriority(c),
 });

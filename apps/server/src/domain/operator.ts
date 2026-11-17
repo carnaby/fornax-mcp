@@ -44,6 +44,7 @@ export function operatorQueue(db: Db, now: Date, resultUrlOf: (job: JobRow) => s
     label: typeof j.params.label === 'string' ? j.params.label : null,
     group: j.group,
     priority: PRIORITIES[j.priority] ?? 'normal',
+    idle_since: iso(j.idleSince),
     inputs: Object.fromEntries(Object.entries(j.inputs).map(([name, id]) => [name, names.get(id) ?? null])),
     attempts: j.attempts,
     type_unavailable: j.state === 'queued' && !isOffered(db, j.type),

@@ -7,6 +7,9 @@ import { jobChanges } from './signal.js';
 
 export type { MoveTarget };
 
+/** Spec 07 § 2.1: the stored value of `idle`; such a job never starts by itself. */
+export const IDLE = 0;
+
 /** The waiting jobs with a place, in queue order. */
 function waiting(db: Db): { id: string; priority: number }[] {
   return db
@@ -26,18 +29,20 @@ function writeRanks(db: Db, ids: string[]): void {
 export const queueOrder = (db: Db): string[] => waiting(db).map((j) => j.id);
 
 /**
- * Spec 06 2.1: place a job that has just become queued. `priority` (a new job): right after the last waiting job of its
- * priority or higher, else at the top. `top` (a job that ran and came back): first. Call it inside the transaction that
- * queued the job; a job that is not queued (the caller's guarded update did not apply) is left alone.
+ * Spec 06 2.1: place a job that has just become queued. `priority` (a new job, a changed priority): right after the last
+ * waiting job of its priority or higher, else at the top. `class-top` (spec 07 § 2.3, Requeue and Pause): right after the
+ * last waiting job of a higher priority, else at the top. `top` (a job that ran and came back): first. Call it inside
+ * the transaction that queued the job; a job that is not queued (the caller's guarded update did not apply) is left alone.
  */
-export function placeJob(db: Db, id: string, place: 'top' | 'priority'): void {
+export function placeJob(db: Db, id: string, place: 'top' | 'priority' | 'class-top'): void {
   const job = db.select({ state: jobs.state, priority: jobs.priority }).from(jobs).where(eq(jobs.id, id)).get();
   if (job?.state !== 'queued') return;
   const order = waiting(db).filter((j) => j.id !== id);
   let at = 0;
-  if (place === 'priority') {
+  if (place === 'priority' || place === 'class-top') {
+    const ahead = place === 'priority' ? (p: number) => p >= job.priority : (p: number) => p > job.priority;
     for (let i = order.length - 1; i >= 0; i--) {
-      if (order[i]!.priority >= job.priority) {
+      if (ahead(order[i]!.priority)) {
         at = i + 1;
         break;
       }

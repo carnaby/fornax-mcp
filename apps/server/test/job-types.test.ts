@@ -53,3 +53,12 @@ describe('announce', () => {
     expect(types.worker.online).toBe(false);
   });
 });
+
+import { typeView } from '../src/domain/job-types.js';
+
+describe('type view (spec 07 § 4.1)', () => {
+  test('shows the default priority; normal when the pack names none', () => {
+    expect(typeView({ ...renderContract, default_priority: 'idle' } as Parameters<typeof typeView>[0]).default_priority).toBe('idle');
+    expect(typeView(renderContract as Parameters<typeof typeView>[0]).default_priority).toBe('normal');
+  });
+});

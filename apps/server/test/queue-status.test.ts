@@ -18,7 +18,7 @@ test("queue status shows counts and the running job; its message only to the job
 
   const q = (await t.app.inject({ method: 'GET', url: '/api/queue', headers: { authorization: `Bearer ${eve}` } })).json();
   expect(q).toEqual({
-    queued: 1, running: 1, paused: false,
+    queued: 1, idle: 0, running: 1, paused: false,
     worker: { online: true, last_seen: expect.any(String), waiting: null },
     current: { type: 'render', progress: 0.5, progress_message: null, started_at: t.clock.now.toISOString() },
   });

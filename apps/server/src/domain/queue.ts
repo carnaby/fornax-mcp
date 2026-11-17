@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { type ClaimedJob, contractHash, LEASE_MS, type ReleaseReason } from '@fornax/protocol';
-import { and, asc, eq, inArray, isNull, lt, lte } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, lt, lte, ne } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { files, type JobState, jobs, jobTypes, tokens } from '../db/schema.js';
 import { conflict, notFound } from './errors.js';
@@ -8,7 +8,7 @@ import { finishJob } from './finish.js';
 import { isOffered } from './job-types.js';
 import type { JobRow } from './jobs.js';
 import { queuePaused } from './queue-control.js';
-import { placeJob } from './queue-order.js';
+import { IDLE, placeJob } from './queue-order.js';
 import { jobChanges, jobSignal } from './signal.js';
 
 export { LEASE_MS };
@@ -98,7 +98,8 @@ export function claimJob(db: Db, now: Date): JobRow | null {
       .innerJoin(jobTypes, and(eq(jobTypes.name, jobs.type), eq(jobTypes.offered, true)))
       // A job of a token that is no longer active (revoked) is never run.
       .innerJoin(tokens, and(eq(tokens.id, jobs.ownerTokenId), eq(tokens.status, 'active')))
-      .where(and(eq(jobs.state, 'queued'), lte(jobs.runAfter, now)))
+      // Spec 07 § 2.2: an idle job waits for a person, whatever else waits.
+      .where(and(eq(jobs.state, 'queued'), lte(jobs.runAfter, now), ne(jobs.priority, IDLE)))
       .orderBy(asc(jobs.queueRank), asc(jobs.id))
       .limit(1)
       .get();
@@ -108,7 +109,7 @@ export function claimJob(db: Db, now: Date): JobRow | null {
       .update(jobs)
       .set({
         state: 'running', attempts: row.attempts + 1, leaseId: randomUUID(), leaseExpiresAt: new Date(now.getTime() + LEASE_MS),
-        confirmedAt: null, startedAt: now, progress: null, progressMessage: null, error: null, updatedAt: now,
+        confirmedAt: null, startedAt: now, progress: null, progressMessage: null, error: null, updatedAt: now, stoppedLeaseId: null,
       })
       .where(eq(jobs.id, next.id))
       .returning()

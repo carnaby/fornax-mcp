@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { extname } from 'node:path';
-import { JOB_STATES, PRIORITIES, type Priority, validateParams } from '@fornax/protocol';
-import { and, count, desc, eq, inArray, lt, or } from 'drizzle-orm';
+import { defaultPriority, JOB_STATES, PRIORITIES, type Priority, validateParams } from '@fornax/protocol';
+import { and, count, desc, eq, inArray, lt, ne, or } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import type { Config } from '../config.js';
 import type { Db } from '../db/client.js';
@@ -10,7 +10,7 @@ import { conflict, notFound, tooMany, unprocessable } from './errors.js';
 import { finishJob } from './finish.js';
 import { getOfferedType, isOffered } from './job-types.js';
 import { queuePaused } from './queue-control.js';
-import { placeJob } from './queue-order.js';
+import { IDLE, placeJob } from './queue-order.js';
 import { jobChanges, jobSignal } from './signal.js';
 import { callbackAllowed } from './webhooks.js';
 import { workerOnline, type WorkerView } from './worker-state.js';
@@ -44,6 +44,9 @@ export function submitJob(db: Db, config: Config, owner: string, input: SubmitIn
   for (const name of Object.keys(given)) if (!Object.hasOwn(contract.inputs, name)) throw unprocessable(`unknown input ${name}`);
   if (new Set(Object.values(given)).size !== Object.values(given).length) throw unprocessable('one file cannot be two inputs');
 
+  // Spec 07 § 4.4: without a priority the type decides.
+  const priority = input.priority ?? defaultPriority(contract);
+
   return db.transaction((tx) => {
     const inputs: Record<string, string> = {};
     for (const [name, spec] of Object.entries(contract.inputs)) {
@@ -63,10 +66,10 @@ export function submitJob(db: Db, config: Config, owner: string, input: SubmitIn
     if ((open?.n ?? 0) >= config.limits.maxQueuedPerToken) throw tooMany(`at most ${config.limits.maxQueuedPerToken} jobs may wait or run per token`);
     const row: JobRow = {
       id: ulid(now.getTime()), ownerTokenId: owner, type: contract.name, params: params.value, inputs,
-      priority: PRIORITIES.indexOf(input.priority ?? 'normal'), group: input.group ?? null, callbackUrl: callbackHref,
+      priority: PRIORITIES.indexOf(priority), group: input.group ?? null, callbackUrl: callbackHref,
       state: 'queued', attempts: 0, envReleases: 0, runAfter: now, leaseId: null, leaseExpiresAt: null, confirmedAt: null, progress: null, progressMessage: null,
       error: null, manifest: null, createdAt: now, startedAt: null, finishedAt: null, updatedAt: now,
-      queueRank: null,
+      queueRank: null, stoppedLeaseId: null, idleSince: priority === 'idle' ? now : null,
     };
     tx.insert(jobs).values(row).run();
     const ids = Object.values(inputs);
@@ -111,15 +114,15 @@ export function cancelAnyJob(db: Db, id: string, now: Date): JobRow {
   return cancelRow(db, job, now);
 }
 
-/** 1-based place in the queue among jobs of offered types; null when not waiting or its type is withdrawn. */
+/** 1-based place among the jobs of offered types that can start; null when not waiting, idle, or its type is withdrawn. */
 export function queuePosition(db: Db, row: JobRow): number | null {
-  if (row.state !== 'queued' || row.queueRank === null || !isOffered(db, row.type)) return null;
+  if (row.state !== 'queued' || row.queueRank === null || row.priority === IDLE || !isOffered(db, row.type)) return null;
   const rank = row.queueRank;
   const ahead = db
     .select({ n: count() })
     .from(jobs)
     .innerJoin(jobTypes, and(eq(jobTypes.name, jobs.type), eq(jobTypes.offered, true)))
-    .where(and(eq(jobs.state, 'queued'), or(lt(jobs.queueRank, rank), and(eq(jobs.queueRank, rank), lt(jobs.id, row.id)))))
+    .where(and(eq(jobs.state, 'queued'), ne(jobs.priority, IDLE), or(lt(jobs.queueRank, rank), and(eq(jobs.queueRank, rank), lt(jobs.id, row.id)))))
     .get();
   return (ahead?.n ?? 0) + 1;
 }
@@ -161,16 +164,24 @@ export function jobView(db: Db, row: JobRow) {
   return { ...view, change: jobChange(view) };
 }
 
+/** Spec 07 § 2.2. */
+export const IDLE_NOTE = 'this job is idle: it waits until the operator starts it or its owner changes its priority';
+/** Spec 07 § 4.1: the answer to a submit that made an idle job. */
+export const IDLE_WARNING = 'this job waits until the operator starts it; pass priority normal to run it automatically';
+export const submitWarning = (row: JobRow): string | null => (row.priority === IDLE ? IDLE_WARNING : null);
+
 /** "13:40 UTC": a time in a sentence does not depend on the server's time zone; exact times are in the fields. */
 const hhmm = (d: Date): string => `${d.toISOString().slice(11, 16)} UTC`;
 const AGAIN = 'asking again changes nothing';
 
 /**
  * Spec 05a 5.2: one sentence, for a person and for an agent, why a queued job waits; null in every other state. The
- * first match wins: the worker is offline, the type is not offered, the worker waits for the card, else the queue.
+ * first match wins: the job is idle (spec 07 § 2.2), the worker is offline, the type is not offered, the worker waits for
+ * the card, else the queue.
  */
 export function jobNote(db: Db, config: Config, row: JobRow, worker: WorkerView, now: Date): string | null {
   if (row.state !== 'queued') return null;
+  if (row.priority === IDLE && isOffered(db, row.type)) return IDLE_NOTE;
   if (!worker.online) {
     return worker.last_seen === null
       ? `waiting: the worker has not connected yet; the job starts when the worker runs, ${AGAIN}`

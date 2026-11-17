@@ -178,7 +178,7 @@ describe('the job tools', () => {
 
     const own = await callJson(await mcp.connect('/mcp', bearerHeader(alice)), 'queue_status');
     expect(own).toEqual({
-      queued: 0, running: 1, paused: false,
+      queued: 0, idle: 0, running: 1, paused: false,
       worker: { online: true, last_seen: expect.any(String), waiting: null },
       current: { type: 'render', progress: 0.5, progress_message: 'half', started_at: expect.any(String) },
     });

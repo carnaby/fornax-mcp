@@ -1,6 +1,6 @@
 import { readdir, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { and, count, eq, inArray, isNull, lt, notInArray, or } from 'drizzle-orm';
+import { and, count, eq, inArray, isNull, lt, notInArray, or, sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { files, invites, jobs, jobTypes, tokens, uploads, webhookDeliveries } from '../db/schema.js';
 import type { RouteDeps } from '../http/deps.js';
@@ -8,6 +8,7 @@ import { deleteFiles } from './files.js';
 import { finishJob } from './finish.js';
 import { expireLeases } from './queue.js';
 import { queuePaused } from './queue-control.js';
+import { IDLE } from './queue-order.js';
 import { workerOnline } from './worker-state.js';
 
 export const TYPE_UNAVAILABLE = 'the worker has not offered this job type for too long';
@@ -119,17 +120,22 @@ export async function runMaintenance(deps: RouteDeps) {
 
 /** The queue as every client sees it. The running job's message is its owner's free text: only the owner (viewer) gets it. */
 export function queueStatus(db: Db, now: Date, viewer: string | null = null) {
+  // Spec 07 § 2.2: idle jobs are counted apart; `queued` is what can start.
+  const idle = sql<number>`${jobs.priority} = ${IDLE}`;
   const counts = db
-    .select({ state: jobs.state, n: count() })
+    .select({ state: jobs.state, idle, n: count() })
     .from(jobs)
     .innerJoin(jobTypes, and(eq(jobTypes.name, jobs.type), eq(jobTypes.offered, true)))
     .where(inArray(jobs.state, ['queued', 'running']))
-    .groupBy(jobs.state)
+    .groupBy(jobs.state, idle)
     .all();
+  const sum = (state: string, isIdle: boolean) =>
+    counts.filter((c) => c.state === state && Boolean(c.idle) === isIdle).reduce((total, c) => total + c.n, 0);
   const running = db.select().from(jobs).where(eq(jobs.state, 'running')).get();
   return {
-    queued: counts.find((c) => c.state === 'queued')?.n ?? 0,
-    running: counts.find((c) => c.state === 'running')?.n ?? 0,
+    queued: sum('queued', false),
+    idle: sum('queued', true),
+    running: sum('running', false) + sum('running', true),
     paused: queuePaused(db),
     worker: workerOnline(db, now),
     current: running

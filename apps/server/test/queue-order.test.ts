@@ -5,7 +5,7 @@ import { jobs } from '../src/db/schema.js';
 import type { DomainError } from '../src/domain/errors.js';
 import { getOwnJob, type JobRow, jobView, submitJob } from '../src/domain/jobs.js';
 import { abandonRunning, claimJob, expireLeases, failJob, LEASE_MS, releaseJob } from '../src/domain/queue.js';
-import { moveJob, queueOrder, repairQueueRanks } from '../src/domain/queue-order.js';
+import { moveJob, placeJob, queueOrder, repairQueueRanks } from '../src/domain/queue-order.js';
 import { renderContract, transcribeContract } from './fixtures.js';
 import { announce, issueToken, tokenIdOf, uploadFile, useTestApp } from './helpers.js';
 
@@ -19,7 +19,7 @@ beforeEach(() => {
 });
 
 /** A render (or paint) job of a fresh owner; the clock moves on, so jobs are ordered by age. */
-async function job(priority: 'low' | 'normal' | 'high' = 'normal', type: 'render' | 'paint' = 'render'): Promise<JobRow> {
+async function job(priority: 'idle' | 'normal' | 'high' = 'normal', type: 'render' | 'paint' = 'render'): Promise<JobRow> {
   const owner = issueToken(t.db, `m${++n}`);
   const scene = await uploadFile(t.app, owner, 'scene.blend', 'B');
   const row = submitJob(t.db, t.config, tokenIdOf(t.db, `m${n}`), { type, params: { frame_start: 1 }, inputs: { scene }, priority }, t.clock.now);
@@ -44,7 +44,7 @@ describe('a new job is placed (spec 06 2.1.2)', () => {
   test('without moves the order is priority, then age', async () => {
     const n1 = await job('normal');
     const h1 = await job('high');
-    const l1 = await job('low');
+    const l1 = await job('idle');
     const n2 = await job('normal');
     expect(queueOrder(t.db)).toEqual(ids(h1, n1, n2, l1));
   });
@@ -52,20 +52,20 @@ describe('a new job is placed (spec 06 2.1.2)', () => {
   test('after a move it goes right after the last waiting job of its priority or higher', async () => {
     const n1 = await job('normal');
     const h1 = await job('high');
-    const l1 = await job('low');
+    const l1 = await job('idle');
     moveJob(t.db, h1.id, { after: n1.id });
     expect(queueOrder(t.db)).toEqual(ids(n1, h1, l1));
     const n2 = await job('normal');
     expect(queueOrder(t.db)).toEqual(ids(n1, h1, n2, l1));
     const h2 = await job('high');
     expect(queueOrder(t.db)).toEqual(ids(n1, h1, h2, n2, l1));
-    const l2 = await job('low');
+    const l2 = await job('idle');
     expect(queueOrder(t.db)).toEqual(ids(n1, h1, h2, n2, l1, l2));
   });
 
   test('with nothing of its priority or higher waiting it goes to the top', async () => {
     const n1 = await job('normal');
-    const l1 = await job('low');
+    const l1 = await job('idle');
     const h1 = await job('high');
     expect(queueOrder(t.db)).toEqual(ids(h1, n1, l1));
   });
@@ -177,7 +177,7 @@ describe('a job that ran goes back to the top (spec 06 2.1.3)', () => {
 describe('repair (spec 06 2.1)', () => {
   test('waiting jobs without a rank go to the end, by priority then age', async () => {
     const a = await job('normal');
-    const b = await job('low');
+    const b = await job('idle');
     const c = await job('high');
     const d = await job('normal');
     t.db.update(jobs).set({ queueRank: null }).where(eq(jobs.id, b.id)).run();
@@ -190,11 +190,25 @@ describe('repair (spec 06 2.1)', () => {
   });
 
   test('opening the database repairs the ranks', async () => {
-    const a = await job('low');
+    const a = await job('idle');
     const b = await job('high');
     t.db.update(jobs).set({ queueRank: null }).run();
     const again = openDb(t.config.dbFile);
     again.close();
     expect(queueOrder(t.db)).toEqual(ids(b, a));
+  });
+});
+
+describe('class-top (spec 07 § 2.3)', () => {
+  test('right after the last waiting job of a higher priority, before its own priority', async () => {
+    const h1 = await job('high');
+    const n1 = await job('normal');
+    const i1 = await job('idle');
+    const x = await job('normal');
+    placeJob(t.db, x.id, 'class-top');
+    expect(queueOrder(t.db)).toEqual(ids(h1, x, n1, i1));
+    t.db.update(jobs).set({ priority: 0 }).where(eq(jobs.id, x.id)).run();
+    placeJob(t.db, x.id, 'class-top');
+    expect(queueOrder(t.db)).toEqual(ids(h1, n1, x, i1));
   });
 });

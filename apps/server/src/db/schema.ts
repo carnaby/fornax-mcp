@@ -79,7 +79,7 @@ export const jobs = sqliteTable(
     params: text('params', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
     /** Input name → file id. */
     inputs: text('inputs', { mode: 'json' }).$type<Record<string, string>>().notNull(),
-    /** 0 low, 1 normal, 2 high. */
+    /** Spec 07 § 2.1: 0 idle (never starts by itself), 1 normal, 2 high. */
     priority: integer('priority').notNull(),
     group: text('group'),
     callbackUrl: text('callback_url'),
@@ -102,6 +102,10 @@ export const jobs = sqliteTable(
     updatedAt: ts('updated_at').notNull(),
     /** Spec 06 2.1: the place in the queue (lower runs first). Read only while the job is queued; every move into `queued` sets it. */
     queueRank: integer('queue_rank'),
+    /** Spec 07 § 3.1: the lease of the run that Requeue or Pause stopped; its heartbeat is told to stop. Cleared by the next claim. */
+    stoppedLeaseId: text('stopped_lease_id'),
+    /** Spec 07 § 2.3: since when the job is idle; null when it is not. */
+    idleSince: ts('idle_since'),
   },
   (t) => [index('jobs_queue').on(t.state, t.queueRank), index('jobs_owner').on(t.ownerTokenId), index('jobs_group').on(t.group)],
 );
