@@ -1,4 +1,4 @@
-import { join } from 'node:path';
+import { join, win32 } from 'node:path';
 import { describe, expect, test } from 'vitest';
 import { jobDirName, jobDirs, resolvePaths } from '../src/paths.js';
 
@@ -16,6 +16,7 @@ describe('resolvePaths', () => {
       leasesDir: 'C:\\Users\\u\\AppData\\Local\\fornax\\leases',
       appDir: 'C:\\Users\\u\\AppData\\Local\\fornax\\app',
       restartFile: 'C:\\Users\\u\\AppData\\Local\\fornax\\restart',
+      secretsDir: win32.join(p.configDir, 'secrets'),
     });
   });
 
@@ -37,6 +38,7 @@ describe('resolvePaths', () => {
   test('Linux defaults; relative XDG values are ignored', () => {
     const p = resolvePaths({ XDG_CONFIG_HOME: 'relative', XDG_DATA_HOME: '' }, 'linux', '/home/u');
     expect([p.configDir, p.dataDir]).toEqual(['/home/u/.config/fornax', '/home/u/.local/share/fornax']);
+    expect(p.secretsDir).toBe('/home/u/.config/fornax/secrets');
   });
 
   test('FORNAX_CONFIG_DIR and FORNAX_DATA_DIR win', () => {
