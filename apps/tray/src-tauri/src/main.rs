@@ -55,6 +55,28 @@ fn cancel_job(id: String, ctl: State<'_, Controller>) {
     ctl.send(Input::Cancel { id });
 }
 
+/// Spec 07 § 5.1: a waiting job's new priority.
+#[tauri::command]
+fn set_priority(id: String, priority: String, ctl: State<'_, Controller>) -> Result<(), String> {
+    if !matches!(priority.as_str(), "high" | "normal" | "idle") {
+        return Err(format!("unknown priority: {priority}"));
+    }
+    ctl.send(Input::SetPriority { id, priority });
+    Ok(())
+}
+
+/// Spec 07 § 5.3: the running job back to the queue (idle: Pause).
+#[tauri::command]
+fn requeue_job(id: String, idle: bool, ctl: State<'_, Controller>) {
+    ctl.send(Input::Requeue { id, idle });
+}
+
+/// Spec 07 § 5.2: Start all.
+#[tauri::command]
+fn start_idle(ctl: State<'_, Controller>) {
+    ctl.send(Input::StartIdle);
+}
+
 /// A job's result page in the browser (only http and https links open). A failure shows next to the job for 10 s,
 /// like a failed action, and in the log.
 #[tauri::command]
@@ -103,7 +125,7 @@ fn main() {
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec![BACKGROUND])))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![snapshot, start_worker, stop_worker, set_paused, move_job, cancel_job, open_result, confirm_quit, update, cancel_update])
+        .invoke_handler(tauri::generate_handler![snapshot, start_worker, stop_worker, set_paused, move_job, cancel_job, set_priority, requeue_job, start_idle, open_result, confirm_quit, update, cancel_update])
         .setup(move |app| {
             let handle = app.handle().clone();
             // A click on a notification opens the window (Windows reports it while the toast is on screen). Set up before

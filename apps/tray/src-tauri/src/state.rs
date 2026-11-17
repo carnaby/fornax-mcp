@@ -26,6 +26,10 @@ pub const ERROR_CHARS: usize = 120;
 pub const PAUSE: &str = "pause";
 /// fornax from this version answers pause and resume with the queue (`--json`).
 pub const PAUSE_JSON_CLI: (u32, u32, u32) = (0, 7, 2);
+/// Spec 07 § 5.4: the fornax that has `queue priority`, `queue requeue` and `queue start-idle`.
+pub const PRIORITY_CLI: (u32, u32, u32) = (0, 9, 0);
+/// The action key of Start all.
+pub const START_IDLE: &str = "start-idle";
 /// How much later than the tray's idea of the server time an update's own pause may be (the time of a queue line comes
 /// a little before the line is read): a pause later than that is someone else's.
 pub const OWED_MARGIN_MS: i64 = 5_000;
@@ -61,6 +65,12 @@ pub enum Input {
     SetPaused(bool),
     Move { id: String, to: MoveTo },
     Cancel { id: String },
+    /// Spec 07 § 5.1: a waiting job's new priority (`high`, `normal` or `idle`).
+    SetPriority { id: String, priority: String },
+    /// Spec 07 § 5.3: the running job back to the queue; `idle` is Pause.
+    Requeue { id: String, idle: bool },
+    /// Spec 07 § 5.2: Start all.
+    StartIdle,
     SetStartWorker(bool),
     Quit,
     ConfirmQuit(bool),
@@ -221,6 +231,8 @@ pub struct JobView {
     pub priority: String,
     pub type_unavailable: bool,
     pub retry_at_ms: Option<i64>,
+    /// Spec 07 § 5.2: since when the job is idle.
+    pub idle_since_ms: Option<i64>,
     pub created_at_ms: Option<i64>,
     pub started_at_ms: Option<i64>,
     pub finished_at_ms: Option<i64>,
@@ -308,6 +320,11 @@ pub struct Snapshot {
     pub can_stop: bool,
     pub stop_label: String,
     pub can_pause: bool,
+    /// Spec 07 § 5.4: the priority menu, Start all, Requeue and Pause are offered (fornax 0.9.0 or newer).
+    pub can_prioritize: bool,
+    pub start_idle_pending: bool,
+    /// Why the last Start all failed, for 10 s.
+    pub start_idle_error: Option<String>,
     pub paused: bool,
     pub pause_label: String,
     pub pause_error: Option<String>,
@@ -595,6 +612,19 @@ impl Model {
                 self.action(id, args)
             }
             Input::Cancel { id } => self.action(id.clone(), vec!["queue".into(), "cancel".into(), id]),
+            Input::SetPriority { id, priority } if self.prioritizes() => {
+                self.action(id.clone(), vec!["queue".into(), "priority".into(), id, priority])
+            }
+            Input::Requeue { id, idle } if self.prioritizes() => {
+                let mut args = vec!["queue".to_string(), "requeue".into(), id.clone()];
+                if idle {
+                    args.push("--idle".into());
+                }
+                self.action(id, args)
+            }
+            Input::StartIdle if self.prioritizes() => self.action(START_IDLE.into(), vec!["queue".into(), "start-idle".into()]),
+            // An older fornax has no such subcommands (Review Focus 5).
+            Input::SetPriority { .. } | Input::Requeue { .. } | Input::StartIdle => Vec::new(),
             Input::SetStartWorker(on) => {
                 self.start_worker = on;
                 vec![Effect::SaveStartWorker(on)]
@@ -824,6 +854,11 @@ impl Model {
     /// fornax answers pause and resume with the queue, so the tray knows which queue lines are older than the answer.
     fn answers_with_time(&self) -> bool {
         self.cli_version.as_deref().and_then(version_of).is_some_and(|v| v >= PAUSE_JSON_CLI)
+    }
+
+    /// Spec 07 § 5.4: the installed fornax knows the priority actions.
+    fn prioritizes(&self) -> bool {
+        self.cli_version.as_deref().and_then(version_of).is_some_and(|v| v >= PRIORITY_CLI)
     }
 
     fn quit(&mut self, now: i64) -> Vec<Effect> {
@@ -1325,6 +1360,7 @@ impl Model {
             priority: j.priority.clone(),
             type_unavailable: j.type_unavailable,
             retry_at_ms: j.run_after.as_deref().and_then(iso_ms),
+            idle_since_ms: j.idle_since.as_deref().and_then(iso_ms),
             created_at_ms: iso_ms(&j.created_at),
             started_at_ms: j.started_at.as_deref().and_then(iso_ms),
             finished_at_ms: j.finished_at.as_deref().and_then(iso_ms),
@@ -1527,6 +1563,9 @@ impl Model {
             can_stop: matches!(self.own, Own::Starting | Own::Running | Own::Restarting | Own::Stopping) && !self.quitting,
             stop_label: if matches!(self.own, Own::Stopping | Own::StoppingNow) { "Stop now" } else { "Stop worker" }.to_string(),
             can_pause: self.can_act() && !self.pending.contains(PAUSE) && self.update.is_none(),
+            can_prioritize: self.can_act() && self.prioritizes(),
+            start_idle_pending: self.pending.contains(START_IDLE),
+            start_idle_error: self.action_error(START_IDLE),
             paused,
             pause_label: if paused { "Resume queue" } else { "Pause queue" }.to_string(),
             pause_error: self.action_error(PAUSE),
@@ -1587,8 +1626,16 @@ mod tests {
             id: id.into(), kind: "echo".into(), owner: Some("alice".into()), state: state.into(), label: None, group: None,
             priority: "normal".into(), inputs: BTreeMap::new(), attempts: 0, type_unavailable: false, run_after: None,
             created_at: "2026-11-15T13:56:00.000Z".into(), started_at: None, finished_at: None, progress: None,
-            progress_message: None, error: None, result_url: format!("https://fornax.example.com/r/{id}"),
+            progress_message: None, error: None, result_url: format!("https://fornax.example.com/r/{id}"), idle_since: None,
         }
+    }
+
+    /// A model whose fornax says `version` (spec 07 § 5.4: 0.9.0 has the priority actions).
+    fn ready_with_cli(version: &str) -> Model {
+        let mut m = Model::new();
+        m.apply(launched(false), NOW);
+        m.apply(checked(version, false), NOW);
+        m
     }
 
     /// A queue line; the server says the worker is offline (the tests decide the worker by the model's own state).
@@ -2782,11 +2829,11 @@ mod tests {
         assert_eq!(
             keys,
             [
-                "canCancelUpdate", "canPause", "canStart", "canStop", "canUpdate", "cardWait", "confirmQuit", "finished", "gpu",
-                "gpuHolder", "headline", "icon", "log", "note", "offsetMs", "pauseError", "pauseLabel", "paused", "queueKnown",
-                "queueNote", "queueText", "queued", "running", "serverDownSinceMs", "serverMessage", "serverRefused", "startWorker",
-                "status", "stopLabel", "tooltip", "types", "typesNote", "updateLabel", "updateNote", "updating", "versions",
-                "workerSinceMs", "workerText",
+                "canCancelUpdate", "canPause", "canPrioritize", "canStart", "canStop", "canUpdate", "cardWait", "confirmQuit",
+                "finished", "gpu", "gpuHolder", "headline", "icon", "log", "note", "offsetMs", "pauseError", "pauseLabel", "paused",
+                "queueKnown", "queueNote", "queueText", "queued", "running", "serverDownSinceMs", "serverMessage", "serverRefused",
+                "startIdleError", "startIdlePending", "startWorker", "status", "stopLabel", "tooltip", "types", "typesNote",
+                "updateLabel", "updateNote", "updating", "versions", "workerSinceMs", "workerText",
             ]
         );
         let mut job_keys: Vec<&str> = v["running"].as_object().unwrap().keys().map(String::as_str).collect();
@@ -2794,7 +2841,7 @@ mod tests {
         assert_eq!(
             job_keys,
             [
-                "actionError", "createdAtMs", "error", "finishedAtMs", "id", "owner", "pending", "priority", "progress",
+                "actionError", "createdAtMs", "error", "finishedAtMs", "id", "idleSinceMs", "owner", "pending", "priority", "progress",
                 "progressMessage", "resultUrl", "retryAtMs", "startedAtMs", "state", "type", "typeUnavailable", "what",
             ]
         );
@@ -2803,6 +2850,66 @@ mod tests {
         assert_eq!(gpu_keys, ["name", "problem", "state", "temperature", "totalMib", "usedMib", "utilization"]);
         assert_eq!(v["icon"], "busy");
         assert_eq!(v["log"][0].as_object().unwrap().keys().cloned().collect::<Vec<_>>().len(), 3);
+    }
+
+    /// Spec 07 § 5.4: the new actions run `fornax queue …` like move and cancel.
+    #[test]
+    fn priority_requeue_and_start_idle_run_the_cli() {
+        let mut m = ready_with_cli("0.9.0");
+        m.apply(queue(Some(job("R1", "running")), vec![job("Q1", "queued")], vec![], false), NOW);
+        assert!(m.snapshot().can_prioritize);
+        assert_eq!(
+            m.apply(Input::SetPriority { id: "Q1".into(), priority: "idle".into() }, NOW),
+            vec![Effect::RunAction { key: "Q1".into(), args: args(&["queue", "priority", "Q1", "idle"]) }]
+        );
+        assert_eq!(
+            m.apply(Input::Requeue { id: "R1".into(), idle: true }, NOW),
+            vec![Effect::RunAction { key: "R1".into(), args: args(&["queue", "requeue", "R1", "--idle"]) }]
+        );
+        assert_eq!(m.apply(Input::StartIdle, NOW), vec![Effect::RunAction { key: START_IDLE.into(), args: args(&["queue", "start-idle"]) }]);
+        let s = m.snapshot();
+        assert!(s.start_idle_pending);
+        assert!(s.queued[0].pending && s.running.as_ref().unwrap().pending);
+        let mut m = ready_with_cli("0.9.0");
+        m.apply(queue(Some(job("R1", "running")), vec![], vec![], false), NOW);
+        assert_eq!(
+            m.apply(Input::Requeue { id: "R1".into(), idle: false }, NOW),
+            vec![Effect::RunAction { key: "R1".into(), args: args(&["queue", "requeue", "R1"]) }]
+        );
+    }
+
+    /// Review Focus 5: an older fornax has no such subcommands; nothing is sent.
+    #[test]
+    fn old_cli_offers_no_priority_actions() {
+        let mut m = ready_with_cli("0.8.0");
+        m.apply(queue(Some(job("R1", "running")), vec![job("Q1", "queued")], vec![], false), NOW);
+        assert!(!m.snapshot().can_prioritize);
+        assert_eq!(m.apply(Input::SetPriority { id: "Q1".into(), priority: "idle".into() }, NOW), vec![]);
+        assert_eq!(m.apply(Input::Requeue { id: "R1".into(), idle: false }, NOW), vec![]);
+        assert_eq!(m.apply(Input::StartIdle, NOW), vec![]);
+    }
+
+    #[test]
+    fn a_failed_start_idle_shows_its_error() {
+        let mut m = ready_with_cli("0.9.0");
+        m.apply(queue(None, vec![job("Q1", "queued")], vec![], false), NOW);
+        m.apply(Input::StartIdle, NOW);
+        m.apply(Input::ActionDone { key: START_IDLE.into(), result: Err("the server answered 502".into()) }, NOW + 1000);
+        let s = m.snapshot();
+        assert!(!s.start_idle_pending);
+        assert_eq!(s.start_idle_error.as_deref(), Some("the server answered 502"));
+    }
+
+    #[test]
+    fn an_idle_job_carries_its_idle_time() {
+        let mut m = ready(false);
+        let mut j = job("Q1", "queued");
+        j.priority = "idle".into();
+        j.idle_since = Some("2026-11-15T14:00:00.000Z".into());
+        m.apply(queue(None, vec![j], vec![], false), NOW);
+        let v = &m.snapshot().queued[0];
+        assert_eq!(v.priority, "idle");
+        assert_eq!(v.idle_since_ms, iso_ms("2026-11-15T14:00:00.000Z"));
     }
 
     fn gpu_info() -> GpuInfo {

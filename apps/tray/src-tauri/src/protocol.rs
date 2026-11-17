@@ -73,6 +73,9 @@ pub struct Job {
     pub label: Option<String>,
     pub group: Option<String>,
     pub priority: String,
+    /// Spec 07 § 5.2: since when the job is idle; None otherwise and from a server older than 0.9.0.
+    #[serde(default)]
+    pub idle_since: Option<String>,
     pub inputs: BTreeMap<String, Option<String>>,
     pub attempts: u32,
     pub type_unavailable: bool,
@@ -245,6 +248,21 @@ mod tests {
         );
         assert_eq!(parse_watch_line("queue active · worker online"), None);
         assert_eq!(parse_watch_line(r#"{"ok":true}"#), None, "a queue line without the queue");
+    }
+
+    /// Spec 07 § 5.2: an idle job carries since when; a server older than 0.9.0 sends no such field.
+    #[test]
+    fn reads_the_idle_time_of_a_job() {
+        let job = |extra: &str| {
+            let line = format!(
+                r#"{{"ok":true,"server_time":"2026-11-15T14:00:00.000Z","change":"c","paused":false,"worker":{{"online":true,"last_seen":null,"version":null,"waiting":null}},"running":null,"queued":[{{"id":"Q1","type":"upscale","owner":"bob","state":"queued","label":null,"group":null,"priority":"idle",{extra}"inputs":{{}},"attempts":0,"type_unavailable":false,"run_after":null,"created_at":"2026-11-15T13:56:00.000Z","started_at":null,"finished_at":null,"progress":null,"progress_message":null,"error":null,"result_url":"https://fornax.example.com/r/x"}}],"finished":[]}}"#
+            );
+            let Some(WatchLine::Queue(q)) = parse_watch_line(&line) else { panic!("not a queue line") };
+            q.queued[0].clone()
+        };
+        let idle = job(r#""idle_since":"2026-11-15T13:57:00.000Z","#);
+        assert_eq!((idle.priority.as_str(), idle.idle_since.as_deref()), ("idle", Some("2026-11-15T13:57:00.000Z")));
+        assert_eq!(job("").idle_since, None);
     }
 
     #[test]
