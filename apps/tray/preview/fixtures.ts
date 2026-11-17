@@ -22,6 +22,7 @@ export function job(over: Partial<JobView> & { id: string }): JobView {
     resultUrl: `https://fornax.example.com/r/${over.id}`,
     pending: false,
     actionError: null,
+    idleSinceMs: null,
     ...over,
   };
 }
@@ -38,6 +39,9 @@ export function base(): Snapshot {
     canStop: true,
     stopLabel: 'Stop worker',
     canPause: true,
+    canPrioritize: true,
+    startIdlePending: false,
+    startIdleError: null,
     paused: false,
     pauseLabel: 'Pause queue',
     pauseError: null,
@@ -197,7 +201,11 @@ const crowded = (): Snapshot => {
     ...s,
     note: 'the worker ended: another fornax worker runs on this PC (pid 4242); stop it first',
     pauseError: 'the server answered 502',
-    queued: Array.from({ length: 8 }, (_, i) => job({ id: `Q${i + 1}`, owner: ['alice', 'bob', 'carol'][i % 3]!, what: `clip_${i + 1}.mp4`, createdAtMs: t - (8 - i) * MIN })),
+    queued: [
+      ...Array.from({ length: 8 }, (_, i) => job({ id: `Q${i + 1}`, owner: ['alice', 'bob', 'carol'][i % 3]!, what: `clip_${i + 1}.mp4`, createdAtMs: t - (8 - i) * MIN })),
+      job({ id: 'I1', owner: 'bob', what: 'batch_1.mp4', priority: 'idle', idleSinceMs: t - 90 * MIN }),
+      job({ id: 'I2', owner: 'bob', what: 'batch_2.mp4', priority: 'idle', idleSinceMs: t - 90 * MIN }),
+    ],
     types: [...s.types, { name: 'echo', state: 'unavailable', reason: 'its check failed: python was not found; set tools.python in worker.yaml' }],
   };
 };
@@ -215,6 +223,31 @@ const long = (): Snapshot => {
   };
 };
 
+/** Spec 07: high, normal and idle jobs; an upscale runs. */
+const idle = (): Snapshot => {
+  const t = Date.now();
+  return {
+    ...base(),
+    queued: [
+      job({ id: 'Q1', type: 'render', owner: 'alice', what: 'scene-12.blend', priority: 'high' }),
+      job({ id: 'Q2', type: 'lease', owner: 'bob', what: 'blender', priority: 'high' }),
+      job({ id: 'Q3', type: 'transcribe', owner: 'alice', what: 'interview-03.wav' }),
+      job({ id: 'Q4', owner: 'bob', what: 'clip-07.mp4', priority: 'idle', idleSinceMs: t - 90 * MIN }),
+      job({ id: 'Q5', owner: 'bob', what: 'clip-08.mp4', priority: 'idle', idleSinceMs: t - 90 * MIN }),
+      job({ id: 'Q6', owner: 'bob', what: 'clip-09.mp4', priority: 'idle', idleSinceMs: t - 5 * MIN }),
+    ],
+  };
+};
+
+/** Spec 07: only idle jobs wait and nothing runs. */
+const idleOnly = (): Snapshot => {
+  const s = idle();
+  return { ...s, running: null, queued: s.queued.filter((j) => j.priority === 'idle') };
+};
+
+/** Review Focus 5 of plan 07: an older fornax; the Idle block without ▶, Start all and the menu. */
+const idleOldCli = (): Snapshot => ({ ...idle(), canPrioritize: false });
+
 export const FIXTURES = {
   main: base,
   lease,
@@ -228,4 +261,7 @@ export const FIXTURES = {
   empty,
   crowded,
   long,
+  idle,
+  'idle-only': idleOnly,
+  'idle-oldcli': idleOldCli,
 } satisfies Record<string, () => Snapshot>;

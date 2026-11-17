@@ -1,6 +1,7 @@
-// Running (spec 06e § 2.4): the job card with its progress and time left, the lease card, or why nothing runs.
-import { actionError, cancelControls } from './jobs';
-import { clock, nothingRuns, progressText } from './text';
+// Running (spec 06e § 2.4): the job card with its progress and time left, the lease card, or why nothing runs. The job
+// card offers ↩ Requeue and ⏸ Pause next to ✕ with fornax 0.9.0 or newer (spec 07 § 5.3).
+import { actionError, cancelControls, confirmControls } from './jobs';
+import { clock, nothingRuns, pauseQuestion, progressText, requeueQuestion } from './text';
 import type { JobView, Snapshot } from './types';
 import { chip, el, make, timeSpan } from './ui';
 
@@ -13,15 +14,27 @@ function fileName(j: JobView): HTMLElement {
   return name;
 }
 
-function jobCard(j: JobView, stale: boolean): HTMLElement[] {
+function jobCard(j: JobView, stale: boolean, can: boolean): HTMLElement[] {
   const card = make('div', 'run-card');
   const top = make('div', 'run-top');
   const left = make('div', 'run-left');
   const line = make('div', 'run-line');
   line.append(chip(j.type), fileName(j));
   left.append(line, make('span', 'sub', `from ${j.owner}${j.startedAtMs === null ? '' : ` · started ${clock(j.startedAtMs)}`}`));
-  top.append(
-    left,
+  const back = can
+    ? [
+        ...confirmControls(j, {
+          stale, label: '↩', className: 'icon', title: 'Back to the queue', question: requeueQuestion(j),
+          command: 'requeue_job', args: { id: j.id, idle: false }, action: 'requeue',
+        }),
+        ...confirmControls(j, {
+          stale, label: '⏸', className: 'icon', title: 'Pause: back to Idle', question: pauseQuestion(j),
+          command: 'requeue_job', args: { id: j.id, idle: true }, action: 'pause',
+        }),
+      ]
+    : [];
+  const controls = [
+    ...back,
     ...cancelControls(j, {
       stale,
       label: '✕',
@@ -29,7 +42,11 @@ function jobCard(j: JobView, stale: boolean): HTMLElement[] {
       title: 'Cancel this job',
       question: `Cancel the ${j.type} job of ${j.owner}? It stops within a few seconds.`,
     }),
-  );
+  ];
+  // The icons stay top right; an open question takes the line under the title.
+  const icons = make('div', 'run-icons');
+  icons.append(...controls.filter((c) => !c.classList.contains('confirm')));
+  top.append(left, icons, ...controls.filter((c) => c.classList.contains('confirm')));
   card.append(top);
   if (j.progress !== null) {
     const track = make('div', 'track');
@@ -92,5 +109,5 @@ export function renderRunning(s: Snapshot, stale: boolean): void {
     box.replaceChildren(make('div', 'empty', nothingRuns(s)));
     return;
   }
-  box.replaceChildren(...(j.type === 'lease' ? leaseCard(j, stale) : jobCard(j, stale)));
+  box.replaceChildren(...(j.type === 'lease' ? leaseCard(j, stale) : jobCard(j, stale, s.canPrioritize)));
 }

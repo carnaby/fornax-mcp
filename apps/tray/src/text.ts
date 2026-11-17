@@ -78,13 +78,26 @@ export function holderText(s: Snapshot): string {
 }
 
 /** Spec 06e § 2.4: the empty Running card, first match wins. */
+/** Spec 07 § 5.1–5.2: Waiting shows the jobs that can start; Idle the ones that wait for a person. */
+export const isIdle = (j: JobView): boolean => j.priority === 'idle';
+export const waitingJobs = (s: Snapshot): JobView[] => s.queued.filter((j) => !isIdle(j));
+export const idleJobs = (s: Snapshot): JobView[] => s.queued.filter(isIdle);
+
+export const idleNote = (j: JobView): string => (j.idleSinceMs === null ? 'idle' : `idle since ${clock(j.idleSinceMs)}`);
+export const requeueQuestion = (j: JobView): string => `Put the ${j.type} job of ${j.owner} back in the queue? It starts again from the beginning.`;
+export const pauseQuestion = (j: JobView): string =>
+  `Pause the ${j.type} job of ${j.owner}? It goes to Idle and starts again from the beginning when you start it.`;
+
 export function nothingRuns(s: Snapshot): string {
   if (!s.queueKnown) return s.queueNote ?? '';
-  const n = s.queued.length;
+  const n = waitingJobs(s).length;
   const jobs = n === 1 ? '1 job waits' : `${n} jobs wait`;
   if (s.cardWait !== null && n > 0) return `Nothing runs: ${jobs} for the GPU.`;
   if (s.paused) return 'Nothing runs: the queue is paused.';
   if (s.canStart && n > 0) return 'Nothing runs: the worker is stopped.';
+  const idle = idleJobs(s).length;
+  if (idle === 1) return 'Nothing runs. 1 idle job waits for you to start it.';
+  if (idle > 1) return `Nothing runs. ${idle} idle jobs wait for you to start them.`;
   return 'Nothing runs.';
 }
 
@@ -100,7 +113,6 @@ export function waitingNotes(j: JobView): { text: string; bad: boolean }[] {
   const notes: { text: string; bad: boolean }[] = [];
   if (j.typeUnavailable) notes.push({ text: 'type not offered', bad: true });
   if (j.retryAtMs !== null) notes.push({ text: `retry at ${clock(j.retryAtMs)}`, bad: false });
-  if (j.priority !== 'normal') notes.push({ text: j.priority, bad: false });
   return notes;
 }
 

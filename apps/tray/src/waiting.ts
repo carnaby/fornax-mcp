@@ -1,12 +1,17 @@
-// Waiting (spec 06e § 2.5): the jobs in the order they run. Drag a row, or use ⤒ ⤓ (shown on hover or focus); ✕
-// cancels. While a row is dragged the window holds new snapshots (they would replace the rows under the mouse).
+// Waiting and Idle (spec 06e § 2.5, spec 07 § 5.1–5.2): the jobs that can start in the order they run, then the idle
+// jobs that wait for a person. Drag a row inside its block, or use ⤒ ⤓ (shown on hover or focus); ✕ cancels; the
+// HIGH badge, the number or ◷ opens the priority menu; ▶ starts an idle job. While a row is dragged the window holds
+// new snapshots (they would replace the rows under the mouse).
 import { call } from './bridge';
 import { actionError, cancelControls } from './jobs';
-import { waitingNote, waitingNotes } from './text';
+import { priorityMenu, priorityTrigger } from './priority';
+import { idleJobs, idleNote, waitingJobs, waitingNote, waitingNotes } from './text';
 import type { JobView, Snapshot } from './types';
 import { button, chip, el, make, timeSpan } from './ui';
 
-let dragged: string | null = null;
+type Block = 'waiting' | 'idle';
+
+let dragged: { id: string; block: Block } | null = null;
 let afterDrag: () => void = () => {};
 
 export const isDragging = (): boolean => dragged !== null;
@@ -22,7 +27,10 @@ function clearMarks(): void {
   for (const r of document.querySelectorAll('.drop-before, .drop-after')) r.classList.remove('drop-before', 'drop-after');
 }
 
-function row(j: JobView, index: number, count: number, stale: boolean): HTMLElement {
+type RowContext = { block: Block; jobs: JobView[]; stale: boolean; can: boolean };
+
+function row(j: JobView, index: number, c: RowContext): HTMLElement {
+  const { block, jobs, stale, can } = c;
   const li = make('li', 'wrow');
   li.draggable = !j.pending && !stale;
   const name = make('span', 'file', j.what || j.id);
@@ -30,27 +38,37 @@ function row(j: JobView, index: number, count: number, stale: boolean): HTMLElem
   const line = make('div', 'run-line');
   line.append(chip(j.type), name);
   const pieces: (string | HTMLElement)[] = [`from ${j.owner}`];
-  if (j.createdAtMs !== null) pieces.push(' · queued ', timeSpan(j.createdAtMs, 'ago'));
+  if (block === 'idle') pieces.push(` · ${idleNote(j)}`);
+  else if (j.createdAtMs !== null) pieces.push(' · queued ', timeSpan(j.createdAtMs, 'ago'));
   for (const note of waitingNotes(j)) pieces.push(' · ', make('span', note.bad ? 'bad' : '', note.text));
   const sub = make('div', 'wsub');
   sub.append(...pieces);
   const main = make('div', 'wmain');
   main.append(line, sub, ...actionError(j));
+  const high = block === 'waiting' && j.priority === 'high';
+  const trigger = priorityTrigger(j, block === 'idle' ? '◷' : high ? 'HIGH' : String(index + 1), high ? 'prio prio-high' : 'wpos', { stale, can });
+  // ⤒ ⤓ move inside the block: before its first row, after its last.
+  const first = jobs[0]!.id;
+  const last = jobs[jobs.length - 1]!.id;
   li.append(
-    make('span', 'wpos', String(index + 1)),
+    trigger,
     main,
-    button(`${j.id} top`, '⤒', 'Move to the top', () => call('move_job', { id: j.id, to: 'top', other: null }), {
+    button(`${j.id} top`, '⤒', 'Move to the top', () => call('move_job', { id: j.id, to: 'before', other: first }), {
       disabled: j.pending || stale || index === 0,
       className: 'icon move',
     }),
-    button(`${j.id} bottom`, '⤓', 'Move to the bottom', () => call('move_job', { id: j.id, to: 'bottom', other: null }), {
-      disabled: j.pending || stale || index === count - 1,
+    button(`${j.id} bottom`, '⤓', 'Move to the bottom', () => call('move_job', { id: j.id, to: 'after', other: last }), {
+      disabled: j.pending || stale || index === jobs.length - 1,
       className: 'icon move',
     }),
+    ...(block === 'idle' && can
+      ? [button(`${j.id} start`, '▶', 'Start', () => call('set_priority', { id: j.id, priority: 'normal' }), { disabled: j.pending || stale, className: 'icon start' })]
+      : []),
     ...cancelControls(j, { stale, label: '✕', className: 'icon', title: 'Remove from the queue', question: `Cancel the ${j.type} job of ${j.owner}?` }),
+    ...priorityMenu(j),
   );
   li.addEventListener('dragstart', (e) => {
-    dragged = j.id;
+    dragged = { id: j.id, block };
     e.dataTransfer?.setData('text/plain', j.id);
     li.classList.add('dragging');
   });
@@ -60,8 +78,10 @@ function row(j: JobView, index: number, count: number, stale: boolean): HTMLElem
     clearMarks();
     afterDrag();
   });
+  // A row is dropped only inside its own block (spec 07 § 5.1).
+  const droppable = () => dragged !== null && dragged.id !== j.id && dragged.block === block && !stale;
   li.addEventListener('dragover', (e) => {
-    if (dragged === null || dragged === j.id || stale) return;
+    if (!droppable()) return;
     e.preventDefault();
     clearMarks();
     li.classList.add(below(e, li) ? 'drop-after' : 'drop-before');
@@ -69,22 +89,39 @@ function row(j: JobView, index: number, count: number, stale: boolean): HTMLElem
   li.addEventListener('dragleave', () => li.classList.remove('drop-before', 'drop-after'));
   li.addEventListener('drop', (e) => {
     e.preventDefault();
-    if (dragged === null || dragged === j.id || stale) return;
-    call('move_job', { id: dragged, to: below(e, li) ? 'after' : 'before', other: j.id });
+    if (!droppable()) return;
+    call('move_job', { id: dragged!.id, to: below(e, li) ? 'after' : 'before', other: j.id });
   });
   return li;
 }
 
+function renderIdle(s: Snapshot, stale: boolean): void {
+  const jobs = idleJobs(s);
+  el('idle-block').hidden = jobs.length === 0;
+  el('idle-title').textContent = `Idle · ${jobs.length}`;
+  const start = el<HTMLButtonElement>('start-idle');
+  start.hidden = !s.canPrioritize;
+  start.disabled = s.startIdlePending || stale;
+  start.onclick = () => call('start_idle');
+  const error = el('start-idle-error');
+  error.hidden = s.startIdleError === null;
+  error.textContent = s.startIdleError ?? '';
+  const c: RowContext = { block: 'idle', jobs, stale, can: s.canPrioritize };
+  el('idle').replaceChildren(...jobs.map((j, i) => row(j, i, c)));
+}
+
 export function renderWaiting(s: Snapshot, stale: boolean): void {
-  el('waiting-title').textContent = s.queueKnown ? `Waiting · ${s.queued.length}` : 'Waiting';
+  const jobs = waitingJobs(s);
+  el('waiting-title').textContent = s.queueKnown ? `Waiting · ${jobs.length}` : 'Waiting';
   const note = waitingNote(s);
   const noteEl = el('waiting-note');
   noteEl.textContent = note.text;
   noteEl.classList.toggle('lease', note.lease);
   const list = el('waiting');
-  if (!s.queued.length) {
-    list.replaceChildren(make('li', 'wempty', s.queueKnown ? 'Nothing waits.' : (s.queueNote ?? '')));
-    return;
+  if (!jobs.length) list.replaceChildren(make('li', 'wempty', s.queueKnown ? 'Nothing waits.' : (s.queueNote ?? '')));
+  else {
+    const c: RowContext = { block: 'waiting', jobs, stale, can: s.canPrioritize };
+    list.replaceChildren(...jobs.map((j, i) => row(j, i, c)));
   }
-  list.replaceChildren(...s.queued.map((j, i) => row(j, i, s.queued.length, stale)));
+  renderIdle(s, stale);
 }

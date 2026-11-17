@@ -13,6 +13,8 @@ export type JobView = {
   priority: string;
   typeUnavailable: boolean;
   retryAtMs: number | null;
+  /** Spec 07 § 5.2: since when the job is idle. */
+  idleSinceMs: number | null;
   createdAtMs: number | null;
   startedAtMs: number | null;
   finishedAtMs: number | null;
@@ -54,6 +56,10 @@ export type Snapshot = {
   canStop: boolean;
   stopLabel: string;
   canPause: boolean;
+  /** Spec 07 § 5.4: the priority menu, Start all, Requeue and Pause are offered (fornax 0.9.0 or newer). */
+  canPrioritize: boolean;
+  startIdlePending: boolean;
+  startIdleError: string | null;
   paused: boolean;
   pauseLabel: string;
   pauseError: string | null;

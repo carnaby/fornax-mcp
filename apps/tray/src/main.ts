@@ -16,6 +16,7 @@ import { renderGpu } from './gpu';
 import { initHeader, renderHeader } from './header';
 import { renderHistory } from './history';
 import { forgetConfirm } from './jobs';
+import { forgetMenu } from './priority';
 import { renderLog } from './log';
 import { initQuit, renderQuit } from './quit';
 import { renderRunning } from './running';
@@ -48,6 +49,7 @@ function render(s: Snapshot, force = false): void {
   const stale = s.serverDownSinceMs !== null || s.serverRefused;
   el('tray').classList.toggle('stale', stale);
   forgetConfirm([s.running, ...s.queued].flatMap((j) => (j ? [j.id] : [])), stale);
+  forgetMenu(s.queued.map((j) => j.id), stale);
   renderHeader(s);
   renderRunning(s, stale);
   renderWaiting(s, stale);

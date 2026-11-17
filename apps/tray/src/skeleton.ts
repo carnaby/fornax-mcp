@@ -41,6 +41,11 @@ const SKELETON = `
     <div class="label-row"><h2 id="waiting-title" class="label">Waiting</h2><span id="waiting-note" class="label-note"></span></div>
     <ol id="waiting" class="list waiting-list"></ol>
   </section>
+  <section id="idle-block" class="block queue waiting-block idle-block" hidden>
+    <div class="label-row"><h2 id="idle-title" class="label">Idle</h2><button id="start-idle" type="button" class="small go" data-key="start-idle">▶ Start all</button></div>
+    <p id="start-idle-error" class="action-error" hidden></p>
+    <ol id="idle" class="list waiting-list"></ol>
+  </section>
   <section class="card tabs">
     <div id="tablist" class="tablist" role="tablist">
       <button id="tab-history" class="tab" type="button" role="tab" aria-controls="panel-history" data-key="tab-history">History</button>

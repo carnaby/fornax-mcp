@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'vitest';
 import { base, FIXTURES, job } from '../preview/fixtures';
 import {
-  ago, cardBusySentence, chipClass, clock, duration, etaMs, gb, gbShort, historySub, holderText, nothingRuns, progressText, uptime,
-  waitingNote, waitingNotes,
+  ago, cardBusySentence, chipClass, clock, duration, etaMs, gb, gbShort, historySub, holderText, idleJobs, idleNote, nothingRuns,
+  pauseQuestion, progressText, requeueQuestion, uptime, waitingJobs, waitingNote, waitingNotes,
 } from './text';
 
 const MIN = 60_000;
@@ -70,10 +70,10 @@ describe('sentences of the sections', () => {
   });
   test('the notes of a waiting job', () => {
     const retry = Date.now() + 5 * MIN;
-    expect(waitingNotes(job({ id: 'Q', typeUnavailable: true, retryAtMs: retry, priority: 'low' }))).toEqual([
+    // Spec 07 § 5.1: the HIGH badge and the Idle block show the priority; the notes no longer repeat it.
+    expect(waitingNotes(job({ id: 'Q', typeUnavailable: true, retryAtMs: retry, priority: 'high' }))).toEqual([
       { text: 'type not offered', bad: true },
       { text: `retry at ${clock(retry)}`, bad: false },
-      { text: 'low', bad: false },
     ]);
     expect(waitingNotes(job({ id: 'Q' }))).toEqual([]);
   });
@@ -84,5 +84,36 @@ describe('sentences of the sections', () => {
       `bob · ${clock(t)} · held 1:00`,
     );
     expect(historySub(job({ id: 'F', state: 'canceled', finishedAtMs: t }))).toBe(`alice · ${clock(t)}`);
+  });
+});
+
+describe('spec 07 texts', () => {
+  test('waiting and idle split the queued jobs', () => {
+    const s = { ...base(), queued: [job({ id: 'A', priority: 'high' }), job({ id: 'B', priority: 'idle' }), job({ id: 'C' })] };
+    expect(waitingJobs(s).map((j) => j.id)).toEqual(['A', 'C']);
+    expect(idleJobs(s).map((j) => j.id)).toEqual(['B']);
+  });
+
+  test('nothing runs and only idle jobs wait', () => {
+    const one = { ...base(), running: null, queued: [job({ id: 'B', priority: 'idle' })] };
+    expect(nothingRuns(one)).toBe('Nothing runs. 1 idle job waits for you to start it.');
+    const three = { ...one, queued: ['B', 'C', 'D'].map((id) => job({ id, priority: 'idle' })) };
+    expect(nothingRuns(three)).toBe('Nothing runs. 3 idle jobs wait for you to start them.');
+  });
+
+  test('a paused queue or a stopped worker still says so; idle jobs do not count as waiting', () => {
+    const s = { ...base(), running: null, paused: true, queued: [job({ id: 'B', priority: 'idle' }), job({ id: 'C' })] };
+    expect(nothingRuns(s)).toBe('Nothing runs: the queue is paused.');
+    const stopped = { ...FIXTURES.stopped(), queued: [job({ id: 'B', priority: 'idle' })] };
+    expect(nothingRuns(stopped)).toBe('Nothing runs. 1 idle job waits for you to start it.');
+  });
+
+  test('idle since and the two questions', () => {
+    const at = new Date(2026, 10, 17, 16, 9).getTime();
+    expect(idleNote(job({ id: 'B', priority: 'idle', idleSinceMs: at }))).toBe('idle since 16:09');
+    expect(idleNote(job({ id: 'B', priority: 'idle', idleSinceMs: null }))).toBe('idle');
+    const r = job({ id: 'R', type: 'upscale', owner: 'bob', state: 'running' });
+    expect(requeueQuestion(r)).toBe('Put the upscale job of bob back in the queue? It starts again from the beginning.');
+    expect(pauseQuestion(r)).toBe('Pause the upscale job of bob? It goes to Idle and starts again from the beginning when you start it.');
   });
 });
