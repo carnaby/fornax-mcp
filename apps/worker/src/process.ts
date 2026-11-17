@@ -22,8 +22,8 @@ export type RunOptions = {
   signal?: AbortSignal;
   killGraceMs?: number;
   onProgress?: (p: Progress) => void;
-  /** Log text as it arrives (a pack's setup shown live). */
-  onOutput?: (text: string) => void;
+  /** Log text as it arrives (a pack's setup shown live), with the stream it came from (spec 08 § 4.3 masks each on its own). */
+  onOutput?: (text: string, stream: 'stdout' | 'stderr') => void;
   /** Test seam: the program used for taskkill on Windows. */
   taskkillProgram?: string;
   /** Test seam: replaces process.kill for the Linux process-group signals. */
@@ -187,10 +187,10 @@ export function runProcess(opts: RunOptions): Promise<RunResult> {
   const [program, ...args] = opts.argv;
   if (program === undefined) throw new Error('runProcess needs a program');
   const log = new LogBuffer();
-  const write = (text: string) => {
+  const write = (text: string, stream: 'stdout' | 'stderr') => {
     if (!text) return;
     log.push(text);
-    opts.onOutput?.(text);
+    opts.onOutput?.(text, stream);
   };
 
   return new Promise((resolve) => {
@@ -267,7 +267,7 @@ export function runProcess(opts: RunOptions): Promise<RunResult> {
     const takeLine = (l: string) => {
       const p = parseProgress(l);
       if (p) opts.onProgress?.(p);
-      else write(`${l}\n`);
+      else write(`${l}\n`, 'stdout');
     };
     child.stdout!.on('data', (chunk: Buffer) => {
       line += outText.write(chunk);
@@ -277,11 +277,11 @@ export function runProcess(opts: RunOptions): Promise<RunResult> {
       }
       // A tool that never ends its line still has a bounded buffer here.
       if (line.length > 64 * 1024) {
-        write(line);
+        write(line, 'stdout');
         line = '';
       }
     });
-    child.stderr!.on('data', (chunk: Buffer) => write(errText.write(chunk)));
+    child.stderr!.on('data', (chunk: Buffer) => write(errText.write(chunk), 'stderr'));
 
     const finish = async (spawnError: string | null) => {
       if (settled) return;
@@ -291,7 +291,7 @@ export function runProcess(opts: RunOptions): Promise<RunResult> {
       opts.signal?.removeEventListener('abort', onAbort);
       const rest = line + outText.end();
       if (rest) takeLine(rest);
-      write(errText.end());
+      write(errText.end(), 'stderr');
       await killing;
       // Only now: until the tree is gone, a hard quit (second Ctrl+C) must still reach it.
       if (entry) live.delete(entry);

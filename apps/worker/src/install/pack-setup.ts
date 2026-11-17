@@ -1,7 +1,7 @@
 import { ConfigError } from '../config.js';
 import type { Pack } from '../pack.js';
-import { logTail, runProcess } from '../process.js';
-import { maskAll, Redactor } from '../redact.js';
+import { LogBuffer, logTail, runProcess } from '../process.js';
+import { Redactor } from '../redact.js';
 import { expandArgv } from '../template.js';
 import { type SecretDirs, setupEnv } from '../tool-env.js';
 
@@ -27,18 +27,26 @@ export async function runPackSetup(o: {
     if (e instanceof ConfigError) return e.message;
     throw e;
   }
-  const redactor = o.write ? new Redactor(prepared.values, o.write) : null;
+  // Spec 08 § 4.3: one redactor per stream (interleaved streams would split a value), and the failure reason is taken
+  // from the masked text, never from the raw log.
+  const masked = new LogBuffer();
+  const emit = (text: string) => {
+    masked.push(text);
+    o.write?.(text);
+  };
+  const redactors = { stdout: new Redactor(prepared.values, emit), stderr: new Redactor(prepared.values, emit) };
   const r = await runProcess({
     argv: expandArgv(o.pack.impl.setup, { pack: o.dir, tools: o.tools }),
     cwd: o.dir,
     env: prepared.env,
     timeoutMs: o.timeoutMs ?? SETUP_TIMEOUT_MS,
     signal: o.signal,
-    onOutput: redactor ? (t) => redactor.push(t) : undefined,
+    onOutput: (text, stream) => redactors[stream].push(text),
   });
-  redactor?.flush();
+  redactors.stdout.flush();
+  redactors.stderr.flush();
   if (r.code === 0) return null;
   const why = r.spawnError ?? (r.timedOut ? 'it ran too long' : r.canceled ? 'interrupted' : `exit code ${r.code ?? r.signal}`);
-  const tail = logTail(maskAll(r.log, prepared.values));
+  const tail = logTail(masked.toString());
   return `${why}${tail ? `: ${tail}` : ''}`;
 }

@@ -50,7 +50,7 @@ def hugging_face_steps():
         "  1. Sign in at https://huggingface.co (a free account is enough).",
         f"  2. Open https://huggingface.co/{DIARIZE_MODEL} and accept the conditions.",
         "  3. Create a token at https://huggingface.co/settings/tokens (type \"Read\").",
-        "  4. Give it to Fornax (it asks without showing what you type): fornax secrets set HF_TOKEN",
+        "  4. Give it to Fornax (it asks without showing what you type; not in Git Bash's own window): fornax secrets set HF_TOKEN",
         "  5. Stop the worker (tray: Quit), then run this setup again: fornax types setup transcribe",
         "Fornax gives the token only to this setup; jobs never go online for this model.",
         "Until then, jobs with diarize: true get the transcript without speakers.",

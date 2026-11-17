@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
 import { runCli } from '../src/cli.js';
 import type { Ctx } from '../src/commands/context.js';
+import { pipedInputHint } from '../src/commands/secrets.js';
 import type { SecretInput } from '../src/hidden-input.js';
 import { readSecret } from '../src/secrets.js';
 import { testPaths, useTempDir, writeEchoPack } from './helpers.js';
@@ -55,6 +56,38 @@ describe('fornax secrets (spec 08 § 3)', () => {
     expect(prompts).toEqual([]);
     expect(readSecret(ctx.paths.secretsDir, 'OTHER_TOKEN')).toBe(V);
     expect(r.text).toContain('no installed type pack asks for OTHER_TOKEN');
+  });
+
+  test('--from-file ~/… is read from the home directory, as PowerShell 5.1 passes ~ unexpanded (final review #4)', async () => {
+    const { ctx, run } = cli();
+    const home = tmp();
+    writeFileSync(join(home, 'token'), `${V}\n`);
+    const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+    process.env.HOME = home;
+    process.env.USERPROFILE = home;
+    try {
+      expect((await run('secrets', 'set', 'EXAMPLE_TOKEN', '--from-file', '~/token')).code).toBe(0);
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+    expect(readSecret(ctx.paths.secretsDir, 'EXAMPLE_TOKEN')).toBe(V);
+  });
+
+  test('the token given as the --from-file path is not echoed (final review #6)', async () => {
+    const { run } = cli();
+    const r = await run('secrets', 'set', 'EXAMPLE_TOKEN', '--from-file', V);
+    expect(r.code).toBe(1);
+    expect(r.text).toBe('the file given with --from-file cannot be read (ENOENT); nothing was saved');
+  });
+
+  test('a stdin that is not a terminal gets a hint on stderr; in Git Bash it says the input shows (final review #1)', () => {
+    expect(pipedInputHint({ MSYSTEM: 'MINGW64' }, 'HF_TOKEN')).toBe(
+      'this window cannot hide what you type (Git Bash); to keep HF_TOKEN off the screen use --from-file <path>, Windows Terminal or PowerShell; otherwise paste it, press Enter, then Ctrl+D',
+    );
+    expect(pipedInputHint({}, 'HF_TOKEN')).toBe('reading HF_TOKEN from standard input (end it with Ctrl+D)');
   });
 
   test('--from-file: a missing file is 1, a file over 64 KiB is 2, nothing saved', async () => {

@@ -196,8 +196,8 @@ On the PC with the GPU (Windows or Linux, Node.js 22 or newer):
 5. Start it: `fornax worker`. Ctrl+C gives the running job back; a second Ctrl+C kills the tool.
 
 Some types download models that need an account's token (`transcribe`'s speaker recognition needs a Hugging Face
-token): store it with `fornax secrets set HF_TOKEN` (it asks without showing what you type; `--from-file <path>` reads
-a file), then run the setup again with the worker stopped: `fornax types setup transcribe`. Secrets live in
+token): store it with `fornax secrets set HF_TOKEN` (it asks without showing what you type, except in Git Bash's own
+window, which cannot hide it: use Windows Terminal or PowerShell there; `--from-file <path>` reads a file), then run the setup again with the worker stopped: `fornax types setup transcribe`. Secrets live in
 `<config>/secrets/`, only the setup of a pack that asks for one gets it, and they never reach the server.
 `fornax secrets list` shows the names, `fornax secrets remove <NAME>` deletes one.
 

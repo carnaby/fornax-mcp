@@ -10,7 +10,11 @@ export function maskAll(text: string, values: readonly string[]): string {
   return out;
 }
 
-/** Holds output until its line ends, so a value split between two chunks is still masked. */
+/**
+ * Holds output until its line ends (a line feed, or a carriage return: progress bars redraw one line), so a value
+ * split between two chunks is still masked. Values never contain either. One per stream: interleaved streams would
+ * split a value with the other stream's text.
+ */
 export class Redactor {
   private held = '';
   /** A value not complete yet starts within the last (longest value - 1) characters. */
@@ -29,7 +33,7 @@ export class Redactor {
       return;
     }
     this.held += text;
-    const end = this.held.lastIndexOf('\n');
+    const end = Math.max(this.held.lastIndexOf('\n'), this.held.lastIndexOf('\r'));
     if (end >= 0) {
       this.emit(maskAll(this.held.slice(0, end + 1), this.values));
       this.held = this.held.slice(end + 1);

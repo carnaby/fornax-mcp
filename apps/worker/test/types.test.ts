@@ -248,6 +248,29 @@ describe('secrets in the setup (spec 08 § 4.2, 4.3)', () => {
     expect(r.text).not.toContain(V);
   });
 
+  test('a value split on stderr around a stdout line is still masked, live and in the failure reason (final review #3)', async () => {
+    const { ctx, run, written } = cli();
+    writeSecret(ctx.paths.secretsDir, 'EXAMPLE_TOKEN', V);
+    const dir = writeEchoPack(tmp(), { setup: ['{tool.node}', '{pack}/scripts/setup.mjs'], secrets: ['EXAMPLE_TOKEN'] });
+    writeFileSync(join(dir, 'scripts', 'setup.mjs'), [
+      "import { setTimeout as sleep } from 'node:timers/promises';",
+      'const v = process.env.EXAMPLE_TOKEN;',
+      "process.stderr.write('using ' + v.slice(0, 8));",
+      'await sleep(150);',
+      "process.stdout.write('setup: step' + String.fromCharCode(10));",
+      'await sleep(150);',
+      "process.stderr.write(v.slice(8) + String.fromCharCode(10));",
+      'await sleep(150);',
+      'process.exitCode = 1;',
+    ].join('\n'));
+    const r = await run('types', 'install', 'echo', '--from', dir);
+    expect(r.code).toBe(1);
+    const all = written.join('') + r.text;
+    expect(written.join('')).toContain('using ***');
+    expect(all).not.toContain(V.slice(8));
+    expect(all).not.toContain(V.slice(0, 8));
+  });
+
   test('a damaged secret file stops the setup: its file is named, its content never', async () => {
     const { ctx, run, written } = cli();
     mkdirSync(ctx.paths.secretsDir, { recursive: true });

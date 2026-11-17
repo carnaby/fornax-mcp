@@ -39,4 +39,12 @@ describe('masking (spec 08 § 4.3)', () => {
     r.push('half a line');
     expect(text()).toBe('half a line');
   });
+
+  test('a carriage return ends a line too: progress bars that redraw one line come out at once (final review #2)', () => {
+    const { r, text } = collect([V]);
+    r.push(`10%${String.fromCharCode(13)}`);
+    expect(text()).toBe(`10%${String.fromCharCode(13)}`);
+    r.push(`20% ${V}${String.fromCharCode(13)}`);
+    expect(text()).toBe(`10%${String.fromCharCode(13)}20% ***${String.fromCharCode(13)}`);
+  });
 });

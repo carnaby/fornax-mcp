@@ -1,4 +1,6 @@
 import { readFileSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join, sep } from 'node:path';
 import { readAllLimited, readHiddenLine, type SecretInput } from '../hidden-input.js';
 import { loadPacks } from '../pack.js';
 import { checkSecretName, parseSecretValue, removeSecret, storedSecretNames, writeSecret } from '../secrets.js';
@@ -7,12 +9,23 @@ import type { Ctx } from './context.js';
 /** Spec 08 § 3.1: more input than this is not a token. */
 export const MAX_SECRET_INPUT = 64 * 1024;
 
-/** The terminal asks without echo; a pipe is read whole. */
-export async function defaultSecretInput(prompt: string): Promise<SecretInput> {
+/**
+ * What `fornax secrets set` says on stderr before reading a stdin that is not a terminal. Git Bash's own window
+ * (mintty) gives Node a pipe, not a console: what is typed there shows and cannot be hidden.
+ */
+export function pipedInputHint(env: NodeJS.ProcessEnv, name: string): string {
+  return env.MSYSTEM
+    ? `this window cannot hide what you type (Git Bash); to keep ${name} off the screen use --from-file <path>, Windows Terminal or PowerShell; otherwise paste it, press Enter, then Ctrl+D`
+    : `reading ${name} from standard input (end it with Ctrl+D)`;
+}
+
+/** The terminal asks without echo; a pipe is read whole, after a hint on stderr. */
+export async function defaultSecretInput(prompt: string, name: string): Promise<SecretInput> {
   if (process.stdin.isTTY) {
     const line = await readHiddenLine(process.stdin, process.stderr, prompt);
     return line === null ? { canceled: true } : { raw: line };
   }
+  process.stderr.write(`${pipedInputHint(process.env, name)}\n`);
   const all = await readAllLimited(process.stdin, MAX_SECRET_INPUT);
   return all === null ? { tooLong: true } : { raw: all };
 }
@@ -24,10 +37,16 @@ function wanted(ctx: Ctx): Map<string, string[]> {
   return by;
 }
 
+/** A leading ~ means the home directory: Windows PowerShell 5.1 passes it to programs unexpanded. */
+function expandHome(path: string): string {
+  return path === '~' || path.startsWith('~/') || path.startsWith(`~${sep}`) ? join(homedir(), path.slice(1)) : path;
+}
+
 function fromFile(path: string): SecretInput | { unreadable: string } {
   try {
-    if (statSync(path).size > MAX_SECRET_INPUT) return { tooLong: true };
-    return { raw: readFileSync(path, 'utf8') };
+    const file = expandHome(path);
+    if (statSync(file).size > MAX_SECRET_INPUT) return { tooLong: true };
+    return { raw: readFileSync(file, 'utf8') };
   } catch (e) {
     return { unreadable: (e as NodeJS.ErrnoException).code ?? 'error' };
   }
@@ -40,9 +59,10 @@ export async function secretsSet(ctx: Ctx, name: string, file?: string): Promise
     ctx.out(bad);
     return 2;
   }
-  const input = file !== undefined ? fromFile(file) : await (ctx.readSecretInput ?? defaultSecretInput)(`${name}: `);
+  const input = file !== undefined ? fromFile(file) : await (ctx.readSecretInput ?? ((prompt: string) => defaultSecretInput(prompt, name)))(`${name}: `);
   if ('unreadable' in input) {
-    ctx.out(`${file} cannot be read (${input.unreadable}); nothing was saved`);
+    // Not the path: someone may have given the token itself as the file.
+    ctx.out(`the file given with --from-file cannot be read (${input.unreadable}); nothing was saved`);
     return 1;
   }
   if ('canceled' in input) {
