@@ -7,7 +7,7 @@ import { doctorGpuLines, readGpu } from '../gpu.js';
 import { isInstalledCopy } from '../install/app.js';
 import { fetchBundleInfo } from '../install/bundle-info.js';
 import { loadPacks } from '../pack.js';
-import { secretFile, storedSecretNames } from '../secrets.js';
+import { readSecret, secretFile, storedSecretNames } from '../secrets.js';
 import { WORKER_VERSION } from '../version.js';
 import { apiFor, runningScript, type Ctx } from './context.js';
 
@@ -114,6 +114,16 @@ export async function doctor(ctx: Ctx, only?: string): Promise<number> {
   // Spec 08 § 5: a secret a pack's setup asks for and nobody stored (the pack decides whether it needs it).
   const stored = storedSecretNames(ctx.paths.secretsDir);
   for (const p of selected) for (const n of p.impl.secrets) if (!stored.includes(n)) warn(`${p.contract.name}: ${n} is not set (fornax secrets set ${n})`);
+  // Final review #10: a stored secret a selected pack wants must be readable, or its next setup fails.
+  for (const n of stored) {
+    if (!selected.some((p) => p.impl.secrets.includes(n))) continue;
+    try {
+      readSecret(ctx.paths.secretsDir, n);
+    } catch (e) {
+      if (!(e instanceof ConfigError)) throw e;
+      warn(e.message);
+    }
+  }
   // Linux: like the token file (Windows relies on the profile's ACL, not checked here).
   if (process.platform !== 'win32' && existsSync(ctx.paths.secretsDir)) {
     const mode = (f: string) => statSync(f).mode & 0o777;

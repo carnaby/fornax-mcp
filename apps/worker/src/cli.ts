@@ -10,7 +10,7 @@ import { installCommand } from './commands/install.js';
 import { LEASE_FORMS, leaseCommand, usageText } from './commands/lease.js';
 import { pair } from './commands/pair.js';
 import { queueCancel, queueMove, queuePause, queuePriority, queueRequeue, queueShow, queueStartIdle, queueWatch } from './commands/queue.js';
-import { secretsList, secretsRemove, secretsSet } from './commands/secrets.js';
+import { secretsList, secretsRemove, secretsSet, VALUE_AS_ARGUMENT } from './commands/secrets.js';
 import { trayInstallCommand } from './commands/tray.js';
 import { typesAdd, typesInstall, typesList, typesSetup } from './commands/types.js';
 import { updateCommand } from './commands/update.js';
@@ -198,6 +198,11 @@ export async function runCli(argv: string[], ctx: Ctx): Promise<number> {
     if (group === 'secrets' && sub === 'set' && arg !== undefined && shape(3, 'from-file')) return await secretsSet(ctx, arg, flags['from-file']);
     if (group === 'secrets' && sub === 'list' && shape(2)) return secretsList(ctx);
     if (group === 'secrets' && sub === 'remove' && arg !== undefined && shape(3)) return secretsRemove(ctx, arg);
+    // Final review #7: a value given as an argument gets its own reason, never an echo.
+    if (group === 'secrets' && sub === 'set' && words.length > 3) {
+      ctx.out(VALUE_AS_ARGUMENT);
+      return 2;
+    }
   } catch (e) {
     return reportError(e, ctx.out);
   }

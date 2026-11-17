@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
 import { ConfigError } from '../src/config.js';
@@ -102,5 +102,26 @@ describe('secret files (spec 08 § 2)', () => {
     expect(statSync(dir).mode & 0o777).toBe(0o700);
     expect(statSync(file).mode & 0o777).toBe(0o600);
     expect(existsSync(file)).toBe(true);
+  });
+});
+
+describe('spec 08 final review minors', () => {
+  test('#5 a UTF-16 file is named as such, never quoted', () => {
+    const dir = join(tmp(), 'secrets');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'EXAMPLE_TOKEN'), Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(`${VALUE}\r\n`, 'utf16le')]));
+    expect(() => readSecret(dir, 'EXAMPLE_TOKEN')).toThrow(/does not hold a valid value \(the file is UTF-16; save it as UTF-8\)/);
+    writeFileSync(join(dir, 'OTHER_TOKEN'), Buffer.from(`${VALUE}\n`, 'utf16le'));
+    expect(() => readSecret(dir, 'OTHER_TOKEN')).toThrow(/the file is UTF-16; save it as UTF-8/);
+  });
+
+  test.skipIf(process.platform === 'win32')('#8 a symlink to a file is a stored secret; a dangling one is not', () => {
+    const dir = join(tmp(), 'secrets');
+    mkdirSync(dir, { recursive: true });
+    const target = join(tmp(), 'elsewhere');
+    writeFileSync(target, `${VALUE}\n`);
+    symlinkSync(target, join(dir, 'EXAMPLE_TOKEN'));
+    symlinkSync(join(tmp(), 'missing'), join(dir, 'OTHER_TOKEN'));
+    expect(storedSecretNames(dir)).toEqual(['EXAMPLE_TOKEN']);
   });
 });

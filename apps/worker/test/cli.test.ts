@@ -142,6 +142,17 @@ describe('fornax CLI', () => {
     expect((await run('doctor', 'other')).text).not.toContain('EXAMPLE_TOKEN');
   });
 
+  test('doctor warns about a stored secret that is damaged, without its content (spec 08 final review #10)', async () => {
+    const { ctx, run } = cli();
+    writeEchoPack(ctx.paths.typesDir, { name: 'wants', setup: ['{tool.node}', '-e', '0'], secrets: ['EXAMPLE_TOKEN'] });
+    mkdirSync(ctx.paths.secretsDir, { recursive: true });
+    writeFileSync(join(ctx.paths.secretsDir, 'EXAMPLE_TOKEN'), 'hf_test_value_123\nsecond line\n');
+    const text = (await run('doctor')).text;
+    expect(text).toMatch(/^WARN\s+secret EXAMPLE_TOKEN: .* does not hold a valid value \(the value must be one line\)/m);
+    expect(text).not.toContain('hf_test_value_123');
+    expect(text).not.toContain('EXAMPLE_TOKEN is not set');
+  });
+
   test.skipIf(process.platform === 'win32')('doctor warns about secret files other users can read (spec 08 § 5)', async () => {
     const { ctx, run } = cli();
     const file = writeSecret(ctx.paths.secretsDir, 'EXAMPLE_TOKEN', 'hf_test_value_123');

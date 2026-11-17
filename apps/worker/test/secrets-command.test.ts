@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
 import { runCli } from '../src/cli.js';
 import type { Ctx } from '../src/commands/context.js';
-import { pipedInputHint } from '../src/commands/secrets.js';
+import { pipedInputHint, VALUE_AS_ARGUMENT } from '../src/commands/secrets.js';
 import type { SecretInput } from '../src/hidden-input.js';
 import { readSecret } from '../src/secrets.js';
 import { testPaths, useTempDir, writeEchoPack } from './helpers.js';
@@ -135,6 +135,17 @@ describe('fornax secrets (spec 08 § 3)', () => {
       expect(r.code, argv.join(' ')).toBe(2);
       expect(r.text).not.toContain(V);
     }
+    expect(existsSync(ctx.paths.secretsDir)).toBe(false);
+    // Final review #7: the plain form gets its own reason.
+    expect((await run('secrets', 'set', 'EXAMPLE_TOKEN', V)).text).toBe(VALUE_AS_ARGUMENT);
+  });
+
+  test('--from-file with a UTF-16 file: 2, a reason, nothing saved (final review #5)', async () => {
+    const { ctx, run } = cli();
+    const file = join(tmp(), 'token-utf16');
+    writeFileSync(file, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(V, 'utf16le')]));
+    const r = await run('secrets', 'set', 'EXAMPLE_TOKEN', '--from-file', file);
+    expect(r).toEqual({ code: 2, text: 'the file is UTF-16; save it as UTF-8; nothing was saved' });
     expect(existsSync(ctx.paths.secretsDir)).toBe(false);
   });
 

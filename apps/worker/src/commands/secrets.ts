@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { join, sep } from 'node:path';
 import { readAllLimited, readHiddenLine, type SecretInput } from '../hidden-input.js';
 import { loadPacks } from '../pack.js';
-import { checkSecretName, parseSecretValue, removeSecret, storedSecretNames, writeSecret } from '../secrets.js';
+import { checkSecretName, isUtf16, parseSecretValue, removeSecret, storedSecretNames, UTF16_PROBLEM, writeSecret } from '../secrets.js';
 import type { Ctx } from './context.js';
 
 /** Spec 08 § 3.1: more input than this is not a token. */
@@ -42,11 +42,16 @@ function expandHome(path: string): string {
   return path === '~' || path.startsWith('~/') || path.startsWith(`~${sep}`) ? join(homedir(), path.slice(1)) : path;
 }
 
-function fromFile(path: string): SecretInput | { unreadable: string } {
+/** Final review #7: `fornax secrets set NAME value`; never echoes the value. */
+export const VALUE_AS_ARGUMENT =
+  "a secret's value is never an argument (shell history and process lists keep it): use --from-file <path>, standard input, or type it at the prompt; nothing was saved";
+
+function fromFile(path: string): SecretInput | { unreadable: string } | { problem: string } {
   try {
     const file = expandHome(path);
     if (statSync(file).size > MAX_SECRET_INPUT) return { tooLong: true };
-    return { raw: readFileSync(file, 'utf8') };
+    const bytes = readFileSync(file);
+    return isUtf16(bytes) ? { problem: UTF16_PROBLEM } : { raw: bytes.toString('utf8') };
   } catch (e) {
     return { unreadable: (e as NodeJS.ErrnoException).code ?? 'error' };
   }
@@ -64,6 +69,10 @@ export async function secretsSet(ctx: Ctx, name: string, file?: string): Promise
     // Not the path: someone may have given the token itself as the file.
     ctx.out(`the file given with --from-file cannot be read (${input.unreadable}); nothing was saved`);
     return 1;
+  }
+  if ('problem' in input) {
+    ctx.out(`${input.problem}; nothing was saved`);
+    return 2;
   }
   if ('canceled' in input) {
     ctx.out('canceled; nothing was saved');

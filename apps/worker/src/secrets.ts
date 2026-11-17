@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { hasControlChars } from '@fornax/protocol';
 import { ConfigError } from './config.js';
@@ -28,6 +28,12 @@ export function checkSecretName(name: string): string | null {
 
 export type SecretValue = { value: string } | { problem: string };
 
+export const UTF16_PROBLEM = 'the file is UTF-16; save it as UTF-8';
+
+/** Text saved as UTF-16 (Windows PowerShell 5.1 `>`, Notepad's "Unicode"): a byte-order mark or NUL bytes. */
+export const isUtf16 = (b: Buffer): boolean =>
+  (b.length >= 2 && ((b[0] === 0xff && b[1] === 0xfe) || (b[0] === 0xfe && b[1] === 0xff))) || b.includes(0);
+
 /** Spec 08 § 2.2: one line, 1 to 8192 characters, no control characters. The problem never quotes the value or its length. */
 export function parseSecretValue(raw: string): SecretValue {
   // A byte-order mark (a token file saved by a Windows editor) is not part of the value.
@@ -45,15 +51,16 @@ export const secretFile = (secretsDir: string, name: string): string => join(sec
 export function readSecret(secretsDir: string, name: string): string | null {
   const file = secretFile(secretsDir, name);
   const again = `set it again with fornax secrets set ${name}`;
-  let raw: string;
+  let raw: Buffer;
   try {
-    raw = readFileSync(file, 'utf8');
+    raw = readFileSync(file);
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
     if (code === 'ENOENT') return null;
     throw new ConfigError(`secret ${name}: ${file} cannot be read (${code ?? 'error'}); ${again}`);
   }
-  const r = parseSecretValue(raw);
+  // Final review #5: a UTF-16 file is named as such, not as "control characters".
+  const r = isUtf16(raw) ? { problem: UTF16_PROBLEM } : parseSecretValue(raw.toString('utf8'));
   if ('problem' in r) throw new ConfigError(`secret ${name}: ${file} does not hold a valid value (${r.problem}); ${again}`);
   return r.value;
 }
@@ -88,7 +95,8 @@ export function removeSecret(secretsDir: string, name: string): boolean {
 export function storedSecretNames(secretsDir: string): string[] {
   if (!existsSync(secretsDir)) return [];
   return readdirSync(secretsDir, { withFileTypes: true })
-    .filter((d) => d.isFile() && checkSecretName(d.name) === null)
+    // Final review #8: a symlink to a file is used by the setup, so it counts as stored.
+    .filter((d) => (d.isFile() || (d.isSymbolicLink() && statSync(join(secretsDir, d.name), { throwIfNoEntry: false })?.isFile() === true)) && checkSecretName(d.name) === null)
     .map((d) => d.name)
     .sort();
 }

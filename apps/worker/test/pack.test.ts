@@ -37,6 +37,10 @@ function pack(changes: Record<string, unknown> = {}): string {
 const refused = (changes: Record<string, unknown>, message: RegExp) => expect(() => loadPack(pack(changes))).toThrow(message);
 
 describe('loadPack', () => {
+  test('#9 secrets: with no value is no secrets (spec 08 final review)', () => {
+    expect(loadPack(pack({ setup: ['{tool.blender}', '--version'], secrets: null })).impl.secrets).toEqual([]);
+  });
+
   test('splits the contract from the implementation', () => {
     const p = loadPack(pack());
     expect(p.contract).toMatchObject({ name: 'render', version: 1, max_runtime_s: 21_600, inputs: { scene: { extensions: ['.blend'], max_mb: 100, required: true } } });

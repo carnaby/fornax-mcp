@@ -40,7 +40,7 @@ const typeYaml = z.strictObject({
   default_priority: z.enum(PRIORITIES).optional(),
   tools: z.array(z.string().regex(TOOL_NAME, 'tool names are a-z, 0-9 and "_", starting with a letter')).max(20).nullish(),
   /** Spec 08 § 4.1: secrets the setup gets as environment variables (implementation, never announced). */
-  secrets: z.array(z.string()).max(16).optional(),
+  secrets: z.array(z.string()).max(16).nullish(),
   setup: argv.optional(),
   check: argv.optional(),
   run: argv,
