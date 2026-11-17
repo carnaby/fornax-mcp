@@ -4,10 +4,11 @@ import { isWindowsReservedName, type JobTypeContract, jobTypeContract, type Para
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 import { TOOL_NAME } from './config.js';
+import { checkSecretName } from './secrets.js';
 import { symbolsOf, symbolText, type TemplateSymbol, wholeSymbol } from './template.js';
 
 /** The part of a type pack that never leaves this PC: what to install, check and run. */
-export type PackImpl = { tools: string[]; setup?: string[]; check?: string[]; run: string[] };
+export type PackImpl = { tools: string[]; secrets: string[]; setup?: string[]; check?: string[]; run: string[] };
 export type Pack = { contract: JobTypeContract; impl: PackImpl; dir: string };
 
 /** A type pack that cannot be used, and why (spec 06c 2.2 reports it per type). */
@@ -38,6 +39,8 @@ const typeYaml = z.strictObject({
   /** Spec 07 § 4.4: the priority of a job submitted without one. */
   default_priority: z.enum(PRIORITIES).optional(),
   tools: z.array(z.string().regex(TOOL_NAME, 'tool names are a-z, 0-9 and "_", starting with a letter')).max(20).nullish(),
+  /** Spec 08 § 4.1: secrets the setup gets as environment variables (implementation, never announced). */
+  secrets: z.array(z.string()).max(16).optional(),
   setup: argv.optional(),
   check: argv.optional(),
   run: argv,
@@ -131,6 +134,15 @@ export function loadPack(dir: string): Pack {
   }
   const y = typeYaml.safeParse(raw);
   if (!y.success) throw problem(z.prettifyError(y.error));
+  // Quoting a name here is fine: it comes from type.yaml, not from someone typing a token.
+  const secrets = y.data.secrets ?? [];
+  for (const s of secrets) {
+    const bad = checkSecretName(s);
+    if (bad) throw problem(`secrets: ${s}: ${bad}`);
+  }
+  const twice = secrets.find((s, i) => secrets.indexOf(s) !== i);
+  if (twice) throw problem(`secrets: ${twice} is listed twice`);
+  if (secrets.length && !y.data.setup) throw problem('secrets: only a setup gets secrets, and this pack has none');
   const seconds = parseDuration(y.data.max_runtime);
   if (seconds === null) throw problem('max_runtime must look like 30s, 10m, 6h or 2d');
   const c = jobTypeContract.safeParse({
@@ -151,6 +163,7 @@ export function loadPack(dir: string): Pack {
   }
   const impl: PackImpl = {
     tools: y.data.tools ?? [],
+    secrets,
     run: y.data.run,
     ...(y.data.setup ? { setup: y.data.setup } : {}),
     ...(y.data.check ? { check: y.data.check } : {}),

@@ -41,7 +41,22 @@ describe('loadPack', () => {
     const p = loadPack(pack());
     expect(p.contract).toMatchObject({ name: 'render', version: 1, max_runtime_s: 21_600, inputs: { scene: { extensions: ['.blend'], max_mb: 100, required: true } } });
     expect(p.contract).not.toHaveProperty('run');
-    expect(p.impl).toEqual({ tools: ['blender'], check: base.check, run: base.run });
+    expect(p.impl).toEqual({ tools: ['blender'], secrets: [], check: base.check, run: base.run });
+  });
+
+  test('secrets belong to the implementation, only with a setup (spec 08 § 4.1)', () => {
+    const setup = ['{tool.blender}', '-b', '--python', '{pack}/scripts/setup.py'];
+    const p = loadPack(pack({ setup, secrets: ['HF_TOKEN', 'EXAMPLE_TOKEN'] }));
+    expect(p.impl.secrets).toEqual(['HF_TOKEN', 'EXAMPLE_TOKEN']);
+    expect(p.contract).not.toHaveProperty('secrets');
+    expect(JSON.stringify(p.contract)).not.toContain('HF_TOKEN');
+    refused({ secrets: ['HF_TOKEN'] }, /secrets: only a setup gets secrets, and this pack has none/);
+    refused({ setup, secrets: ['hf_token'] }, /secrets: hf_token: secret names are upper case/);
+    refused({ setup, secrets: ['PATH'] }, /secrets: PATH: PATH is a system variable/);
+    refused({ setup, secrets: ['FORNAX_TOKEN'] }, /secrets: FORNAX_TOKEN: names starting with FORNAX_/);
+    refused({ setup, secrets: ['HF_TOKEN', 'HF_TOKEN'] }, /secrets: HF_TOKEN is listed twice/);
+    refused({ setup, secrets: Array.from({ length: 17 }, (_, i) => `T${i}`) }, /secrets/);
+    refused({ setup, secrets: 'HF_TOKEN' }, /secrets/);
   });
 
   test('default_priority goes into the contract; a wrong value is a pack problem (spec 07 § 4.4)', () => {
@@ -66,7 +81,7 @@ describe('loadPack', () => {
 
   test('{node} works in setup, check and run, without any tool', () => {
     const p = loadPack(pack({ tools: [], setup: ['{node}', '{pack}/s.mjs'], check: ['{node}', '{pack}/c.mjs'], run: ['{node}', '{pack}/r.mjs', '{params_json}'] }));
-    expect(p.impl).toEqual({ tools: [], setup: ['{node}', '{pack}/s.mjs'], check: ['{node}', '{pack}/c.mjs'], run: ['{node}', '{pack}/r.mjs', '{params_json}'] });
+    expect(p.impl).toEqual({ tools: [], secrets: [], setup: ['{node}', '{pack}/s.mjs'], check: ['{node}', '{pack}/c.mjs'], run: ['{node}', '{pack}/r.mjs', '{params_json}'] });
   });
 
   test('an optional parameter without a default reaches the tool only through {params_json}', () => {

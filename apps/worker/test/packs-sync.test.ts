@@ -215,6 +215,19 @@ describe('syncShippedPacks', () => {
     expect(existsSync(join(typesDir, 'echo.old', 'type.yaml'))).toBe(true);
   });
 
+  test('a changed secrets list runs the setup again (spec 08 § 4.1)', async () => {
+    const { shippedDir, typesDir, out, sync } = setup();
+    const setupJs = "import { mkdirSync, writeFileSync } from 'node:fs';\nmkdirSync('env', { recursive: true });\nwriteFileSync('env/ran', '1');\n";
+    for (const dir of [shippedDir, typesDir]) {
+      writeEchoPack(dir, { setup: ['{tool.node}', '{pack}/scripts/setup.mjs'] });
+      writeFileSync(join(dir, 'echo', 'scripts', 'setup.mjs'), setupJs);
+    }
+    writeEchoPack(shippedDir, { setup: ['{tool.node}', '{pack}/scripts/setup.mjs'], secrets: ['EXAMPLE_TOKEN'] });
+    await sync();
+    expect(out.slice(0, 2)).toEqual(['updated type echo', 'running the setup of echo…']);
+    expect(existsSync(join(typesDir, 'echo', 'env', 'ran'))).toBe(true);
+  });
+
   test('the setup runs again only when a file it runs changed, not for another script', async () => {
     const { shippedDir, typesDir, out, sync } = setup();
     const setupJs = "import { mkdirSync, writeFileSync } from 'node:fs';\nmkdirSync('env', { recursive: true });\nwriteFileSync('env/ran', '1');\n";

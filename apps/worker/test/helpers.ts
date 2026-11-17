@@ -128,7 +128,7 @@ export const JOB_TOOL = fileURLToPath(new URL('./fixtures/job-tool.mjs', import.
 export const NODE_TOOLS: Record<string, string> = { node: process.execPath };
 
 /** The test type pack "echo" (or another name) in `typesDir`; its tool is fixtures/job-tool.mjs run by Node. */
-export function writeEchoPack(typesDir: string, opts: { name?: string; maxRuntime?: string; check?: string[]; setup?: string[] } = {}): string {
+export function writeEchoPack(typesDir: string, opts: { name?: string; maxRuntime?: string; check?: string[]; setup?: string[]; secrets?: string[] } = {}): string {
   const name = opts.name ?? 'echo';
   const dir = join(typesDir, name);
   mkdirSync(join(dir, 'scripts'), { recursive: true });
@@ -151,6 +151,7 @@ export function writeEchoPack(typesDir: string, opts: { name?: string; maxRuntim
     max_runtime: opts.maxRuntime ?? '10m',
     tools: ['node'],
     ...(opts.setup ? { setup: opts.setup } : {}),
+    ...(opts.secrets ? { secrets: opts.secrets } : {}),
     check: opts.check ?? ['{tool.node}', '-e', 'process.exit(0)'],
     run: ['{tool.node}', '{pack}/scripts/tool.mjs', '--params', '{params_json}', '--out', '{out}', '--input', '{input.source}'],
   });

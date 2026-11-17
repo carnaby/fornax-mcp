@@ -81,6 +81,8 @@ function setupNeeded(oldDir: string, oldFiles: Map<string, string>, next: Pack, 
   }
   if (old.contract.version !== next.contract.version) return true;
   if (JSON.stringify(old.impl.setup ?? null) !== JSON.stringify(next.impl.setup)) return true;
+  // Spec 08 § 4.1: a pack that asks for another secret needs its setup again to use it.
+  if (JSON.stringify(old.impl.secrets) !== JSON.stringify(next.impl.secrets)) return true;
   return setupFiles(next).some((f) => oldFiles.get(f) !== nextFiles.get(f));
 }
 
