@@ -10,17 +10,21 @@ export const SERVER_INSTRUCTIONS = [
 
 export const TOOL_DESCRIPTIONS = {
   list_job_types:
-    'The job types the worker offers now: description, parameter schema (a JSON Schema subset), inputs with allowed extensions and size limits, max runtime; and whether the worker is online. Call it before submit_job.',
+    "The job types the worker offers now: description, parameter schema (a JSON Schema subset), inputs with allowed extensions and size limits, max runtime, default priority (idle jobs wait until the worker's operator starts them); and whether the worker is online. Call it before submit_job.",
   create_upload:
     'A one-time upload link (valid 1 hour) for one input file. Returns file_id, the link and a ready curl command: run it with the local path in place of <path> (curl.exe in Windows PowerShell; if you cannot run commands, give it to the user), then pass file_id to submit_job.',
   submit_job:
-    "Queue a job of an offered type. params must match the type's schema (defaults are filled in); inputs maps each input name to a file_id from create_upload. Returns job_id, the place in the queue, the worker's state, and note: one sentence why the job waits (e.g. the worker is offline).",
+    "Queue a job of an offered type. params must match the type's schema (defaults are filled in); inputs maps each input name to a file_id from create_upload. Returns job_id, the place in the queue, the worker's state, and note: one sentence why the job waits (e.g. the worker is offline). Use high for work someone is waiting for right now (it runs next, in order of submission); idle for batches the operator starts by hand; leave it out for the type's default. An idle job answers with a warning.",
   get_job:
     'One of your jobs: state (queued, running, succeeded, failed, canceled), progress, error, type_unavailable; when finished, its outputs and log. result_url is a page for the user to open in a browser. While the job waits, note says why and worker whether the worker is online. To follow a job, pass `change` from the previous answer and `wait_seconds` to wait for the next change instead of asking again and again.',
   get_output:
     'One file of a finished job by name (an output, its preview, or the log): an image comes back as a preview image (at most 2000 px per side) plus a download link, text or JSON up to 60 kB as text (a longer log as its last 60 kB), anything else as a download link valid 24 hours.',
   list_jobs: 'Your jobs, newest first; filter by state or group.',
   cancel_job: 'Cancel one of your jobs. A queued job is canceled at once; a running one is stopped by the worker at its next heartbeat (within a few seconds).',
+  set_job_priority:
+    "Change the priority of one of your waiting jobs: high (runs next, after the high jobs already waiting), normal, or idle (waits until the worker's operator starts it, or until you set normal or high again). The job is placed as if it were new; setting the priority it has changes nothing.",
+  requeue_job:
+    'Stop one of your running jobs and put it back in the queue (with idle: true, back as idle). It stops within a few seconds and later starts again from the beginning; the run does not count as an attempt. Leases cannot go back; cancel them instead.',
   queue_status:
     "The whole queue: how many jobs wait and run, whether the worker is online, whether the worker's operator paused the queue (paused: the running job finishes, no other starts), and the type, progress and start time of the running job. worker.waiting explains why nothing runs while jobs wait (e.g. other programs hold the GPU); its message says it in one sentence.",
 } as const;
@@ -34,5 +38,7 @@ export const TOOL_TITLES = {
   get_output: 'Get output',
   list_jobs: 'List jobs',
   cancel_job: 'Cancel job',
+  set_job_priority: 'Set job priority',
+  requeue_job: 'Requeue job',
   queue_status: 'Queue status',
 } as const satisfies Record<keyof typeof TOOL_DESCRIPTIONS, string>;

@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'vitest';
+import { claimJob } from '../src/domain/queue.js';
 import { renderContract, transcribeContract } from './fixtures.js';
 import { announce, issueToken, uploadFile, useTestApp } from './helpers.js';
 
@@ -82,5 +83,36 @@ describe('read and cancel', () => {
     const id = (await submit(alice, { type: 'render', params: { frame_start: 1 }, inputs: { scene } })).json().id;
     announce(t.db, [transcribeContract], t.clock.now);
     expect((await t.app.inject({ method: 'GET', url: `/api/jobs/${id}`, headers: h(alice) })).json()).toMatchObject({ state: 'queued', type_unavailable: true });
+  });
+});
+
+describe('priorities over REST (spec 07 § 4.1)', () => {
+  test('low is taken as normal; a batch type without priority is idle and warned', async () => {
+    const { alice, scene } = await setup();
+    announce(t.db, [renderContract, transcribeContract, { ...renderContract, name: 'batch', default_priority: 'idle' }], t.clock.now);
+    const low = await submit(alice, { type: 'render', params: { frame_start: 1 }, inputs: { scene }, priority: 'low' });
+    expect(low.statusCode).toBe(201);
+    expect(low.json().priority).toBe('normal');
+    expect(low.json().warning).toBeUndefined();
+    const scene2 = await uploadFile(t.app, alice, 'scene.blend', 'B');
+    const batch = await submit(alice, { type: 'batch', params: { frame_start: 1 }, inputs: { scene: scene2 } });
+    expect(batch.json()).toMatchObject({ priority: 'idle', position: null, warning: 'this job waits until the operator starts it; pass priority normal to run it automatically' });
+  });
+
+  test('priority and requeue of your own job; another owner 404; bad body 400; wrong state 409', async () => {
+    const { alice, eve, scene } = await setup();
+    const id = (await submit(alice, { type: 'render', params: { frame_start: 1 }, inputs: { scene } })).json().id;
+    const post = (token: string, what: string, payload: object) => t.app.inject({ method: 'POST', url: `/api/jobs/${id}/${what}`, headers: h(token), payload });
+    const high = await post(alice, 'priority', { priority: 'high' });
+    expect(high.statusCode).toBe(200);
+    expect(high.json()).toMatchObject({ id, priority: 'high', note: expect.any(String) });
+    expect((await post(eve, 'priority', { priority: 'idle' })).statusCode).toBe(404);
+    expect((await post(alice, 'priority', { priority: 'urgent' })).statusCode).toBe(400);
+    expect((await post(alice, 'requeue', {})).statusCode).toBe(409);
+    claimJob(t.db, t.clock.now);
+    expect((await post(alice, 'priority', { priority: 'idle' })).statusCode).toBe(409);
+    const back = await post(alice, 'requeue', {});
+    expect(back.statusCode).toBe(200);
+    expect(back.json()).toMatchObject({ id, state: 'queued', priority: 'high' });
   });
 });

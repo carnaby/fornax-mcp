@@ -1,9 +1,11 @@
+import { priorityBody, priorityInput, requeueBody } from '@fornax/protocol';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { createUploadLink, fileView, getOwnFile, saveFile, uploadLinkView } from '../domain/files.js';
-import { cancelJob, getOwnJob, GROUP, JOB_STATES, jobDetail, jobView, listJobs, PRIORITIES, submitJob } from '../domain/jobs.js';
+import { cancelJob, getOwnJob, GROUP, JOB_STATES, jobDetail, jobView, listJobs, submitJob, submitWarning } from '../domain/jobs.js';
 import { offeredTypes, typeView } from '../domain/job-types.js';
 import { queueStatus } from '../domain/maintenance.js';
+import { requeueJob, setJobPriority } from '../domain/priority.js';
 import { workerOnline } from '../domain/worker-state.js';
 import { requireRole } from './auth.js';
 import type { RouteDeps } from './deps.js';
@@ -46,7 +48,7 @@ export const clientRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps) => 
     type: z.string().min(1).max(40),
     params: z.record(z.string(), z.unknown()).default({}),
     inputs: z.record(z.string(), z.string().min(1).max(40)).default({}),
-    priority: z.enum(PRIORITIES).default('normal'),
+    priority: priorityInput.optional(),
     group: z.string().regex(GROUP).nullable().default(null),
     callback_url: z.string().max(2000).nullable().default(null),
   });
@@ -54,7 +56,8 @@ export const clientRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps) => 
   app.post('/jobs', async (req, reply) => {
     const body = parse(submitSchema, req.body);
     const row = submitJob(deps.db, deps.config, req.identity!.tokenId, body, deps.clock());
-    return reply.code(201).send(jobDetail(deps.db, deps.config, row, deps.clock()));
+    const warning = submitWarning(row);
+    return reply.code(201).send({ ...jobDetail(deps.db, deps.config, row, deps.clock()), ...(warning ? { warning } : {}) });
   });
 
   app.get('/jobs', async (req) => {
@@ -80,4 +83,15 @@ export const clientRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps) => 
   app.post<{ Params: { id: string } }>('/jobs/:id/cancel', async (req) =>
     jobView(deps.db, cancelJob(deps.db, req.identity!.tokenId, req.params.id, deps.clock())),
   );
+
+  // Spec 07 § 4.1: the caller's own jobs only (another owner's job answers 404, like cancel).
+  app.post<{ Params: { id: string } }>('/jobs/:id/priority', async (req) => {
+    const { priority } = parse(priorityBody, req.body);
+    return jobDetail(deps.db, deps.config, setJobPriority(deps.db, req.params.id, priority, deps.clock(), req.identity!.tokenId), deps.clock());
+  });
+
+  app.post<{ Params: { id: string } }>('/jobs/:id/requeue', async (req) => {
+    const { idle } = parse(requeueBody, req.body ?? {});
+    return jobDetail(deps.db, deps.config, requeueJob(deps.db, req.params.id, { idle }, deps.clock(), req.identity!.tokenId), deps.clock());
+  });
 };

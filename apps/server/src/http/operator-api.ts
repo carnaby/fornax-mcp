@@ -1,7 +1,8 @@
-import { moveBody, pauseBody } from '@fornax/protocol';
+import { moveBody, pauseBody, priorityBody, requeueBody } from '@fornax/protocol';
 import type { FastifyPluginAsync } from 'fastify';
 import { cancelAnyJob } from '../domain/jobs.js';
 import { operatorQueue } from '../domain/operator.js';
+import { requeueJob, setJobPriority, startIdle } from '../domain/priority.js';
 import { setQueuePaused } from '../domain/queue-control.js';
 import { moveJob } from '../domain/queue-order.js';
 import type { RouteDeps } from './deps.js';
@@ -31,6 +32,22 @@ export const operatorRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps) =
 
   app.post<{ Params: { id: string } }>('/jobs/:id/cancel', { config: { quiet: true } }, async (req) => {
     cancelAnyJob(deps.db, req.params.id, deps.clock());
+    return view();
+  });
+
+  // Spec 07 § 4.2: priorities, Requeue and Pause, Start all; any owner's jobs.
+  app.post<{ Params: { id: string } }>('/jobs/:id/priority', { config: { quiet: true } }, async (req) => {
+    setJobPriority(deps.db, req.params.id, parse(priorityBody, req.body).priority, deps.clock(), null);
+    return view();
+  });
+
+  app.post<{ Params: { id: string } }>('/jobs/:id/requeue', { config: { quiet: true } }, async (req) => {
+    requeueJob(deps.db, req.params.id, parse(requeueBody, req.body ?? {}), deps.clock(), null);
+    return view();
+  });
+
+  app.post('/idle/start', { config: { quiet: true } }, async () => {
+    startIdle(deps.db, deps.clock());
     return view();
   });
 

@@ -98,7 +98,7 @@ test('MCP: submit_job and get_job carry worker and note; get_job waits for the n
   const client = await mcp.connect('/mcp', bearerHeader(alice));
   const sub = await callJson(client, 'submit_job', { type: 'lease', params: { minutes: 5 } });
   expect(sub).toEqual({
-    job_id: expect.any(String), state: 'queued', position: 1,
+    job_id: expect.any(String), state: 'queued', priority: 'normal', position: 1,
     worker: { online: false, last_seen: null, waiting: null }, note: expect.stringContaining('has not connected yet'),
   });
   const first = await callJson(client, 'get_job', { job_id: sub.job_id });

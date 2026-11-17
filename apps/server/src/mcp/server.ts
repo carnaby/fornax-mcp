@@ -1,13 +1,14 @@
-import { FORNAX_VERSION } from '@fornax/protocol';
+import { FORNAX_VERSION, priorityInput } from '@fornax/protocol';
 import { McpServer } from '@modelcontextprotocol/server';
 import type { FastifyBaseLogger } from 'fastify';
 import { z } from 'zod';
 import { DomainError } from '../domain/errors.js';
 import { createUploadLink, uploadLinkView } from '../domain/files.js';
-import { cancelJob, getOwnJob, GROUP, JOB_STATES, jobDetail, jobView, listJobs, PRIORITIES, submitJob } from '../domain/jobs.js';
+import { cancelJob, getOwnJob, GROUP, JOB_STATES, jobDetail, jobView, listJobs, submitJob, submitWarning } from '../domain/jobs.js';
 import { offeredTypes, typeView } from '../domain/job-types.js';
 import { MAX_MCP_JOB_WAIT_S, waitForJobChange } from '../domain/job-wait.js';
 import { queueStatus } from '../domain/maintenance.js';
+import { requeueJob, setJobPriority } from '../domain/priority.js';
 import type { Identity } from '../domain/tokens.js';
 import { workerOnline } from '../domain/worker-state.js';
 import type { RouteDeps } from '../http/deps.js';
@@ -30,6 +31,8 @@ const text = (t: string): Block => ({ type: 'text', text: t });
 const READS = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
 const CREATES = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } as const;
 const CANCELS = { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } as const;
+const CHANGES = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
+const STOPS = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false } as const;
 
 /**
  * One tool call for an approved client. A pending token gets the fingerprint message and nothing else. Domain errors
@@ -87,7 +90,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
         type: z.string().min(1).max(40).describe('A type name from list_job_types.'),
         params: z.record(z.string(), z.unknown()).default({}).describe("Parameters as the type's schema describes them."),
         inputs: z.record(z.string(), z.string().min(1).max(40)).default({}).describe('Input name to file_id from create_upload, after the upload finished.'),
-        priority: z.enum(PRIORITIES).default('normal'),
+        priority: priorityInput.optional().describe("high, normal or idle (low is taken as normal); without it the type's default_priority."),
         group: z.string().regex(GROUP).optional().describe('A label for related jobs (e.g. one per animation), to find them with list_jobs.'),
         callback_url: z.string().max(2000).optional().describe('Gets a signed POST when the job finishes; only URLs under a prefix the server allows.'),
       }),
@@ -96,11 +99,12 @@ export function buildMcpServer(ctx: McpContext): McpServer {
       runJson(ctx, (me) => {
         const row = submitJob(
           db, deps.config, me.tokenId,
-          { type: a.type, params: a.params, inputs: a.inputs, priority: a.priority, group: a.group ?? null, callback_url: a.callback_url ?? null },
+          { type: a.type, params: a.params, inputs: a.inputs, ...(a.priority ? { priority: a.priority } : {}), group: a.group ?? null, callback_url: a.callback_url ?? null },
           deps.clock(),
         );
         const d = jobDetail(db, deps.config, row, deps.clock());
-        return { job_id: row.id, state: row.state, position: d.position, worker: d.worker, note: d.note };
+        const warning = submitWarning(row);
+        return { job_id: row.id, state: row.state, priority: d.priority, position: d.position, worker: d.worker, note: d.note, ...(warning ? { warning } : {}) };
       }),
   );
 
@@ -163,6 +167,31 @@ export function buildMcpServer(ctx: McpContext): McpServer {
       const row = cancelJob(db, me.tokenId, job_id, deps.clock());
       return { job_id: row.id, state: row.state };
     }),
+  );
+
+  server.registerTool(
+    'set_job_priority',
+    { title: T.set_job_priority, description: D.set_job_priority, annotations: CHANGES, inputSchema: z.object({ job_id: jobId, priority: priorityInput }) },
+    ({ job_id, priority }) =>
+      runJson(ctx, (me) => {
+        const d = jobDetail(db, deps.config, setJobPriority(db, job_id, priority, deps.clock(), me.tokenId), deps.clock());
+        return { job_id, state: d.state, priority: d.priority, position: d.position, note: d.note };
+      }),
+  );
+
+  server.registerTool(
+    'requeue_job',
+    {
+      title: T.requeue_job,
+      description: D.requeue_job,
+      annotations: STOPS,
+      inputSchema: z.object({ job_id: jobId, idle: z.boolean().default(false).describe('Back as idle (paused) instead of waiting for its turn.') }),
+    },
+    ({ job_id, idle }) =>
+      runJson(ctx, (me) => {
+        const d = jobDetail(db, deps.config, requeueJob(db, job_id, { idle }, deps.clock(), me.tokenId), deps.clock());
+        return { job_id, state: d.state, priority: d.priority, position: d.position, note: d.note };
+      }),
   );
 
   server.registerTool('queue_status', { title: T.queue_status, description: D.queue_status, annotations: READS, inputSchema: z.object({}) }, () =>

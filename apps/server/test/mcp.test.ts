@@ -1,5 +1,6 @@
 import { fingerprint, generateToken } from '@fornax/protocol';
 import { describe, expect, test } from 'vitest';
+import { claimJob } from '../src/domain/queue.js';
 import { createInvite, revokeToken } from '../src/domain/tokens.js';
 import { renderContract } from './fixtures.js';
 import { announce, issueToken, uploadFile, useTestApp } from './helpers.js';
@@ -16,6 +17,8 @@ const ARGS: Record<string, Record<string, unknown>> = {
   get_job: { job_id: 'x' },
   get_output: { job_id: 'x', name: 'y' },
   cancel_job: { job_id: 'x' },
+  set_job_priority: { job_id: 'x', priority: 'idle' },
+  requeue_job: { job_id: 'x' },
 };
 
 const ping = async (path: string, headers: Record<string, string> = {}) =>
@@ -29,7 +32,7 @@ describe('the MCP endpoint', () => {
   test('offers exactly its tools and the instructions', async () => {
     const client = await mcp.connect('/mcp', bearerHeader(issueToken(t.db, 'alice')));
     const { tools } = await client.listTools();
-    expect(tools.map((x) => x.name).sort()).toEqual(['cancel_job', 'create_upload', 'get_job', 'get_output', 'list_job_types', 'list_jobs', 'queue_status', 'submit_job']);
+    expect(tools.map((x) => x.name).sort()).toEqual(['cancel_job', 'create_upload', 'get_job', 'get_output', 'list_job_types', 'list_jobs', 'queue_status', 'requeue_job', 'set_job_priority', 'submit_job']);
     for (const tool of tools) expect(tool.description, tool.name).toBeTruthy();
     expect(tools.find((x) => x.name === 'queue_status')!.description).toContain('worker.waiting');
     const ins = client.getInstructions() ?? '';
@@ -113,6 +116,9 @@ describe('the MCP endpoint', () => {
     expect(byName.cancel_job!.description).toContain('within a few seconds');
     expect(byName.create_upload!.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false });
     expect(byName.submit_job!.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false });
+    expect(byName.set_job_priority!.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false });
+    expect(byName.requeue_job!.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false });
+    expect(byName.submit_job!.description).toContain('Use high for work someone is waiting for right now');
   });
 
   test('GET and DELETE are 405 on both paths', async () => {
@@ -140,7 +146,7 @@ describe('the job tools', () => {
 
     const submitted = await callJson(client, 'submit_job', { type: 'render', params: { frame_start: 1 }, inputs: { scene: link.file_id }, group: 'shot-1' });
     expect(submitted).toEqual({
-      job_id: expect.any(String), state: 'queued', position: 1,
+      job_id: expect.any(String), state: 'queued', priority: 'normal', position: 1,
       worker: { online: false, last_seen: null, waiting: null }, note: expect.stringMatching(/^waiting: the worker has not connected yet;/),
     });
     const job = await callJson(client, 'get_job', { job_id: submitted.job_id });
@@ -186,5 +192,41 @@ describe('the job tools', () => {
     expect(foreign.current).toEqual({ type: 'render', progress: 0.5, progress_message: null, started_at: expect.any(String) });
     expect((await t.app.inject({ method: 'GET', url: '/api/queue', headers: bearer(eve) })).json().current.progress_message).toBeNull();
     expect((await t.app.inject({ method: 'GET', url: '/api/queue', headers: bearer(alice) })).json().current.progress_message).toBe('half');
+  });
+});
+
+describe('priorities over MCP (spec 07 § 4.1)', () => {
+  const batchContract = { ...renderContract, name: 'batch', default_priority: 'idle' };
+
+  test('submit_job: the type decides without a priority; idle answers with a warning; low is normal', async () => {
+    announce(t.db, [renderContract, batchContract], t.clock.now);
+    const alice = issueToken(t.db, 'alice');
+    const client = await mcp.connect('/mcp', bearerHeader(alice));
+    const s1 = await uploadFile(t.app, alice, 'scene.blend', 'B');
+    const idle = await callJson(client, 'submit_job', { type: 'batch', params: { frame_start: 1 }, inputs: { scene: s1 } });
+    expect(idle).toMatchObject({ priority: 'idle', position: null, warning: 'this job waits until the operator starts it; pass priority normal to run it automatically' });
+    const s2 = await uploadFile(t.app, alice, 'scene.blend', 'B');
+    const low = await callJson(client, 'submit_job', { type: 'render', params: { frame_start: 1 }, inputs: { scene: s2 }, priority: 'low' });
+    expect(low.priority).toBe('normal');
+    expect(low.warning).toBeUndefined();
+    const { types } = await callJson(client, 'list_job_types');
+    expect(types.find((x: { name: string }) => x.name === 'batch').default_priority).toBe('idle');
+    expect(types.find((x: { name: string }) => x.name === 'render').default_priority).toBe('normal');
+  });
+
+  test("set_job_priority and requeue_job act on the caller's own jobs", async () => {
+    announce(t.db, [renderContract], t.clock.now);
+    const alice = issueToken(t.db, 'alice');
+    const bob = issueToken(t.db, 'bob');
+    const mine = await mcp.connect('/mcp', bearerHeader(alice));
+    const theirs = await mcp.connect('/mcp', bearerHeader(bob));
+    const scene = await uploadFile(t.app, alice, 'scene.blend', 'B');
+    const { job_id: id } = await callJson(mine, 'submit_job', { type: 'render', params: { frame_start: 1 }, inputs: { scene } });
+    expect((await callTool(theirs, 'set_job_priority', { job_id: id, priority: 'idle' })).text).toBe(`404: job ${id} not found`);
+    expect(await callJson(mine, 'set_job_priority', { job_id: id, priority: 'idle' })).toMatchObject({ job_id: id, priority: 'idle', position: null });
+    expect((await callTool(mine, 'requeue_job', { job_id: id })).text).toBe(`409: job ${id} is queued; only a running job can go back to the queue`);
+    await callJson(mine, 'set_job_priority', { job_id: id, priority: 'normal' });
+    expect(claimJob(t.db, t.clock.now)!.id).toBe(id);
+    expect(await callJson(mine, 'requeue_job', { job_id: id, idle: true })).toMatchObject({ job_id: id, state: 'queued', priority: 'idle' });
   });
 });

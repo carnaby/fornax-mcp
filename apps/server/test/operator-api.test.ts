@@ -36,6 +36,9 @@ describe('operator API (spec 06 2.3)', () => {
     await t.app.inject({ method: 'GET', url: '/api/worker/jobs', headers: auth(worker) });
     await t.app.inject({ method: 'POST', url: `/api/worker/jobs/${a}/move`, headers: auth(worker), payload: { to: 'top' } });
     await t.app.inject({ method: 'PUT', url: '/api/worker/pause', headers: auth(worker), payload: { paused: true } });
+    await t.app.inject({ method: 'POST', url: `/api/worker/jobs/${a}/priority`, headers: auth(worker), payload: { priority: 'idle' } });
+    await t.app.inject({ method: 'POST', url: `/api/worker/jobs/${a}/requeue`, headers: auth(worker), payload: {} });
+    await t.app.inject({ method: 'POST', url: '/api/worker/idle/start', headers: auth(worker) });
     await t.app.inject({ method: 'POST', url: `/api/worker/jobs/${a}/cancel`, headers: auth(worker) });
     expect(workerOnline(t.db, t.clock.now)).toEqual({ online: false, last_seen: null, waiting: null });
   });
@@ -147,5 +150,22 @@ describe('worker state wakes long-polls only when the view changes (spec 06 2.3)
     expect(await wakes(() => setWorkerWaiting(t.db, { ...busy }))).toBe(false);
     expect(await wakes(() => setWorkerWaiting(t.db, { ...busy, used_mib: 6000 }))).toBe(true);
     expect(await wakes(() => setWorkerWaiting(t.db, null))).toBe(true);
+  });
+});
+
+describe('operator priorities (spec 07 § 4.2)', () => {
+  test("priority, requeue and Start all for any owner's job answer the view", async () => {
+    const { worker, lease } = setup();
+    const a = lease();
+    const b = lease();
+    const idle = await t.app.inject({ method: 'POST', url: `/api/worker/jobs/${b}/priority`, headers: auth(worker), payload: { priority: 'idle' } });
+    expect(idle.statusCode).toBe(200);
+    expect(idle.json().queued.find((j: { id: string }) => j.id === b)).toMatchObject({ priority: 'idle', idle_since: expect.any(String) });
+    const started = await t.app.inject({ method: 'POST', url: '/api/worker/idle/start', headers: auth(worker) });
+    expect(started.statusCode).toBe(200);
+    expect(started.json().queued.find((j: { id: string }) => j.id === b)).toMatchObject({ priority: 'normal', idle_since: null });
+    expect((await t.app.inject({ method: 'POST', url: `/api/worker/jobs/${a}/requeue`, headers: auth(worker), payload: {} })).statusCode).toBe(409);
+    expect((await t.app.inject({ method: 'POST', url: `/api/worker/jobs/${a}/requeue`, headers: auth(worker) })).statusCode).toBe(409);
+    expect((await t.app.inject({ method: 'POST', url: `/api/worker/jobs/${a}/priority`, headers: auth(worker), payload: { priority: 'soon' } })).statusCode).toBe(400);
   });
 });
