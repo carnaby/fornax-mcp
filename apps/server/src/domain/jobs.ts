@@ -13,6 +13,7 @@ import { queuePaused } from './queue-control.js';
 import { IDLE, placeJob } from './queue-order.js';
 import { jobChanges, jobSignal } from './signal.js';
 import { timeText } from './time-text.js';
+import { runningText } from './who.js';
 import { callbackAllowed } from './webhooks.js';
 import { workerOnline, type WorkerView } from './worker-state.js';
 
@@ -202,8 +203,10 @@ export function jobNote(db: Db, config: Config, row: JobRow, worker: WorkerView,
   if (queuePaused(db)) return `waiting: the worker's operator paused the queue; the job waits until they resume it, ${AGAIN}`;
   if (worker.waiting) return worker.waiting.message;
   const retry = row.runAfter.getTime() > now.getTime() ? `; the next attempt starts at ${at(row.runAfter)} at the earliest` : '';
-  const running = db.select({ type: jobs.type, startedAt: jobs.startedAt }).from(jobs).where(eq(jobs.state, 'running')).get();
-  if (running) return `waiting, position ${position}; running ${running.type} since ${at(running.startedAt ?? now)}${retry}`;
+  const running = db
+    .select({ type: jobs.type, params: jobs.params, agent: jobs.agent, ownerTokenId: jobs.ownerTokenId, startedAt: jobs.startedAt })
+    .from(jobs).where(eq(jobs.state, 'running')).get();
+  if (running) return `waiting, position ${position}; ${runningText(db, running, now, config.timeZone)}${retry}`;
   if (position === 1) return `waiting, position 1; the worker takes it next${retry}`;
   return `waiting, position ${position}; the worker takes the jobs ahead first${retry}`;
 }

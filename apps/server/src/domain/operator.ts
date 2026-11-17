@@ -6,6 +6,7 @@ import { files, jobs, tokens, workerState } from '../db/schema.js';
 import { isOffered } from './job-types.js';
 import type { JobRow } from './jobs.js';
 import { queuePaused, queuePausedAt } from './queue-control.js';
+import { labelOf } from './who.js';
 import { workerOnline } from './worker-state.js';
 
 /** Spec 06 2.3: how many finished jobs the operator sees, newest first. */
@@ -42,7 +43,7 @@ export function operatorQueue(db: Db, now: Date, resultUrlOf: (job: JobRow) => s
     owner: owners.get(j.ownerTokenId) ?? null,
     agent: j.agent,
     state: j.state,
-    label: typeof j.params.label === 'string' ? j.params.label : null,
+    label: labelOf(j.params),
     group: j.group,
     priority: PRIORITIES[j.priority] ?? 'normal',
     idle_since: iso(j.idleSince),

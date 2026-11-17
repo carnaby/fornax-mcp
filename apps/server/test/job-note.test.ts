@@ -1,4 +1,6 @@
+import { eq } from 'drizzle-orm';
 import { expect, test } from 'vitest';
+import { tokens } from '../src/db/schema.js';
 import { jobChanges } from '../src/domain/signal.js';
 import { leaseContract } from './fixtures.js';
 import { announce, issueToken, until, useTestApp } from './helpers.js';
@@ -8,21 +10,24 @@ const t = useTestApp();
 const mcp = useMcp(() => t.app);
 const as = (token: string) => ({ authorization: `Bearer ${token}` });
 
+const labelled = { ...leaseContract, params: { ...leaseContract.params, properties: { ...leaseContract.params.properties, label: { type: 'string', maxLength: 80 } } } };
+
 function setup() {
-  announce(t.db, [leaseContract], t.clock.now);
+  announce(t.db, [labelled], t.clock.now);
   const worker = issueToken(t.db, 'pc', 'worker');
   const alice = issueToken(t.db, 'alice');
-  const submit = async () => {
+  const bob = issueToken(t.db, 'bob');
+  const submit = async (extra: Record<string, unknown> = {}, token = alice) => {
     // Distinct created_at keep the queue order fixed.
     t.clock.advance(1);
-    const r = await t.app.inject({ method: 'POST', url: '/api/jobs', headers: as(alice), payload: { type: 'lease', params: { minutes: 5 } } });
+    const r = await t.app.inject({ method: 'POST', url: '/api/jobs', headers: as(token), payload: { type: 'lease', params: { minutes: 5 }, ...extra } });
     expect(r.statusCode).toBe(201);
     return r.json();
   };
   const get = async (id: string) => (await t.app.inject({ method: 'GET', url: `/api/jobs/${id}`, headers: as(alice) })).json();
   const w = (method: 'GET' | 'POST' | 'PUT', url: string, payload?: object) =>
     t.app.inject({ method, url: `/api/worker${url}`, headers: as(worker), ...(payload ? { payload } : {}) });
-  return { alice, submit, get, w };
+  return { alice, bob, submit, get, w };
 }
 
 test('a worker that never connected', async () => {
@@ -72,7 +77,7 @@ test('the queue: what runs since when, or who goes next; nothing once the job ru
   expect(second.note).toBe('waiting, position 2; the worker takes the jobs ahead first');
   const claimed = (await w('POST', '/jobs/claim', { wait: 0 })).json();
   expect(claimed.id).toBe(first.id);
-  expect((await get(second.id)).note).toBe('waiting, position 1; running lease since 10:00 UTC');
+  expect((await get(second.id)).note).toBe('waiting, position 1; running lease by token alice since 10:00 UTC');
   expect(await get(first.id)).toMatchObject({ state: 'running', note: null, worker: { online: true, waiting: null } });
 });
 
@@ -120,4 +125,45 @@ test('the instructions and get_job tell agents to wait instead of asking again a
   expect(tools.find((x) => x.name === 'get_job')!.description).toContain(
     'pass `change` from the previous answer and `wait_seconds` to wait for the next change instead of asking again and again',
   );
+});
+
+test('the running job by its label and agent (spec 09 § 3.1)', async () => {
+  const { bob, submit, get, w } = setup();
+  await w('GET', '/ping');
+  await submit({ params: { minutes: 5, label: 'mc workbench station dock-close --at 9.5' }, agent: 'agent-station' }, bob);
+  const waiting = await submit();
+  await w('POST', '/jobs/claim', { wait: 0 });
+  expect((await get(waiting.id)).note).toBe('waiting, position 1; running lease "mc workbench station dock-close --at 9.5" by agent-station since 10:00 UTC');
+});
+
+test('without a label and an agent: the token', async () => {
+  const { bob, submit, get, w } = setup();
+  await w('GET', '/ping');
+  await submit({}, bob);
+  const waiting = await submit();
+  await w('POST', '/jobs/claim', { wait: 0 });
+  expect((await get(waiting.id)).note).toBe('waiting, position 1; running lease by token bob since 10:00 UTC');
+});
+
+test('a deleted token leaves the by part out', async () => {
+  const { bob, submit, get, w } = setup();
+  await w('GET', '/ping');
+  await submit({}, bob);
+  const waiting = await submit();
+  await w('POST', '/jobs/claim', { wait: 0 });
+  t.db.delete(tokens).where(eq(tokens.name, 'bob')).run();
+  expect((await get(waiting.id)).note).toBe('waiting, position 1; running lease since 10:00 UTC');
+});
+
+test('the longest lease sentence fits the 300 characters fornax lease shows', async () => {
+  const { bob, submit, get, w } = setup();
+  await submit({ params: { minutes: 5, label: 'l'.repeat(80) }, agent: 'a'.repeat(80) }, bob);
+  const waiting = await submit();
+  await w('POST', '/jobs/claim', { wait: 0 });
+  // Another day: the time gets its date.
+  t.clock.advance(86_400_000);
+  await w('GET', '/ping');
+  const note = (await get(waiting.id)).note as string;
+  expect(note).toContain('since 13 Nov 10:00 UTC');
+  expect(note.length).toBeLessThanOrEqual(300);
 });
