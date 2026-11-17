@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, test } from 'vitest';
 import type { DomainError } from '../src/domain/errors.js';
-import { getOwnJob, type JobRow, jobDetail, jobView, submitJob } from '../src/domain/jobs.js';
+import { cancelJob, getOwnJob, type JobRow, jobDetail, jobView, submitJob } from '../src/domain/jobs.js';
 import { queueStatus } from '../src/domain/maintenance.js';
-import { setJobPriority, startIdle } from '../src/domain/priority.js';
-import { claimJob } from '../src/domain/queue.js';
+import { requeueJob, setJobPriority, startIdle } from '../src/domain/priority.js';
+import { claimJob, failJob, heartbeatJob } from '../src/domain/queue.js';
 import { moveJob, queueOrder } from '../src/domain/queue-order.js';
-import { renderContract, transcribeContract } from './fixtures.js';
+import { leaseContract, renderContract, transcribeContract } from './fixtures.js';
 import { announce, issueToken, tokenIdOf, uploadFile, useTestApp } from './helpers.js';
 
 const t = useTestApp();
@@ -126,5 +126,79 @@ describe('Start all (spec 07 § 2.3)', () => {
     expect(queueOrder(t.db)).toEqual(ids(h1, n1, i2, i1));
     expect([fresh(i1), fresh(i2)].map((r) => jobView(t.db, r).priority)).toEqual(['normal', 'normal']);
     expect(startIdle(t.db, t.clock.now)).toBe(0);
+  });
+});
+
+describe('Requeue and Pause (spec 07 § 3)', () => {
+  const beat = (j: JobRow, lease: string) => heartbeatJob(t.db, j.id, lease, { progress: null, message: null }, t.clock.now);
+
+  test('Requeue: back right after the higher jobs, attempt given back, old lease told to stop', async () => {
+    const r = await job('normal');
+    const c = claimJob(t.db, t.clock.now)!;
+    const h1 = await job('high');
+    const n1 = await job('normal');
+    requeueJob(t.db, r.id, { idle: false }, t.clock.now, null);
+    expect(queueOrder(t.db)).toEqual(ids(h1, r, n1));
+    expect(fresh(r)).toMatchObject({ state: 'queued', attempts: 0, leaseId: null, stoppedLeaseId: c.leaseId, startedAt: null, progress: null, priority: 1 });
+    expect(beat(r, c.leaseId!)).toEqual({ leaseUntil: null, cancel: true, requeued: true });
+    expect(fresh(r).state).toBe('queued');
+  });
+
+  test('Pause: back as idle at the top of Idle', async () => {
+    const r = await job('normal');
+    claimJob(t.db, t.clock.now);
+    const i1 = await job('idle');
+    const n1 = await job('normal');
+    requeueJob(t.db, r.id, { idle: true }, t.clock.now, null);
+    expect(queueOrder(t.db)).toEqual(ids(n1, r, i1));
+    expect(fresh(r)).toMatchObject({ priority: 0, idleSince: t.clock.now });
+    expect(claimJob(t.db, t.clock.now)!.id).toBe(n1.id);
+  });
+
+  test('a late heartbeat with the stopped lease does not take the job back (Review Focus 4)', async () => {
+    const r = await job('normal');
+    const c = claimJob(t.db, t.clock.now)!;
+    requeueJob(t.db, r.id, { idle: false }, t.clock.now, null);
+    const again = claimJob(t.db, t.clock.now)!;
+    expect(again.id).toBe(r.id);
+    expect(again.stoppedLeaseId).toBeNull();
+    expect(failure(() => beat(r, c.leaseId!)).status).toBe(409);
+    expect(fresh(r)).toMatchObject({ state: 'running', leaseId: again.leaseId });
+  });
+
+  test('complete or fail with the stopped lease is 409 and changes nothing (Review Focus 1)', async () => {
+    const r = await job('normal');
+    const c = claimJob(t.db, t.clock.now)!;
+    requeueJob(t.db, r.id, { idle: true }, t.clock.now, null);
+    expect(failure(() => failJob(t.db, r.id, c.leaseId!, { error: 'boom', permanent: false }, t.clock.now)).status).toBe(409);
+    expect(fresh(r)).toMatchObject({ state: 'queued', priority: 0, error: null });
+  });
+
+  test('cancel after requeue cancels the waiting job; the old lease still learns to stop', async () => {
+    const r = await job('normal');
+    const c = claimJob(t.db, t.clock.now)!;
+    requeueJob(t.db, r.id, { idle: false }, t.clock.now, null);
+    cancelJob(t.db, r.ownerTokenId, r.id, t.clock.now);
+    expect(fresh(r).state).toBe('canceled');
+    expect(beat(r, c.leaseId!)).toMatchObject({ cancel: true });
+  });
+
+  test('only a running job: queued 409, another owner 404, the owner itself may', async () => {
+    const q = await job('normal');
+    const err = failure(() => requeueJob(t.db, q.id, { idle: false }, t.clock.now, null));
+    expect([err.status, err.message]).toEqual([409, `job ${q.id} is queued; only a running job can go back to the queue`]);
+    claimJob(t.db, t.clock.now);
+    expect(failure(() => requeueJob(t.db, q.id, { idle: false }, t.clock.now, 'someone-else')).status).toBe(404);
+    requeueJob(t.db, q.id, { idle: false }, t.clock.now, q.ownerTokenId);
+    expect(fresh(q).state).toBe('queued');
+  });
+
+  test('a lease cannot be requeued (spec 07 § 3.1)', () => {
+    announce(t.db, [renderContract, transcribeContract, batchContract, leaseContract], t.clock.now);
+    issueToken(t.db, 'carol');
+    const leaseJob = submitJob(t.db, t.config, tokenIdOf(t.db, 'carol'), { type: 'lease', params: { minutes: 5 } }, t.clock.now);
+    expect(claimJob(t.db, t.clock.now)!.id).toBe(leaseJob.id);
+    const err = failure(() => requeueJob(t.db, leaseJob.id, { idle: false }, t.clock.now, null));
+    expect([err.status, err.message]).toEqual([409, 'a lease cannot go back to the queue; revoke it instead']);
   });
 });

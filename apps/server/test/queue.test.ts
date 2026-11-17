@@ -60,7 +60,7 @@ describe('heartbeat', () => {
     await job();
     const c = claimJob(t.db, t.clock.now)!;
     const r = heartbeatJob(t.db, c.id, c.leaseId!, { progress: 0.5, message: 'frame 1/2' }, at(30_000));
-    expect(r).toEqual({ leaseUntil: at(30_000 + LEASE_MS), cancel: false });
+    expect(r).toEqual({ leaseUntil: at(30_000 + LEASE_MS), cancel: false, requeued: false });
     expect(getOwnJob(t.db, c.ownerTokenId, c.id)).toMatchObject({ progress: 0.5, progressMessage: 'frame 1/2' });
   });
 
@@ -68,7 +68,7 @@ describe('heartbeat', () => {
     await job();
     const c = claimJob(t.db, t.clock.now)!;
     cancelJob(t.db, c.ownerTokenId, c.id, t.clock.now);
-    expect(heartbeatJob(t.db, c.id, c.leaseId!, { progress: null, message: null }, t.clock.now)).toEqual({ leaseUntil: null, cancel: true });
+    expect(heartbeatJob(t.db, c.id, c.leaseId!, { progress: null, message: null }, t.clock.now)).toEqual({ leaseUntil: null, cancel: true, requeued: false });
   });
 
   test('a wrong lease is 409', async () => {

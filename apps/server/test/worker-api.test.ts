@@ -1,3 +1,4 @@
+import { requeueJob } from '../src/domain/priority.js';
 import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { FORNAX_VERSION } from '@fornax/protocol';
@@ -36,6 +37,15 @@ describe('worker API', () => {
     expect(hb.json()).toMatchObject({ cancel: false });
     const seen = (await t.app.inject({ method: 'GET', url: `/api/jobs/${jobId}`, headers: { authorization: `Bearer ${alice}` } })).json();
     expect(seen).toMatchObject({ state: 'running', progress: 0.25, progress_message: 'frame 1/4' });
+  });
+
+  test('the heartbeat of a requeued run is told to stop (spec 07 § 3.1)', async () => {
+    const { worker, jobId } = await setup();
+    const job = (await t.app.inject({ method: 'POST', url: '/api/worker/jobs/claim', headers: w(worker), payload: { wait: 0 } })).json();
+    requeueJob(t.db, jobId, { idle: false }, t.clock.now, null);
+    const hb = await t.app.inject({ method: 'POST', url: `/api/worker/jobs/${jobId}/heartbeat`, headers: w(worker), payload: { lease: job.lease } });
+    expect(hb.statusCode).toBe(200);
+    expect(hb.json()).toEqual({ lease_until: null, cancel: true, requeued: true });
   });
 
   test('an input whose disk file is gone is 404', async () => {

@@ -50,7 +50,7 @@ describe('every final state has a manifest of the same shape', () => {
     await t.app.inject({ method: 'POST', url: `/api/jobs/${r.id}/cancel`, headers: bearer(r.alice) });
     expect(row(r.id)).toMatchObject({ state: 'canceled', manifest: EMPTY, leaseId: r.lease, leaseExpiresAt: null });
     const hb = await t.app.inject({ method: 'POST', url: `/api/worker/jobs/${r.id}/heartbeat`, headers: bearer(r.worker), payload: { lease: r.lease } });
-    expect(hb.json()).toEqual({ lease_until: null, cancel: true });
+    expect(hb.json()).toEqual({ lease_until: null, cancel: true, requeued: false });
   });
 
   test('a lease that runs out on the last attempt', async () => {

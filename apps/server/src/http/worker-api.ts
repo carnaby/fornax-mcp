@@ -136,7 +136,7 @@ export const workerRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps) => 
   app.post<{ Params: { id: string } }>('/jobs/:id/heartbeat', async (req) => {
     const b = parse(heartbeatBody, req.body);
     const r = heartbeatJob(deps.db, req.params.id, b.lease, { progress: b.progress, message: b.message }, deps.clock());
-    return { lease_until: r.leaseUntil?.toISOString() ?? null, cancel: r.cancel };
+    return { lease_until: r.leaseUntil?.toISOString() ?? null, cancel: r.cancel, requeued: r.requeued };
   });
 
   app.post<{ Params: { id: string } }>('/jobs/:id/fail', async (req) => {
