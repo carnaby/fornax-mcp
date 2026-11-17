@@ -69,6 +69,9 @@ pub struct Job {
     #[serde(rename = "type")]
     pub kind: String,
     pub owner: Option<String>,
+    /// Spec 09 § 2: the submitting agent's name; None without one and from a server older than 0.11.0.
+    #[serde(default)]
+    pub agent: Option<String>,
     pub state: String,
     pub label: Option<String>,
     pub group: Option<String>,
@@ -233,6 +236,13 @@ mod tests {
     }
 
     #[test]
+    fn a_job_carries_its_agent() {
+        let line = r#"{"ok":true,"server_time":"2026-11-15T14:00:00.000Z","change":"c","paused":false,"worker":{"online":true,"last_seen":null,"version":null,"waiting":null},"running":null,"queued":[{"id":"Q1","type":"lease","owner":"bob","agent":"agent-a","state":"queued","label":null,"group":null,"priority":"normal","inputs":{},"attempts":0,"type_unavailable":false,"run_after":null,"created_at":"2026-11-15T13:56:00.000Z","started_at":null,"finished_at":null,"progress":null,"progress_message":null,"error":null,"result_url":"https://fornax.example.com/r/x"}],"finished":[]}"#;
+        let Some(WatchLine::Queue(q)) = parse_watch_line(line) else { panic!("not a queue line") };
+        assert_eq!(q.queued[0].agent.as_deref(), Some("agent-a"));
+    }
+
+    #[test]
     fn reads_a_queue_line_and_an_error_line_of_fornax_queue_watch() {
         let line = r#"{"ok":true,"server_time":"2026-11-15T14:00:00.000Z","change":"0123456789abcdef","paused":false,"worker":{"online":true,"last_seen":"2026-11-15T13:59:58.000Z","version":"0.5.0","waiting":{"reason":"gpu_busy","message":"waiting: 9000 MiB of 16000 MiB of the card in use by other programs, limit 768 MiB","used_mib":9000,"total_mib":16000,"limit_mib":768}},"running":null,"queued":[{"id":"Q1","type":"lease","owner":"bob","state":"queued","label":"chrome","group":null,"priority":"normal","inputs":{"video":null},"attempts":0,"type_unavailable":false,"run_after":null,"created_at":"2026-11-15T13:56:00.000Z","started_at":null,"finished_at":null,"progress":null,"progress_message":null,"error":null,"result_url":"https://fornax.example.com/r/x"}],"finished":[]}"#;
         let Some(WatchLine::Queue(q)) = parse_watch_line(line) else { panic!("not a queue line") };
@@ -241,6 +251,8 @@ mod tests {
         assert_eq!(q.worker.waiting.as_ref().map(|w| w.reason.as_str()), Some("gpu_busy"));
         let j = &q.queued[0];
         assert_eq!((j.kind.as_str(), j.owner.as_deref(), j.label.as_deref()), ("lease", Some("bob"), Some("chrome")));
+        // Spec 09: a queue without agent (a server older than 0.11.0) still parses.
+        assert_eq!(j.agent, None);
         assert_eq!(j.inputs.get("video"), Some(&None));
         assert_eq!(
             parse_watch_line(r#"{"ok":false,"error":"network","message":"cannot reach the server: ECONNREFUSED"}"#),

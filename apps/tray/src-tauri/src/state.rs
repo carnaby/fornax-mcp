@@ -230,6 +230,7 @@ pub struct JobView {
     pub id: String,
     #[serde(rename = "type")]
     pub kind: String,
+    /// Who submitted the job (spec 09 § 2.4): "agent (token)" or the token's name.
     pub owner: String,
     pub what: String,
     pub state: String,
@@ -494,8 +495,13 @@ fn clip_utf16(text: &str, max: usize) -> String {
     out
 }
 
-fn owner_of(j: &Job) -> String {
-    j.owner.clone().unwrap_or_else(|| "?".to_string())
+/// Spec 09 § 2.4: who submitted a job: "agent (token)", else the token's name, else "?".
+fn who_of(j: &Job) -> String {
+    let owner = j.owner.clone().unwrap_or_else(|| "?".to_string());
+    match j.agent.as_deref() {
+        Some(agent) if !agent.is_empty() => format!("{agent} ({owner})"),
+        _ => owner,
+    }
 }
 
 /// What a job works on: its label, else its first input's file name, else its group.
@@ -1212,7 +1218,7 @@ impl Model {
         for job in q.finished.iter().filter(|j| j.state == "failed") {
             if self.seen_failed.insert(job.id.clone()) && !first {
                 let error = clip_chars(job.error.as_deref().unwrap_or("no reason given"), ERROR_CHARS);
-                effects.push(Effect::Notify { title: "Fornax job failed".into(), body: format!("{} of {} failed: {error}", job.kind, owner_of(job)) });
+                effects.push(Effect::Notify { title: "Fornax job failed".into(), body: format!("{} of {} failed: {error}", job.kind, who_of(job)) });
             }
         }
         // Only jobs still listed can come again; the others are forgotten.
@@ -1360,7 +1366,7 @@ impl Model {
         JobView {
             id: j.id.clone(),
             kind: j.kind.clone(),
-            owner: owner_of(j),
+            owner: who_of(j),
             what: what_of(j),
             state: j.state.clone(),
             priority: j.priority.clone(),
@@ -1515,7 +1521,7 @@ impl Model {
     /// Spec 06e § 2.3.
     fn gpu_holder(&self) -> GpuHolderView {
         let (kind, owner) = match self.running_job() {
-            Some(j) if j.kind == LEASE => ("lease", Some(owner_of(j))),
+            Some(j) if j.kind == LEASE => ("lease", Some(who_of(j))),
             Some(_) => ("fornax", None),
             None if self.card_wait().is_some_and(|w| w.reason == "gpu_busy") => ("outside", None),
             None => ("idle", None),
@@ -1555,8 +1561,8 @@ impl Model {
         let q = self.queue.as_ref();
         let headline = self.headline();
         let tooltip = match q.and_then(|q| q.running.as_ref()) {
-            Some(j) if j.kind == LEASE => format!("Fornax: GPU leased by {}", owner_of(j)),
-            Some(j) => format!("Fornax: {headline} · {} of {}", j.kind, owner_of(j)),
+            Some(j) if j.kind == LEASE => format!("Fornax: GPU leased by {}", who_of(j)),
+            Some(j) => format!("Fornax: {headline} · {} of {}", j.kind, who_of(j)),
             None => format!("Fornax: {headline}"),
         };
         let paused = q.is_some_and(|q| q.paused);
@@ -1632,8 +1638,18 @@ mod tests {
             id: id.into(), kind: "echo".into(), owner: Some("alice".into()), state: state.into(), label: None, group: None,
             priority: "normal".into(), inputs: BTreeMap::new(), attempts: 0, type_unavailable: false, run_after: None,
             created_at: "2026-11-15T13:56:00.000Z".into(), started_at: None, finished_at: None, progress: None,
-            progress_message: None, error: None, result_url: format!("https://fornax.example.com/r/{id}"), idle_since: None,
+            progress_message: None, error: None, result_url: format!("https://fornax.example.com/r/{id}"), idle_since: None, agent: None,
         }
+    }
+
+    /// Spec 09 § 2.4: who submitted a job: "agent (token)", else the token, else "?".
+    #[test]
+    fn a_job_with_an_agent_names_it_with_its_token() {
+        let m = Model::new();
+        assert_eq!(m.view(&Job { agent: Some("agent-a".into()), ..job("J1", "queued") }).owner, "agent-a (alice)");
+        assert_eq!(m.view(&job("J2", "queued")).owner, "alice");
+        assert_eq!(m.view(&Job { owner: None, agent: Some("agent-a".into()), ..job("J3", "queued") }).owner, "agent-a (?)");
+        assert_eq!(m.view(&Job { owner: None, ..job("J4", "queued") }).owner, "?");
     }
 
     /// A model whose fornax says `version` (spec 07 § 5.4: 0.9.0 has the priority actions).
