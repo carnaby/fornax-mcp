@@ -4,7 +4,8 @@
   env/          faster-whisper, CTranslate2 and the CUDA 12 libraries (pip wheels); runs run.py, whisper.py, check.py
   env/diarize/  pyannote.audio and PyTorch with CUDA; runs diarize.py
   env/hf/       the Hugging Face cache: Whisper large-v3 and, when HF_TOKEN is set, the pyannote model
-Safe to run again (e.g. after setting HF_TOKEN): existing environments are kept, packages brought to the pinned ranges.
+Safe to run again (fornax types setup transcribe, e.g. after fornax secrets set HF_TOKEN): existing environments are
+kept, packages brought to the pinned ranges.
 """
 import os
 import subprocess
@@ -49,10 +50,9 @@ def hugging_face_steps():
         "  1. Sign in at https://huggingface.co (a free account is enough).",
         f"  2. Open https://huggingface.co/{DIARIZE_MODEL} and accept the conditions.",
         "  3. Create a token at https://huggingface.co/settings/tokens (type \"Read\").",
-        "  4. Set it as HF_TOKEN for one command and run this setup again:",
-        f"       Windows PowerShell: $env:HF_TOKEN = \"<token>\"; python \"{SCRIPTS / 'setup.py'}\"",
-        f"       Linux:              HF_TOKEN=<token> python3 \"{SCRIPTS / 'setup.py'}\"",
-        "The token is used only for that download; jobs never go online for this model.",
+        "  4. Give it to Fornax (it asks without showing what you type): fornax secrets set HF_TOKEN",
+        "  5. Stop the worker (tray: Quit), then run this setup again: fornax types setup transcribe",
+        "Fornax gives the token only to this setup; jobs never go online for this model.",
         "Until then, jobs with diarize: true get the transcript without speakers.",
     ])
 

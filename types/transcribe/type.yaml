@@ -35,6 +35,7 @@ params:
       description: Words and names Whisper should expect, e.g. a project name.
 max_runtime: 4h
 tools: [python, ffmpeg]
+secrets: [HF_TOKEN]       # the setup gets it to download the pyannote model; jobs never do
 setup: ["{tool.python}", "{pack}/scripts/setup.py"]
 check: ["{python}", "{pack}/scripts/check.py", "--ffmpeg", "{tool.ffmpeg}"]
 run: ["{python}", "{pack}/scripts/run.py", "--params", "{params_json}", "--audio", "{input.audio}",

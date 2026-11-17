@@ -22,15 +22,14 @@ PyTorch) and downloads Whisper large-v3 into `env/hf/`. Nothing outside this dir
 removes everything.
 
 Speaker recognition needs the pyannote model, which Hugging Face hands out after you accept its conditions. The setup
-prints the steps when `HF_TOKEN` is not set: accept the conditions of `pyannote/speaker-diarization-community-1`,
-create a "Read" token, then run the setup again with the token set for that one command:
+prints the steps when Fornax has no token: accept the conditions of `pyannote/speaker-diarization-community-1`,
+create a "Read" token, give it to Fornax, and run the setup again (stop the worker first, e.g. the tray's Quit):
 
-    # Windows PowerShell
-    $env:HF_TOKEN = "<token>"; python "<this directory>\scripts\setup.py"
-    # Linux
-    HF_TOKEN=<token> python3 "<this directory>/scripts/setup.py"
+    fornax secrets set HF_TOKEN
+    fornax types setup transcribe
 
-Jobs never go online for that model; the token is not stored by Fornax.
+Fornax keeps the token in `<config>/secrets/HF_TOKEN` (`%APPDATA%\fornax\secrets\` on Windows,
+`~/.config/fornax/secrets/` on Linux) and gives it only to this pack's setup. Jobs never go online for that model.
 
 ## Check
 

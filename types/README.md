@@ -36,6 +36,7 @@ params:                      # a strict subset of JSON Schema, see below
 max_runtime: 6h              # 30s, 10m, 6h or 2d; at most 7 days
 # default_priority: idle     # optional: high, normal (the default) or idle
 tools: [blender]             # their paths come from worker.yaml on this PC
+# secrets: [HF_TOKEN]       # optional: secrets the setup gets as environment variables
 # setup: [...]               # optional: installs into {pack}/env
 check: ["{tool.blender}", "-b", "--factory-startup", "--python-exit-code", "1", "--python", "{pack}/scripts/check.py"]
 # --disable-autoexec: scripts inside the scene never run; render.py opens the scene itself, so it is not positional.
@@ -45,7 +46,7 @@ run: ["{tool.blender}", "-b", "--factory-startup", "--disable-autoexec", "--pyth
 
 The **contract** is `name`, `version`, `description`, `inputs`, `params`, `max_runtime` and the optional
 `default_priority`. The **implementation** is
-`tools`, `setup`, `check` and `run`. Any other key is an error.
+`tools`, `secrets`, `setup`, `check` and `run`. Any other key is an error.
 
 The tools live in the worker's `worker.yaml` (`%APPDATA%\fornax\worker.yaml` or `~/.config/fornax/worker.yaml`):
 
@@ -98,7 +99,8 @@ Rules, checked when the pack loads:
 ## The tool's process
 
 - No shell. The working directory is `{work}`.
-- The environment is the worker's, without any `FORNAX_*` variable (the worker token never reaches a tool), plus
+- The environment is the worker's, without any `FORNAX_*` variable (the worker token never reaches a tool) and without
+  any variable named like a secret (a stored one, or one an installed pack asks for, in any letter case), plus
   `FORNAX_JOB_ID`, `FORNAX_OUT` and `FORNAX_WORK`.
 - A stdout line `{"progress": 0.4, "message": "frame 3/10"}` is progress (0 to 1, the message optional). Every other
   stdout line and all of stderr go to the job log; the last 1 MiB is kept and uploaded as `log.txt`.
@@ -131,6 +133,10 @@ Rules, checked when the pack loads:
 - `check` runs when the worker starts and in `fornax doctor`. Exit code 0 means ready; it may take at most 120 s.
 - `setup` runs once in `fornax types install`, with the pack directory as working directory. It installs into
   `{pack}/env` only; it may take at most 2 hours. If it fails, nothing stays installed.
+- `secrets` lists secrets the setup gets as environment variables (names `A-Z`, `0-9`, `_`; at most 16), only when
+  the worker's owner stored them with `fornax secrets set <NAME>`; `check` and `run` never get them. The setup runs
+  without a missing one: say in its output what it needs and how to set it. Every value is replaced with `***` in the
+  setup's output. `fornax types setup <name>` runs the setup of an installed pack again (with the worker stopped).
 
 ## Tools
 
@@ -145,6 +151,7 @@ times and stops the process it started, and a launcher would end at once while t
 - Keep parameter schemas strict: enums, bounded numbers, patterns and `maxLength`.
 - Inputs reach the tool only through `{input.<name>}`; never build a file path from a parameter.
 - Install only into `{pack}/env`; change nothing outside the pack directory.
+- Never print a secret, and never write it into `{pack}` except into the cache of the library that needs it.
 
 ## Built-in packs
 

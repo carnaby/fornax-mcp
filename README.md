@@ -195,6 +195,12 @@ On the PC with the GPU (Windows or Linux, Node.js 22 or newer):
    that are self-contained (File > External Data > Pack Resources).
 5. Start it: `fornax worker`. Ctrl+C gives the running job back; a second Ctrl+C kills the tool.
 
+Some types download models that need an account's token (`transcribe`'s speaker recognition needs a Hugging Face
+token): store it with `fornax secrets set HF_TOKEN` (it asks without showing what you type; `--from-file <path>` reads
+a file), then run the setup again with the worker stopped: `fornax types setup transcribe`. Secrets live in
+`<config>/secrets/`, only the setup of a pack that asks for one gets it, and they never reach the server.
+`fornax secrets list` shows the names, `fornax secrets remove <NAME>` deletes one.
+
 ### Watching and ordering the queue
 
 On the worker's PC (it uses the worker's token) `fornax queue` shows the whole queue: whether it is paused, the
@@ -399,6 +405,8 @@ the tray, uninstall Fornax tray in the Windows settings, or `sudo apt remove for
 - Jobs run only types the worker announced, with parameters checked against a strict schema on the server and again on
   the worker; arguments never pass through a shell; strings may not start with `-`.
 - Upload, download and result links are signed, expire, and stop working when their token is revoked.
+- Worker secrets (`fornax secrets`) stay on the worker PC: only the setup of a pack that declares one gets it, no tool
+  inherits a variable of that name, and its value is masked in the setup's output.
 - Accepted risk: the worker token sees every client's inputs (one worker on its owner's PC).
 
 ## Development
