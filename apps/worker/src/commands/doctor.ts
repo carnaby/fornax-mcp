@@ -1,4 +1,4 @@
-import { statSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { ApiError, NetworkError } from '../api.js';
 import { checkPack, findTool } from '../checks.js';
 import { ClientApi } from '../client-api.js';
@@ -7,6 +7,7 @@ import { doctorGpuLines, readGpu } from '../gpu.js';
 import { isInstalledCopy } from '../install/app.js';
 import { fetchBundleInfo } from '../install/bundle-info.js';
 import { loadPacks } from '../pack.js';
+import { secretFile, storedSecretNames } from '../secrets.js';
 import { WORKER_VERSION } from '../version.js';
 import { apiFor, runningScript, type Ctx } from './context.js';
 
@@ -109,6 +110,20 @@ export async function doctor(ctx: Ctx, only?: string): Promise<number> {
   for (const p of selected) {
     const problem = await checkPack(p, tools, ctx.paths, { signal: ctx.signal, timeoutMs: ctx.loopOptions?.checkTimeoutMs });
     line(problem === null, `type ${p.contract.name} v${p.contract.version}${problem ? `: ${problem}` : ''}`);
+  }
+  // Spec 08 § 5: a secret a pack's setup asks for and nobody stored (the pack decides whether it needs it).
+  const stored = storedSecretNames(ctx.paths.secretsDir);
+  for (const p of selected) for (const n of p.impl.secrets) if (!stored.includes(n)) warn(`${p.contract.name}: ${n} is not set (fornax secrets set ${n})`);
+  // Linux: like the token file (Windows relies on the profile's ACL, not checked here).
+  if (process.platform !== 'win32' && existsSync(ctx.paths.secretsDir)) {
+    const mode = (f: string) => statSync(f).mode & 0o777;
+    const octal = (m: number) => m.toString(8).padStart(4, '0');
+    const dirMode = mode(ctx.paths.secretsDir);
+    if (dirMode & 0o077) warn(`secrets directory ${ctx.paths.secretsDir} can be read by other users (mode ${octal(dirMode)}); run chmod 700 ${ctx.paths.secretsDir}`);
+    for (const n of stored) {
+      const f = secretFile(ctx.paths.secretsDir, n);
+      if (mode(f) & 0o077) warn(`secret file ${f} can be read or changed by other users (mode ${octal(mode(f))}); run chmod 600 ${f}`);
+    }
   }
   return ok ? 0 : 1;
 }

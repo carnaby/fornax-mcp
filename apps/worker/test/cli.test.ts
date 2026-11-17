@@ -12,6 +12,7 @@ import { hasRunning, killRunning, runProcess } from '../src/process.js';
 import type { Ctx } from '../src/commands/context.js';
 import { LEASE_USAGE } from '../src/commands/lease.js';
 import { readClientToken, readToken, readWorkerConfig, saveToken } from '../src/config.js';
+import { writeSecret } from '../src/secrets.js';
 import { writeWorkerDir } from './bundle-fixture.js';
 import { FAKE_SMI, testPaths, useTempDir, waitFor, writeEchoPack } from './helpers.js';
 
@@ -121,6 +122,29 @@ describe('fornax CLI', () => {
     for (const line of lease.split('\n').filter((l) => l.includes('fornax lease '))) {
       expect(general).toContain(line.replace(/^usage: /, '       '));
     }
+  });
+
+  test('doctor names a secret a pack wants that is not set, as a warning (spec 08 § 5)', async () => {
+    const { ctx, run } = cli();
+    writeEchoPack(ctx.paths.typesDir, { name: 'wants', setup: ['{tool.node}', '-e', '0'], secrets: ['EXAMPLE_TOKEN', 'OTHER_TOKEN'] });
+    writeSecret(ctx.paths.secretsDir, 'OTHER_TOKEN', 'hf_test_value_123');
+    const text = (await run('doctor')).text;
+    expect(text).toMatch(/^WARN\s+wants: EXAMPLE_TOKEN is not set \(fornax secrets set EXAMPLE_TOKEN\)$/m);
+    expect(text).not.toContain('OTHER_TOKEN is not set');
+    expect(text).not.toContain('hf_test_value_123');
+    // Only the selected type's secrets with `doctor <type>`.
+    expect((await run('doctor', 'other')).text).not.toContain('EXAMPLE_TOKEN');
+  });
+
+  test.skipIf(process.platform === 'win32')('doctor warns about secret files other users can read (spec 08 § 5)', async () => {
+    const { ctx, run } = cli();
+    const file = writeSecret(ctx.paths.secretsDir, 'EXAMPLE_TOKEN', 'hf_test_value_123');
+    expect((await run('doctor')).text).not.toMatch(/secret/);
+    chmodSync(ctx.paths.secretsDir, 0o755);
+    chmodSync(file, 0o644);
+    const text = (await run('doctor')).text;
+    expect(text).toContain(`WARN  secrets directory ${ctx.paths.secretsDir} can be read by other users (mode 0755); run chmod 700 ${ctx.paths.secretsDir}`);
+    expect(text).toContain(`WARN  secret file ${file} can be read or changed by other users (mode 0644); run chmod 600 ${file}`);
   });
 
   test('doctor names the client token, or says fornax lease cannot run without one', async () => {
