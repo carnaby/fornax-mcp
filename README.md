@@ -115,10 +115,12 @@ All with `Authorization: Bearer <token>`:
 | `GET /api/types` | offered job types with their schemas |
 | `POST /api/files?name=<file name>` | upload a file (streamed body) → `{id, name, size, …}` (`id` is the file id for `inputs`) |
 | `POST /api/uploads` | a one-time upload link (`PUT /api/uploads/<signed>`, no token) |
-| `POST /api/jobs` | submit `{type, params, inputs, priority?, group?, callback_url?}` |
+| `POST /api/jobs` | submit `{type, params, inputs, priority?, group?, callback_url?}`; `priority` is `high`, `normal` or `idle` (`low` is taken as `normal`), without it the type's `default_priority` |
 | `GET /api/jobs`, `GET /api/jobs/:id` | list, details, outputs, result page link; one job also has `worker` and `note` (why it waits) |
 | `GET /api/jobs/:id?wait=25&change=<change>` | answers as soon as the job's `change` differs (at the latest after `wait` seconds, at most 30): wait instead of polling |
 | `POST /api/jobs/:id/cancel` | cancel |
+| `POST /api/jobs/:id/priority` | body `{"priority":"high"}` (`normal`, `idle`); a waiting job of yours, placed as if it were new |
+| `POST /api/jobs/:id/requeue` | body `{"idle":false}` or `{"idle":true}`; a running job of yours back to the queue (or to Idle); it starts again from the beginning |
 | `GET /api/jobs/:id/outputs/<name>` | download (or with a signed `?sig=` link, no token) |
 | `GET /api/queue` | queue summary |
 
@@ -132,10 +134,17 @@ order the whole queue, every client's jobs included, and none of them counts as 
 | `GET /api/worker/jobs?wait=<0..30>&change=<hash>` | The paused flag, the worker, the running job, the waiting jobs in the order they run, the last 50 finished jobs. With `change` and `wait` it answers as soon as something changes. |
 | `POST /api/worker/jobs/<id>/move` | Body `{"to":"top"}`, `{"to":"bottom"}`, `{"before":"<id>"}` or `{"after":"<id>"}`; only waiting jobs move (409 otherwise). |
 | `POST /api/worker/jobs/<id>/cancel` | Cancels a job of any client. |
+| `POST /api/worker/jobs/<id>/priority` | Body `{"priority":"high"}` (`normal`, `idle`): a waiting job of any client gets a new priority. |
+| `POST /api/worker/jobs/<id>/requeue` | Body `{"idle":false}` or `{"idle":true}`: a running job of any client goes back to the queue (Requeue) or to Idle (Pause). |
+| `POST /api/worker/idle/start` | Start all: every idle job becomes normal, at the end of the normal ones. |
 | `PUT /api/worker/pause` | Body `{"paused":true}` or `{"paused":false}`. While paused the running job finishes and no other starts; `GET /api/queue` and `queue_status` show `paused`. |
 
-A new job joins the queue right after the last waiting job of its priority or higher, so without moves the order is
-priority first, then age. A job that ran and comes back (the worker stopped, an attempt failed) goes to the top.
+Priorities are `high`, `normal` and `idle`. A new job joins the queue right after the last waiting job of its priority
+or higher, so without moves high jobs run first in the order they came, then normal ones. An idle job never starts by
+itself: the worker's operator starts it (the tray's Idle block, `fornax queue start-idle`) or its client sets normal or
+high. A job submitted without a priority gets its type's `default_priority` (`upscale`: idle). A job that ran and comes
+back (the worker stopped, an attempt failed) goes to the top; a job put back with Requeue goes right after the waiting
+jobs of a higher priority, and Pause puts it at the top of Idle.
 
 ### Webhooks
 
@@ -193,6 +202,9 @@ running job with its time and progress, the waiting jobs in the order they will 
 
 - `fornax queue move <id> --top` (or `--bottom`, `--before <id>`, `--after <id>`) changes the order of waiting jobs.
 - `fornax queue cancel <id>` cancels a job of any client.
+- `fornax queue priority <id> high|normal|idle` changes the priority of a waiting job; `fornax queue start-idle` starts
+  every idle job; `fornax queue requeue <id>` stops the running job and puts it back in the queue (`--idle`: into Idle).
+  All three take `--json` like pause and resume.
 - `fornax queue pause` lets the running job finish and starts no other; `fornax queue resume` goes on. With `--json`
   both print the queue the server answered with, like `fornax queue --json`.
 - `fornax queue --json` prints the same as one line of JSON (`"ok": true` and the fields of `GET /api/worker/jobs`;
@@ -262,7 +274,7 @@ token cannot submit jobs):
 `FORNAX_CLIENT_TOKEN` wins over the stored file. Then:
 
 ```
-fornax lease [--minutes N] [--wait-minutes N] [--rerun] [--priority low|normal|high] [--label TEXT] -- <program> [args…]
+fornax lease [--minutes N] [--wait-minutes N] [--rerun] [--priority high|normal|idle] [--label TEXT] -- <program> [args…]
 fornax lease -- blender.exe -b scene.blend -f 1
 ```
 
