@@ -24,7 +24,10 @@ export const clientRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps) => 
 
   app.get('/types', async () => ({ types: offeredTypes(deps.db).map(typeView), worker: workerOnline(deps.db, deps.clock()) }));
 
-  app.get('/queue', async (req) => queueStatus(deps.db, deps.clock(), req.identity!.tokenId));
+  app.get('/queue', async (req) => {
+    const { job_id } = parse(z.object({ job_id: z.string().min(1).max(40).optional() }), req.query);
+    return queueStatus(deps.db, deps.clock(), req.identity!.tokenId, job_id);
+  });
 
   // Raw uploads live in a child plugin so JSON parsing stays on for the other routes.
   await app.register(async (raw) => {

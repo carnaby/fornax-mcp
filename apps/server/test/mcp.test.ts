@@ -35,7 +35,9 @@ describe('the MCP endpoint', () => {
     expect(tools.map((x) => x.name).sort()).toEqual(['cancel_job', 'create_upload', 'get_job', 'get_output', 'list_job_types', 'list_jobs', 'queue_status', 'requeue_job', 'set_job_priority', 'submit_job']);
     for (const tool of tools) expect(tool.description, tool.name).toBeTruthy();
     expect(tools.find((x) => x.name === 'queue_status')!.description).toContain('worker.waiting');
+    expect(tools.find((x) => x.name === 'queue_status')!.description).toContain('ahead');
     const ins = client.getInstructions() ?? '';
+    expect(ins).toContain('Pass agent with submit_job');
     expect(ins).toMatch(/^Fornax is a job queue for one GPU worker/);
     expect(ins).toContain('create_upload');
     expect(ins).toContain('<path>');
@@ -186,12 +188,16 @@ describe('the job tools', () => {
     expect(own).toEqual({
       queued: 0, idle: 0, running: 1, paused: false,
       worker: { online: true, last_seen: expect.any(String), waiting: null },
-      current: { type: 'render', progress: 0.5, progress_message: 'half', started_at: expect.any(String) },
+      current: { type: 'render', agent: null, owner: 'alice', label: null, progress: 0.5, progress_message: 'half', started_at: expect.any(String) },
+      ahead: [],
     });
     const foreign = await callJson(await mcp.connect('/mcp', bearerHeader(eve)), 'queue_status');
-    expect(foreign.current).toEqual({ type: 'render', progress: 0.5, progress_message: null, started_at: expect.any(String) });
+    expect(foreign.current).toEqual({ type: 'render', agent: null, owner: 'alice', label: null, progress: 0.5, progress_message: null, started_at: expect.any(String) });
     expect((await t.app.inject({ method: 'GET', url: '/api/queue', headers: bearer(eve) })).json().current.progress_message).toBeNull();
     expect((await t.app.inject({ method: 'GET', url: '/api/queue', headers: bearer(alice) })).json().current.progress_message).toBe('half');
+    // Spec 09 § 3.2: the job_id of a running job: it has no place in the queue.
+    expect((await callJson(await mcp.connect('/mcp', bearerHeader(alice)), 'queue_status', { job_id: job.id })).ahead).toBeNull();
+    expect((await callTool(await mcp.connect('/mcp', bearerHeader(eve)), 'queue_status', { job_id: job.id })).text).toMatch(/^404: /);
   });
 });
 

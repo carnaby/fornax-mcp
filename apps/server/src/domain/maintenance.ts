@@ -6,9 +6,12 @@ import { files, invites, jobs, jobTypes, tokens, uploads, webhookDeliveries } fr
 import type { RouteDeps } from '../http/deps.js';
 import { deleteFiles } from './files.js';
 import { finishJob } from './finish.js';
+import { getOwnJob } from './jobs.js';
 import { expireLeases } from './queue.js';
+import { jobsAhead } from './queue-ahead.js';
 import { queuePaused } from './queue-control.js';
 import { IDLE } from './queue-order.js';
+import { labelOf, ownerName } from './who.js';
 import { workerOnline } from './worker-state.js';
 
 export const TYPE_UNAVAILABLE = 'the worker has not offered this job type for too long';
@@ -118,8 +121,13 @@ export async function runMaintenance(deps: RouteDeps) {
   return { leases, orphans: orphanRows.length, unavailable, finished: old.length, pendingTokens, swept: swept.removed, diskErrors };
 }
 
-/** The queue as every client sees it. The running job's message is its owner's free text: only the owner (viewer) gets it. */
-export function queueStatus(db: Db, now: Date, viewer: string | null = null) {
+/**
+ * The queue as every client sees it (spec 09 § 3.2: who runs and who waits ahead; with `jobId`, one of the viewer's jobs,
+ * only the jobs before it). The running job's message is its owner's free text: only the owner (viewer) gets it.
+ */
+export function queueStatus(db: Db, now: Date, viewer: string | null = null, jobId?: string) {
+  // A foreign or unknown id is the 404 of get_job.
+  const own = jobId !== undefined && viewer !== null ? getOwnJob(db, viewer, jobId) : null;
   // Spec 07 § 2.2: idle jobs are counted apart; `queued` is what can start.
   const idle = sql<number>`${jobs.priority} = ${IDLE}`;
   const counts = db
@@ -141,12 +149,17 @@ export function queueStatus(db: Db, now: Date, viewer: string | null = null) {
     current: running
       ? {
           type: running.type,
+          // Spec 09 § 3.2: who submitted it, for every client; the free-text message stays the owner's.
+          agent: running.agent,
+          owner: ownerName(db, running.ownerTokenId),
+          label: labelOf(running.params),
           progress: running.progress,
           progress_message: running.ownerTokenId === viewer ? running.progressMessage : null,
           // Spec 05a 2.4: since when it runs (a waiting job's note says so).
           started_at: running.startedAt?.toISOString() ?? null,
         }
       : null,
+    ahead: jobsAhead(db, own),
   };
 }
 

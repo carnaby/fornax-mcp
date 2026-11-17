@@ -197,8 +197,13 @@ export function buildMcpServer(ctx: McpContext): McpServer {
       }),
   );
 
-  server.registerTool('queue_status', { title: T.queue_status, description: D.queue_status, annotations: READS, inputSchema: z.object({}) }, () =>
-    runJson(ctx, (me) => queueStatus(db, deps.clock(), me.tokenId)),
+  server.registerTool(
+    'queue_status',
+    {
+      title: T.queue_status, description: D.queue_status, annotations: READS,
+      inputSchema: z.object({ job_id: z.string().min(1).max(40).optional().describe('One of your waiting jobs: ahead then lists only the jobs before it.') }),
+    },
+    ({ job_id }) => runJson(ctx, (me) => queueStatus(db, deps.clock(), me.tokenId, job_id)),
   );
 
   return server;
