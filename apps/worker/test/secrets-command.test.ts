@@ -127,6 +127,6 @@ describe('fornax secrets (spec 08 § 3)', () => {
   test('the usage lists the new commands', async () => {
     const { run } = cli();
     const text = (await run('--help')).text;
-    for (const l of ['fornax secrets set <NAME> [--from-file <path>]', 'fornax secrets list', 'fornax secrets remove <NAME>']) expect(text).toContain(l);
+    for (const l of ['fornax types setup <name>', 'fornax secrets set <NAME> [--from-file <path>]', 'fornax secrets list', 'fornax secrets remove <NAME>']) expect(text).toContain(l);
   });
 });

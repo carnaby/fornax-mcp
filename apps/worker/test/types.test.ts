@@ -4,6 +4,7 @@ import { describe, expect, test } from 'vitest';
 import { runCli } from '../src/cli.js';
 import { typesInstall } from '../src/commands/types.js';
 import type { Ctx } from '../src/commands/context.js';
+import { lockWorker } from '../src/instance.js';
 import { writeSecret } from '../src/secrets.js';
 import { testPaths, useTempDir, writeEchoPack } from './helpers.js';
 
@@ -258,5 +259,73 @@ describe('secrets in the setup (spec 08 § 4.2, 4.3)', () => {
     expect(r.text + written.join('')).not.toContain(V);
     // The setup itself never ran.
     expect(written.join('')).not.toContain('token');
+  });
+});
+
+const COUNTING_SETUP = [
+  "import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';",
+  "mkdirSync('env', { recursive: true });",
+  "appendFileSync('env/runs.txt', 'x');",
+  "writeFileSync('env/got.txt', process.env.EXAMPLE_TOKEN ?? 'none');",
+].join('\n');
+
+describe('fornax types setup (spec 08 § 3.4)', () => {
+  async function installed() {
+    const c = cli();
+    const src = writeEchoPack(tmp(), { setup: ['{tool.node}', '{pack}/scripts/setup.mjs'], secrets: ['EXAMPLE_TOKEN'] });
+    writeFileSync(join(src, 'scripts', 'setup.mjs'), COUNTING_SETUP);
+    expect((await c.run('types', 'install', 'echo', '--from', src)).code).toBe(0);
+    const env = join(c.ctx.paths.typesDir, 'echo', 'env');
+    return { ...c, env };
+  }
+
+  test('runs the setup of an installed pack again in the same env/, with the secret stored since, then its check', async () => {
+    const { ctx, run, env } = await installed();
+    expect(readFileSync(join(env, 'got.txt'), 'utf8')).toBe('none');
+    writeSecret(ctx.paths.secretsDir, 'EXAMPLE_TOKEN', 'hf_test_value_123');
+    const r = await run('types', 'setup', 'echo');
+    expect(r.code).toBe(0);
+    expect(r.text).toContain('running the setup of echo…');
+    expect(r.text).toContain('the setup of echo is done; it is ready');
+    expect(readFileSync(join(env, 'runs.txt'), 'utf8')).toBe('xx');
+    expect(readFileSync(join(env, 'got.txt'), 'utf8')).toBe('hf_test_value_123');
+  });
+
+  test('never while a worker runs', async () => {
+    const { ctx, run, env } = await installed();
+    const lock = lockWorker(ctx.paths);
+    if (!('release' in lock)) throw new Error('no lock');
+    // Our own pid in the lock counts as stale: another live pid (the parent's) stands for a running worker.
+    writeFileSync(lock.file, String(process.ppid));
+    try {
+      const r = await run('types', 'setup', 'echo');
+      expect(r.code).toBe(1);
+      expect(r.text).toBe(`the worker is running (pid ${process.ppid}); stop it first (tray: Quit), then run fornax types setup echo again`);
+      expect(readFileSync(join(env, 'runs.txt'), 'utf8')).toBe('x');
+    } finally {
+      writeFileSync(lock.file, String(process.pid));
+      lock.release();
+    }
+  });
+
+  test('a failed setup keeps the pack and its env/', async () => {
+    const { ctx, run, env } = await installed();
+    writeFileSync(join(ctx.paths.typesDir, 'echo', 'scripts', 'setup.mjs'), "console.log('broken'); process.exit(1);");
+    const r = await run('types', 'setup', 'echo');
+    expect(r.code).toBe(1);
+    expect(r.text).toContain('the setup of echo failed (exit code 1: broken); echo stays installed but is not ready (fornax doctor echo)');
+    expect(existsSync(join(env, 'runs.txt'))).toBe(true);
+  });
+
+  test('not installed, no setup, bad name', async () => {
+    const { ctx, run } = cli();
+    const missing = await run('types', 'setup', 'echo');
+    expect(missing.code).toBe(1);
+    expect(missing.text).toBe('echo is not installed; install it with fornax types install echo');
+    writeEchoPack(ctx.paths.typesDir);
+    const none = await run('types', 'setup', 'echo');
+    expect(none.code).toBe(0);
+    expect(none.text).toBe('echo has no setup');
+    expect((await run('types', 'setup', 'Bad_Name')).code).toBe(2);
   });
 });

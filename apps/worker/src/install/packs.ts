@@ -22,7 +22,7 @@ export function writeOrigin(dir: string, origin: PackOrigin, setupPending = fals
 }
 
 /** The marker's origin (null without a readable marker) and whether a setup is pending; both marker shapes are read. */
-function readMarker(dir: string): { origin: PackOrigin | null; setupPending: boolean } {
+export function readMarker(dir: string): { origin: PackOrigin | null; setupPending: boolean } {
   try {
     const m = JSON.parse(readFileSync(join(dir, ORIGIN_FILE), 'utf8')) as { source?: unknown; setup?: unknown };
     const origin = m.source === 'shipped' || m.source === 'dir' ? m.source : null;

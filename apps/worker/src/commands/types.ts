@@ -5,7 +5,8 @@ import { checkPack } from '../checks.js';
 import { copyToClipboard } from '../clipboard.js';
 import { ConfigError, readWorkerConfig } from '../config.js';
 import { runPackSetup } from '../install/pack-setup.js';
-import { writeOrigin } from '../install/packs.js';
+import { readMarker, writeOrigin } from '../install/packs.js';
+import { lockWorker } from '../instance.js';
 import { loadPack, loadPacks, missingTools } from '../pack.js';
 import { buildTypePrompt, gpuSummary, systemSummary } from '../prompt.js';
 import { readShippedDoc, shippedExamples, shippedPack } from '../shipped.js';
@@ -140,6 +141,55 @@ export async function typesInstall(
   ctx.out(problem ? `installed ${name} in ${dest}, but it is not ready: ${problem}` : `installed ${name} in ${dest}; it is ready`);
   ctx.out('a running worker picks it up between jobs');
   return problem ? 1 : 0;
+}
+
+/**
+ * `fornax types setup <name>` (spec 08 § 3.4): run an installed pack's setup again in its env/, then its check. Never
+ * while a worker runs: the setup changes the environment a job may be running from.
+ */
+export async function typesSetup(ctx: Ctx, name: string): Promise<number> {
+  if (!TYPE_NAME.test(name)) {
+    ctx.out('a type name is a-z, 0-9 and "-", starting with a letter or digit');
+    return 2;
+  }
+  const dir = join(ctx.paths.typesDir, name);
+  if (!existsSync(join(dir, 'type.yaml'))) {
+    ctx.out(`${name} is not installed; install it with fornax types install ${name}`);
+    return 1;
+  }
+  const pack = loadPack(dir);
+  if (!pack.impl.setup) {
+    ctx.out(`${name} has no setup`);
+    return 0;
+  }
+  const tools = localTools(ctx);
+  const missing = missingTools(pack, tools);
+  if (missing.length) {
+    ctx.out(`the setup of ${name} needs these tools in ${ctx.paths.configFile}: ${missing.join(', ')}`);
+    return 1;
+  }
+  const lock = lockWorker(ctx.paths);
+  if (!('release' in lock)) {
+    ctx.out(`the worker is running${lock.heldBy ? ` (pid ${lock.heldBy})` : ''}; stop it first (tray: Quit), then run fornax types setup ${name} again`);
+    return 1;
+  }
+  try {
+    const { origin } = readMarker(dir);
+    // Pending until it succeeds, as in install: a shipped pack whose setup failed gets it again at the next sync.
+    if (origin) writeOrigin(dir, origin, true);
+    ctx.out(`running the setup of ${name}…`);
+    const why = await runPackSetup({ pack, dir, tools, dirs: ctx.paths, signal: ctx.signal, write: ctx.write });
+    if (why) {
+      ctx.out(`the setup of ${name} failed (${why}); ${name} stays installed but is not ready (fornax doctor ${name})`);
+      return 1;
+    }
+    if (origin) writeOrigin(dir, origin);
+    const problem = await checkPack(loadPack(dir), tools, ctx.paths, { signal: ctx.signal });
+    ctx.out(problem ? `the setup of ${name} is done, but it is not ready: ${problem}` : `the setup of ${name} is done; it is ready`);
+    return problem ? 1 : 0;
+  } finally {
+    lock.release();
+  }
 }
 
 function skeletonYaml(name: string): string {
