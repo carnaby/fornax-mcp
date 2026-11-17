@@ -181,3 +181,15 @@ describe('the result page', () => {
     expect((await open(job.id)).statusCode).toBe(404);
   });
 });
+
+describe('final review 07 #6', () => {
+  test('an idle job says why it does not start', async () => {
+    announce(t.db, [renderContract], t.clock.now);
+    const alice = issueToken(t.db, 'alice');
+    const scene = await uploadFile(t.app, alice, 'scene.blend', 'B');
+    const id = (await t.app.inject({ method: 'POST', url: '/api/jobs', headers: bearer(alice), payload: { type: 'render', params: { frame_start: 1 }, inputs: { scene }, priority: 'idle' } })).json().id as string;
+    const page = await open(id);
+    expect(page.body).toContain('This job is idle: it waits until the operator starts it or its owner changes its priority.');
+    expect(page.body).not.toContain('Place in the queue');
+  });
+});

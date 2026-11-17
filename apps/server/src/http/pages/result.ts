@@ -81,6 +81,7 @@ async function resultPage(deps: RouteDeps, job: JobRow): Promise<string> {
 <p class="muted">Job ${job.id} · created ${view.created_at}${view.finished_at ? ` · finished ${view.finished_at}` : ''}</p>
 ${view.type_unavailable ? html`<p class="error">The worker does not offer this job type now; the job waits until it does.</p>` : null}
 ${view.position !== null ? html`<p>Place in the queue: ${view.position}</p>` : null}
+${job.state === 'queued' && view.priority === 'idle' ? html`<p>This job is idle: it waits until the operator starts it or its owner changes its priority.</p>` : null}
 ${job.state === 'running' ? html`<p><progress max="100" value="${percent ?? 0}"></progress></p><p>${percent === null ? '' : `${percent} % `}${job.progressMessage ?? ''}</p>` : null}
 ${job.error ? html`<p class="error">${job.error}</p>` : null}
 ${active ? html`<p class="muted">This page refreshes every ${REFRESH_S} seconds.</p>` : null}

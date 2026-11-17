@@ -30,6 +30,11 @@ pub const PAUSE_JSON_CLI: (u32, u32, u32) = (0, 7, 2);
 pub const PRIORITY_CLI: (u32, u32, u32) = (0, 9, 0);
 /// The action key of Start all.
 pub const START_IDLE: &str = "start-idle";
+
+/// Spec 07 § 2.1: an idle job never starts by itself.
+fn is_idle(j: &Job) -> bool {
+    j.priority == "idle"
+}
 /// How much later than the tray's idea of the server time an update's own pause may be (the time of a queue line comes
 /// a little before the line is read): a pause later than that is someone else's.
 pub const OWED_MARGIN_MS: i64 = 5_000;
@@ -1213,10 +1218,11 @@ impl Model {
         // Only jobs still listed can come again; the others are forgotten.
         self.seen_failed.retain(|id| q.finished.iter().any(|j| &j.id == id));
         let worker_on = self.own != Own::Stopped || self.external || q.worker.online;
-        let stuck = !q.queued.is_empty() && (q.paused || !worker_on);
+        // Spec 07: idle jobs wait for a person by design; only jobs that could start make a wave.
+        let n = q.queued.iter().filter(|j| !is_idle(j)).count();
+        let stuck = n > 0 && (q.paused || !worker_on);
         if stuck && !self.wave_told {
             self.wave_told = true;
-            let n = q.queued.len();
             let jobs = if n == 1 { "1 job waits".to_string() } else { format!("{n} jobs wait") };
             let why = if q.paused { "the queue is paused" } else { "the worker is stopped" };
             effects.push(Effect::Notify { title: "Fornax jobs wait".into(), body: format!("{jobs} and {why}") });
@@ -1539,7 +1545,7 @@ impl Model {
         if !stopped {
             return Icon::Idle;
         }
-        if q.is_some_and(|q| !q.queued.is_empty()) {
+        if q.is_some_and(|q| q.queued.iter().any(|j| !is_idle(j))) {
             return Icon::Attention;
         }
         Icon::Stopped
@@ -2679,6 +2685,19 @@ mod tests {
         assert!(body.starts_with("echo of alice failed: xxx"), "{body}");
         assert_eq!(body.chars().count(), "echo of alice failed: ".chars().count() + ERROR_CHARS + 1);
         assert_eq!(m.apply(queue(None, vec![], vec![new, old], false), NOW), vec![], "the same failure again is no news");
+    }
+
+    /// Final review 07 #1: idle jobs wait for a person by design; a stopped worker or a paused queue is no news for them.
+    #[test]
+    fn idle_jobs_alone_are_no_waiting_wave_and_no_attention() {
+        let mut m = ready(false);
+        let mut idle = job("Q1", "queued");
+        idle.priority = "idle".into();
+        assert_eq!(m.apply(queue(None, vec![idle.clone()], vec![], false), NOW), vec![], "the worker is stopped, but nothing could start");
+        assert_eq!(m.snapshot().icon, Icon::Stopped);
+        let effects = m.apply(queue(None, vec![idle, job("Q2", "queued")], vec![], false), NOW);
+        assert_eq!(effects, vec![Effect::Notify { title: "Fornax jobs wait".into(), body: "1 job waits and the worker is stopped".into() }]);
+        assert_eq!(m.snapshot().icon, Icon::Attention);
     }
 
     #[test]

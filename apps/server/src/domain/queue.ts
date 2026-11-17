@@ -141,8 +141,9 @@ export function heartbeatJob(
     if (stopped && stopped.stoppedLeaseId === lease && stopped.leaseId !== lease) return { leaseUntil: null, cancel: true, requeued: true };
     const row = ownedJob(db, id, lease, ['running', 'queued', 'canceled']);
     if (row.state === 'canceled') return { leaseUntil: null, cancel: true, requeued: false };
-    // A late heartbeat may take an expired job back, but not one whose type the worker no longer offers.
-    if (row.state === 'queued' && !isOffered(db, row.type)) throw conflict(LEASE_LOST);
+    // A late heartbeat may take an expired job back, but not one whose type the worker no longer offers, nor one set idle
+    // meanwhile (spec 07 § 2.2: an idle job never starts by itself).
+    if (row.state === 'queued' && (!isOffered(db, row.type) || row.priority === IDLE)) throw conflict(LEASE_LOST);
     const leaseUntil = new Date(now.getTime() + LEASE_MS);
     db.update(jobs)
       .set({
