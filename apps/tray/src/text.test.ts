@@ -110,7 +110,7 @@ describe('spec 07 texts', () => {
 
   test('idle since and the two questions', () => {
     const at = new Date(2026, 10, 17, 16, 9).getTime();
-    expect(idleNote(job({ id: 'B', priority: 'idle', idleSinceMs: at }))).toBe('idle since 16:09');
+    expect(idleNote(job({ id: 'B', priority: 'idle', idleSinceMs: at }))).toBe(`idle since ${clock(at)}`);
     expect(idleNote(job({ id: 'B', priority: 'idle', idleSinceMs: null }))).toBe('idle');
     const r = job({ id: 'R', type: 'upscale', owner: 'bob', state: 'running' });
     expect(requeueQuestion(r)).toBe('Put the upscale job of bob back in the queue? It starts again from the beginning.');
