@@ -3,6 +3,7 @@ import { WorkerApi } from '../api.js';
 import { ConfigError, readToken, readWorkerConfig, serverWarning, type WorkerConfig } from '../config.js';
 import type { SwapDeps } from '../install/app.js';
 import type { PathDeps } from '../install/path-entry.js';
+import type { SecretInput } from '../hidden-input.js';
 import type { LeaseTimings } from '../lease/run.js';
 import type { LoopOptions, TypeState } from '../loop.js';
 import type { Paths } from '../paths.js';
@@ -28,6 +29,8 @@ export type Ctx = {
   env?: NodeJS.ProcessEnv;
   /** Test seam: the first line of standard input. */
   readStdin?: () => Promise<string>;
+  /** Spec 08 § 3.1, test seam: a secret's value from the terminal (hidden) or piped stdin. */
+  readSecretInput?: (prompt: string) => Promise<SecretInput>;
   /** Test seam: shorter clocks for fornax lease. */
   leaseTimings?: Partial<LeaseTimings>;
   /** Test seam: the running fornax.mjs (spec 05c 2: "the installed copy"). */

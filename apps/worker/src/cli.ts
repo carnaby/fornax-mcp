@@ -10,6 +10,7 @@ import { installCommand } from './commands/install.js';
 import { LEASE_FORMS, leaseCommand, usageText } from './commands/lease.js';
 import { pair } from './commands/pair.js';
 import { queueCancel, queueMove, queuePause, queuePriority, queueRequeue, queueShow, queueStartIdle, queueWatch } from './commands/queue.js';
+import { secretsList, secretsRemove, secretsSet } from './commands/secrets.js';
 import { trayInstallCommand } from './commands/tray.js';
 import { typesAdd, typesInstall, typesList } from './commands/types.js';
 import { updateCommand } from './commands/update.js';
@@ -38,6 +39,9 @@ export const USAGE = usageText([
   'fornax types list',
   'fornax types install <name> [--from <dir>]',
   'fornax types add <name>',
+  'fornax secrets set <NAME> [--from-file <path>]',
+  'fornax secrets list',
+  'fornax secrets remove <NAME>',
   'fornax install',
   'fornax update [--force] [--server <url>]',
   'fornax tray install',
@@ -50,6 +54,7 @@ type Flags = {
   name?: string;
   force?: boolean;
   from?: string;
+  'from-file'?: string;
   once?: boolean;
   child?: boolean;
   help?: boolean;
@@ -109,6 +114,7 @@ export async function runCli(argv: string[], ctx: Ctx): Promise<number> {
         name: { type: 'string' },
         force: { type: 'boolean' },
         from: { type: 'string' },
+        'from-file': { type: 'string' },
         once: { type: 'boolean' },
         child: { type: 'boolean' },
         help: { type: 'boolean', short: 'h' },
@@ -186,6 +192,10 @@ export async function runCli(argv: string[], ctx: Ctx): Promise<number> {
     if (group === 'types' && sub === 'list' && shape(2)) return await typesList(ctx);
     if (group === 'types' && sub === 'install' && arg !== undefined && shape(3, 'from')) return await typesInstall(ctx, arg, flags.from);
     if (group === 'types' && sub === 'add' && arg !== undefined && shape(3)) return await typesAdd(ctx, arg);
+    // Spec 08 § 3: the value never comes from an argument; a fourth word is a usage error that never echoes it.
+    if (group === 'secrets' && sub === 'set' && arg !== undefined && shape(3, 'from-file')) return await secretsSet(ctx, arg, flags['from-file']);
+    if (group === 'secrets' && sub === 'list' && shape(2)) return secretsList(ctx);
+    if (group === 'secrets' && sub === 'remove' && arg !== undefined && shape(3)) return secretsRemove(ctx, arg);
   } catch (e) {
     return reportError(e, ctx.out);
   }
