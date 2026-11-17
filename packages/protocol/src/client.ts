@@ -1,8 +1,12 @@
 import { z } from 'zod';
 
 export const JOB_STATES = ['queued', 'running', 'succeeded', 'failed', 'canceled'] as const;
-export const PRIORITIES = ['low', 'normal', 'high'] as const;
+/** Spec 07 § 2.1: the stored value is the index (idle 0, normal 1, high 2). An idle job never starts by itself. */
+export const PRIORITIES = ['idle', 'normal', 'high'] as const;
 export type Priority = (typeof PRIORITIES)[number];
+/** What a client may send: `low` (before 0.9.0) is taken as `normal`. */
+export const PRIORITY_INPUTS = ['idle', 'normal', 'high', 'low'] as const;
+export const priorityInput = z.enum(PRIORITY_INPUTS).transform((p): Priority => (p === 'low' ? 'normal' : p));
 
 /** The fields of a job answer (POST /api/jobs, GET /api/jobs/:id) that fornax lease relies on; the server sends more. */
 export const clientJobView = z.object({

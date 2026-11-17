@@ -31,3 +31,23 @@ test('a worker status says why it waits, or null', () => {
   expect(statusBody.safeParse({ waiting: { ...unreadable, error: 'x'.repeat(201) } }).success).toBe(false);
   expect(statusBody.safeParse({ waiting: { reason: 'tired', limit_mib: 1 } }).success).toBe(false);
 });
+
+import { describe } from 'vitest';
+import { heartbeatReply, priorityBody, requeueBody } from '../src/wire.js';
+
+describe('spec 07 wire shapes', () => {
+  test('heartbeat reply: requeued defaults to false', () => {
+    expect(heartbeatReply.parse({ lease_until: null, cancel: true })).toEqual({ lease_until: null, cancel: true, requeued: false });
+    expect(heartbeatReply.parse({ lease_until: null, cancel: true, requeued: true }).requeued).toBe(true);
+  });
+
+  test('priority body: low becomes normal; extra keys are refused', () => {
+    expect(priorityBody.parse({ priority: 'low' })).toEqual({ priority: 'normal' });
+    expect(priorityBody.safeParse({ priority: 'idle', now: true }).success).toBe(false);
+  });
+
+  test('requeue body: idle defaults to false', () => {
+    expect(requeueBody.parse({})).toEqual({ idle: false });
+    expect(requeueBody.parse({ idle: true })).toEqual({ idle: true });
+  });
+});

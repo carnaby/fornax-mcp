@@ -44,3 +44,22 @@ describe('contractHash', () => {
     expect(canonicalJson({ b: 1, a: { d: [2, 1], c: null } })).toBe('{"a":{"c":null,"d":[2,1]},"b":1}');
   });
 });
+
+import { defaultPriority } from '../src/contract.js';
+
+describe('default_priority (spec 07 § 4.4)', () => {
+  test('optional; without it the type runs as normal and its hash does not change', () => {
+    const plain = jobTypeContract.parse(render);
+    expect(plain.default_priority).toBeUndefined();
+    expect(defaultPriority(plain)).toBe('normal');
+    expect(contractHash(jobTypeContract.parse({ ...render }))).toBe(contractHash(plain));
+    expect(contractHash(plain)).toBe(contractHash(jobTypeContract.parse({ ...render, default_priority: undefined })));
+  });
+
+  test('idle and high are kept; low and other words are refused', () => {
+    expect(defaultPriority(jobTypeContract.parse({ ...render, default_priority: 'idle' }))).toBe('idle');
+    expect(defaultPriority(jobTypeContract.parse({ ...render, default_priority: 'high' }))).toBe('high');
+    expect(jobTypeContract.safeParse({ ...render, default_priority: 'low' }).success).toBe(false);
+    expect(jobTypeContract.safeParse({ ...render, default_priority: 'soon' }).success).toBe(false);
+  });
+});

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import { PRIORITIES, type Priority } from './client.js';
 import { paramSchema } from './params-schema.js';
 
 export const TYPE_NAME = /^[a-z0-9][a-z0-9-]{0,39}$/;
@@ -19,9 +20,13 @@ export const jobTypeContract = z.strictObject({
   inputs: z.record(z.string().regex(INPUT_NAME), jobInputSpec).default({}),
   params: paramSchema,
   max_runtime_s: z.number().int().min(1).max(7 * 86_400),
+  /** Spec 07 § 4.4: the priority of a job submitted without one; missing = normal (and the hash stays as before). */
+  default_priority: z.enum(PRIORITIES).optional(),
 });
 
 export type JobTypeContract = z.infer<typeof jobTypeContract>;
+
+export const defaultPriority = (c: JobTypeContract): Priority => c.default_priority ?? 'normal';
 
 /** JSON with object keys sorted at every level: equal values give equal strings. */
 export function canonicalJson(v: unknown): string {

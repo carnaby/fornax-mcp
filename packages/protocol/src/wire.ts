@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { type Priority, priorityInput } from './client.js';
 import { jobTypeContract } from './contract.js';
 
 export const WORKER_HEADERS = { name: 'x-fornax-worker', version: 'x-fornax-version', lease: 'x-fornax-lease', warning: 'x-fornax-warning' } as const;
@@ -34,7 +35,8 @@ export const heartbeatBody = z.strictObject({
   progress: z.number().min(0).max(1).nullable().default(null),
   message: z.string().max(200).nullable().default(null),
 });
-export const heartbeatReply = z.object({ lease_until: z.string().nullable(), cancel: z.boolean() });
+/** Spec 07 § 3.2: requeued with cancel = the job went back to the queue; a worker older than 0.9.0 ignores it and stops the job as canceled. */
+export const heartbeatReply = z.object({ lease_until: z.string().nullable(), cancel: z.boolean(), requeued: z.boolean().default(false) });
 
 export const failBody = z.strictObject({ lease: z.string().min(1), error: z.string().max(10_000), permanent: z.boolean().default(false) });
 export const releaseBody = z.strictObject({ lease: z.string().min(1), reason: z.enum(RELEASE_REASONS).default('stopping') });
@@ -86,6 +88,11 @@ export type MoveTarget = z.infer<typeof moveBody>;
 /** Spec 06 2.3: PUT /api/worker/pause. */
 export const pauseBody = z.strictObject({ paused: z.boolean() });
 
+/** Spec 07 § 4: the new priority of a waiting job. */
+export const priorityBody = z.strictObject({ priority: priorityInput });
+/** Spec 07 § 3: a running job back to the queue; idle = Pause (back to Idle). */
+export const requeueBody = z.strictObject({ idle: z.boolean().default(false) });
+
 /** Spec 06 2.3: one job as the operator sees it (any owner). */
 export type OperatorJob = {
   id: string;
@@ -96,7 +103,9 @@ export type OperatorJob = {
   /** params.label when it is a string (fornax lease --label), else null. */
   label: string | null;
   group: string | null;
-  priority: 'low' | 'normal' | 'high';
+  priority: Priority;
+  /** Spec 07 § 5.2: since when the job is idle; null otherwise. */
+  idle_since: string | null;
   /** Input name → the uploaded file's name (null when the file is gone). */
   inputs: Record<string, string | null>;
   attempts: number;
