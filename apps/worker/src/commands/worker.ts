@@ -32,7 +32,7 @@ export async function workerCommand(ctx: Ctx, once: boolean, opts: { child?: boo
     // Spec 05c 4.4: the installed copy brings the installed built-in packs up to its own before the first claim.
     if (installed) {
       try {
-        await (opts.syncPacks ?? syncShippedPacks)({ shippedDir: join(ctx.paths.appDir, 'types'), typesDir: ctx.paths.typesDir, tools: config.tools, out: ctx.out, write: ctx.write, signal: ctx.signal });
+        await (opts.syncPacks ?? syncShippedPacks)({ shippedDir: join(ctx.paths.appDir, 'types'), typesDir: ctx.paths.typesDir, secretsDir: ctx.paths.secretsDir, tools: config.tools, out: ctx.out, write: ctx.write, signal: ctx.signal });
       } catch (e) {
         // Cut short by a stop (Ctrl+C): the worker ends right after, nothing to warn about.
         if (!ctx.signal.aborted) ctx.out(`WARN  the installed types could not be brought up to date (${errorName(e)}); the worker starts with them as they are`);

@@ -1,6 +1,7 @@
 import type { Pack } from '../pack.js';
-import { childEnv, logTail, runProcess } from '../process.js';
+import { logTail, runProcess } from '../process.js';
 import { expandArgv } from '../template.js';
+import { type SecretDirs, toolEnv } from '../tool-env.js';
 
 /** A pack's setup (venv, packages, models) may take this long. */
 export const SETUP_TIMEOUT_MS = 2 * 3_600_000;
@@ -10,6 +11,7 @@ export async function runPackSetup(o: {
   pack: Pack;
   dir: string;
   tools: Record<string, string>;
+  dirs: SecretDirs;
   signal: AbortSignal;
   write?: (text: string) => void;
   timeoutMs?: number;
@@ -18,7 +20,7 @@ export async function runPackSetup(o: {
   const r = await runProcess({
     argv: expandArgv(o.pack.impl.setup, { pack: o.dir, tools: o.tools }),
     cwd: o.dir,
-    env: childEnv(process.env, {}),
+    env: toolEnv(o.dirs),
     timeoutMs: o.timeoutMs ?? SETUP_TIMEOUT_MS,
     signal: o.signal,
     onOutput: o.write,

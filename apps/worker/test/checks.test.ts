@@ -6,6 +6,7 @@ import { loadPack } from '../src/pack.js';
 import { isAlive, NODE_TOOLS, readPids, useTempDir, waitFor, writeEchoPack } from './helpers.js';
 
 const tmp = useTempDir();
+const dirsFor = (typesDir: string) => ({ secretsDir: join(tmp(), 'secrets'), typesDir });
 
 describe('findTool', () => {
   test('an absolute path must exist; a bare name is looked up on PATH', () => {
@@ -62,7 +63,7 @@ describe('findTool', () => {
     const batch = join(tmp(), 'tool.cmd');
     writeFileSync(batch, '');
     const pack = loadPack(writeEchoPack(join(tmp(), 'types')));
-    expect(await checkPack(pack, { node: batch })).toBe(`tool node: ${batch} is a batch file; point worker.yaml at the real executable`);
+    expect(await checkPack(pack, { node: batch }, dirsFor(tmp()))).toBe(`tool node: ${batch} is a batch file; point worker.yaml at the real executable`);
   });
 });
 
@@ -106,7 +107,7 @@ describe('check isolation', () => {
   test('a failing check shows one short line of its output', async () => {
     const script = 'console.log("first\\nsecond\\u0007 " + "y".repeat(400)); process.exitCode = 4';
     const pack = loadPack(writeEchoPack(join(tmp(), 'types'), { name: 'noisy', check: ['{tool.node}', '-e', script] }));
-    const reason = (await checkPack(pack, NODE_TOOLS))!;
+    const reason = (await checkPack(pack, NODE_TOOLS, dirsFor(tmp())))!;
     expect(reason.startsWith('check failed (exit code 4): ')).toBe(true);
     const shown = reason.slice('check failed (exit code 4): '.length);
     expect(shown.length).toBeLessThanOrEqual(200);
@@ -129,7 +130,7 @@ describe('check isolation', () => {
     );
     const pack = loadPack(dir);
     // Long enough for a busy CI machine to start Node twice and write the pid file before the timeout fires.
-    expect(await checkPack(pack, NODE_TOOLS, { timeoutMs: 4000, killGraceMs: 300 })).toBe('check did not finish within 4 s');
+    expect(await checkPack(pack, NODE_TOOLS, dirsFor(tmp()), { timeoutMs: 4000, killGraceMs: 300 })).toBe('check did not finish within 4 s');
     const pids = await waitFor(() => readPids(pidFile), 5000, 'the check to record its pids');
     await waitFor(() => !isAlive(pids.parent) && !isAlive(pids.child), 5000, 'the check tree to die');
   });
@@ -140,7 +141,7 @@ describe('check isolation', () => {
     writeEchoPack(types, { name: 'b' });
     const stop = new AbortController();
     stop.abort();
-    expect(await preparePacks(types, NODE_TOOLS, { signal: stop.signal })).toEqual({ ready: [], problems: [] });
+    expect(await preparePacks(dirsFor(types), NODE_TOOLS, { signal: stop.signal })).toEqual({ ready: [], problems: [] });
   });
 });
 
@@ -148,17 +149,17 @@ describe('checkPack', () => {
   test('tools first, then the check command', async () => {
     const types = join(tmp(), 'types');
     const ok = loadPack(writeEchoPack(types));
-    expect(await checkPack(ok, NODE_TOOLS)).toBeNull();
-    expect(await checkPack(ok, {})).toBe('tools missing in worker.yaml: node');
-    expect(await checkPack(ok, { node: join(tmp(), 'nothing-here') })).toMatch(/tool node: .* was not found/);
+    expect(await checkPack(ok, NODE_TOOLS, dirsFor(tmp()))).toBeNull();
+    expect(await checkPack(ok, {}, dirsFor(tmp()))).toBe('tools missing in worker.yaml: node');
+    expect(await checkPack(ok, { node: join(tmp(), 'nothing-here') }, dirsFor(tmp()))).toMatch(/tool node: .* was not found/);
     const sick = loadPack(writeEchoPack(types, { name: 'sick', check: ['{tool.node}', '-e', 'console.log("no GPU"); process.exitCode = 3'] }));
-    expect(await checkPack(sick, NODE_TOOLS)).toBe('check failed (exit code 3): no GPU');
+    expect(await checkPack(sick, NODE_TOOLS, dirsFor(tmp()))).toBe('check failed (exit code 3): no GPU');
   });
 
   test('a check that hangs is stopped after the timeout and reported', async () => {
     const stuck = loadPack(writeEchoPack(join(tmp(), 'types'), { name: 'stuck', check: ['{tool.node}', '-e', 'setInterval(() => 0, 1000)'] }));
     const started = Date.now();
-    expect(await checkPack(stuck, NODE_TOOLS, { timeoutMs: 500, killGraceMs: 200 })).toBe('check did not finish within 0.5 s');
+    expect(await checkPack(stuck, NODE_TOOLS, dirsFor(tmp()), { timeoutMs: 500, killGraceMs: 200 })).toBe('check did not finish within 0.5 s');
     expect(Date.now() - started).toBeLessThan(5000);
   });
 });
@@ -168,7 +169,7 @@ describe('packs', () => {
     const types = join(tmp(), 'types');
     writeEchoPack(types);
     writeEchoPack(types, { name: 'sick', check: ['{tool.node}', '-e', 'process.exit(1)'] });
-    const r = await preparePacks(types, NODE_TOOLS);
+    const r = await preparePacks(dirsFor(types), NODE_TOOLS);
     expect(r.ready.map((p) => p.contract.name)).toEqual(['echo']);
     expect(r.problems).toEqual([{ name: 'sick', reason: expect.stringMatching(/^check failed \(exit code 1\)/) }]);
   });
@@ -182,5 +183,22 @@ describe('packs', () => {
     const later = new Date(Date.now() + 5000);
     utimesSync(join(dir, 'type.yaml'), later, later);
     expect(packsSignature(types)).not.toBe(one);
+  });
+});
+
+describe('the check environment (spec 08 § 4.2)', () => {
+  test('a check never sees an inherited variable named like a secret', async () => {
+    const types = tmp();
+    const dirs = dirsFor(types);
+    // No braces: every {…} in type.yaml is a symbol.
+    const pack = loadPack(writeEchoPack(types, { check: ['{tool.node}', '-e', 'process.exit(process.env.EXAMPLE_TOKEN === undefined ? 0 : 7)'] }));
+    process.env.EXAMPLE_TOKEN = 'inherited';
+    try {
+      expect(await checkPack(pack, NODE_TOOLS, dirs)).toBe('check failed (exit code 7)');
+      writeEchoPack(types, { name: 'wants', setup: ['{tool.node}', '-e', '0'], secrets: ['EXAMPLE_TOKEN'] });
+      expect(await checkPack(pack, NODE_TOOLS, dirs)).toBeNull();
+    } finally {
+      delete process.env.EXAMPLE_TOKEN;
+    }
   });
 });

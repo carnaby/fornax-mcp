@@ -107,7 +107,7 @@ export async function doctor(ctx: Ctx, only?: string): Promise<number> {
   if (only !== undefined && !selected.length && !errors.some(mine)) line(false, `type ${only} is not installed in ${ctx.paths.typesDir}`);
   if (only === undefined && !packs.length && !errors.length) line(false, `no type packs in ${ctx.paths.typesDir}; see fornax types install and fornax types add`);
   for (const p of selected) {
-    const problem = await checkPack(p, tools, { signal: ctx.signal, timeoutMs: ctx.loopOptions?.checkTimeoutMs });
+    const problem = await checkPack(p, tools, ctx.paths, { signal: ctx.signal, timeoutMs: ctx.loopOptions?.checkTimeoutMs });
     line(problem === null, `type ${p.contract.name} v${p.contract.version}${problem ? `: ${problem}` : ''}`);
   }
   return ok ? 0 : 1;

@@ -18,7 +18,7 @@ function setup() {
   writeEchoPack(shippedDir);
   writeEchoPack(typesDir);
   const out: string[] = [];
-  const sync = () => syncShippedPacks({ shippedDir, typesDir, tools: NODE_TOOLS, out: (l) => out.push(l), signal: new AbortController().signal });
+  const sync = () => syncShippedPacks({ shippedDir, typesDir, secretsDir: join(root, 'config', 'secrets'), tools: NODE_TOOLS, out: (l) => out.push(l), signal: new AbortController().signal });
   return { root, shippedDir, typesDir, out, sync };
 }
 
@@ -156,7 +156,7 @@ describe('syncShippedPacks', () => {
       if (basename(src) === 'echo') throw Object.assign(new Error(`EBUSY: resource busy, copyfile ${src}`), { code: 'EBUSY' });
       cpSync(src, dest, opts);
     }) as typeof cpSync;
-    await syncShippedPacks({ shippedDir, typesDir, tools: NODE_TOOLS, out: (l) => out.push(l), signal: new AbortController().signal, copy });
+    await syncShippedPacks({ shippedDir, typesDir, secretsDir: join(tmp(), 'secrets'), tools: NODE_TOOLS, out: (l) => out.push(l), signal: new AbortController().signal, copy });
     expect(out).toEqual(['WARN  echo: could not be brought up to date (EBUSY)', 'updated type other']);
     expect(readFileSync(join(typesDir, 'echo', 'scripts', 'tool.mjs'), 'utf8')).not.toBe('// new tool\n');
     expect(readFileSync(join(typesDir, 'echo', 'env', 'marker'), 'utf8')).toBe('venv');
@@ -171,7 +171,7 @@ describe('syncShippedPacks', () => {
     const swap = (_stage: string, target: string) => {
       throw new InstallError(`${target} could not be replaced (EBUSY): a program holds a file in it`);
     };
-    await syncShippedPacks({ shippedDir, typesDir, tools: NODE_TOOLS, out: (l) => out.push(l), signal: new AbortController().signal, swap });
+    await syncShippedPacks({ shippedDir, typesDir, secretsDir: join(tmp(), 'secrets'), tools: NODE_TOOLS, out: (l) => out.push(l), signal: new AbortController().signal, swap });
     expect(out).toHaveLength(1);
     expect(out[0]).toMatch(/^WARN {2}echo: .*could not be replaced \(EBUSY\)/);
     expect(readFileSync(join(typesDir, 'echo', 'env', 'marker'), 'utf8')).toBe('venv');
@@ -188,7 +188,7 @@ describe('syncShippedPacks', () => {
       renameSync(target, `${target}.old`);
       throw new InstallError(`${target} could not be replaced and the old one could not be put back (EPERM): rename ${target}.old to ${target} by hand`);
     };
-    await syncShippedPacks({ shippedDir, typesDir, tools: NODE_TOOLS, out: (l) => out.push(l), signal: new AbortController().signal, swap });
+    await syncShippedPacks({ shippedDir, typesDir, secretsDir: join(tmp(), 'secrets'), tools: NODE_TOOLS, out: (l) => out.push(l), signal: new AbortController().signal, swap });
     expect(out).toHaveLength(1);
     expect(out[0]).toMatch(/^WARN {2}echo: .*could not be put back/);
     expect(existsSync(join(typesDir, 'echo'))).toBe(false);
@@ -210,7 +210,7 @@ describe('syncShippedPacks', () => {
     const rename = () => {
       throw Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' });
     };
-    await syncShippedPacks({ shippedDir, typesDir, tools: NODE_TOOLS, out: (l) => out.push(l), signal: new AbortController().signal, rename });
+    await syncShippedPacks({ shippedDir, typesDir, secretsDir: join(tmp(), 'secrets'), tools: NODE_TOOLS, out: (l) => out.push(l), signal: new AbortController().signal, rename });
     expect(out).toEqual(['WARN  echo: echo.old could not be put back (EPERM); rename it by hand']);
     expect(existsSync(join(typesDir, 'echo.old', 'type.yaml'))).toBe(true);
   });

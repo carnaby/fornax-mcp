@@ -99,10 +99,13 @@ export function logTail(log: string): string {
   return last.length > 300 ? `${last.slice(0, 300)}…` : last;
 }
 
-/** The worker's environment without any FORNAX_* variable (the token never reaches a tool), plus `extra`. */
-export function childEnv(base: NodeJS.ProcessEnv, extra: Record<string, string>): Record<string, string> {
+/**
+ * The worker's environment without any FORNAX_* variable (the token never reaches a tool) and without the names in
+ * `hide` (upper case, matched in any letter case: Windows does not tell them apart), plus `extra`.
+ */
+export function childEnv(base: NodeJS.ProcessEnv, hide: ReadonlySet<string>, extra: Record<string, string>): Record<string, string> {
   const env: Record<string, string> = {};
-  for (const [k, v] of Object.entries(base)) if (v !== undefined && !/^fornax_/i.test(k)) env[k] = v;
+  for (const [k, v] of Object.entries(base)) if (v !== undefined && !/^fornax_/i.test(k) && !hide.has(k.toUpperCase())) env[k] = v;
   return { ...env, ...extra };
 }
 

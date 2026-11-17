@@ -1,8 +1,9 @@
 import { accessSync, constants, existsSync, readdirSync, statSync } from 'node:fs';
 import { delimiter, extname, isAbsolute, join } from 'node:path';
 import { loadPacks, missingTools, type Pack, type PackProblem } from './pack.js';
-import { childEnv, runProcess } from './process.js';
+import { runProcess } from './process.js';
 import { expandArgv } from './template.js';
+import { type SecretDirs, toolEnv } from './tool-env.js';
 
 /** A type's check may take this long (loading a model, asking the GPU) before it counts as failed. */
 export const CHECK_TIMEOUT_MS = 120_000;
@@ -79,7 +80,7 @@ export function findBatchOnly(cmd: string, env: NodeJS.ProcessEnv = process.env,
 export type CheckOptions = { timeoutMs?: number; killGraceMs?: number; signal?: AbortSignal };
 
 /** Why this pack cannot be offered now, or null when it is ready: its tools exist and its check exits 0 in time. */
-export async function checkPack(pack: Pack, tools: Record<string, string>, opts: CheckOptions = {}): Promise<string | null> {
+export async function checkPack(pack: Pack, tools: Record<string, string>, dirs: SecretDirs, opts: CheckOptions = {}): Promise<string | null> {
   const missing = missingTools(pack, tools);
   if (missing.length) return `tools missing in worker.yaml: ${missing.join(', ')}`;
   for (const name of pack.impl.tools) {
@@ -91,7 +92,7 @@ export async function checkPack(pack: Pack, tools: Record<string, string>, opts:
   const r = await runProcess({
     argv: expandArgv(pack.impl.check, { pack: pack.dir, tools }),
     cwd: pack.dir,
-    env: childEnv(process.env, {}),
+    env: toolEnv(dirs),
     timeoutMs,
     killGraceMs: opts.killGraceMs,
     signal: opts.signal,
@@ -105,13 +106,13 @@ export async function checkPack(pack: Pack, tools: Record<string, string>, opts:
 }
 
 /** Load every pack and run its check; the ready ones can be announced, the others say why not (per type). */
-export async function preparePacks(typesDir: string, tools: Record<string, string>, opts: CheckOptions = {}): Promise<{ ready: Pack[]; problems: PackProblem[] }> {
-  const { packs, failed } = loadPacks(typesDir);
+export async function preparePacks(dirs: SecretDirs, tools: Record<string, string>, opts: CheckOptions = {}): Promise<{ ready: Pack[]; problems: PackProblem[] }> {
+  const { packs, failed } = loadPacks(dirs.typesDir);
   const ready: Pack[] = [];
   const problems: PackProblem[] = failed.map((f) => ({ name: f.name, reason: oneLine(f.reason) }));
   for (const pack of packs) {
     if (opts.signal?.aborted) break;
-    const problem = await checkPack(pack, tools, opts);
+    const problem = await checkPack(pack, tools, dirs, opts);
     if (problem) problems.push({ name: pack.contract.name, reason: problem });
     else ready.push(pack);
   }

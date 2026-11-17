@@ -46,7 +46,7 @@ export async function typesList(ctx: Ctx): Promise<number> {
   const { packs, errors } = loadPacks(ctx.paths.typesDir);
   if (!packs.length && !errors.length) ctx.out(`no type packs in ${ctx.paths.typesDir}`);
   for (const p of packs) {
-    const problem = await checkPack(p, tools, { signal: ctx.signal });
+    const problem = await checkPack(p, tools, ctx.paths, { signal: ctx.signal });
     ctx.out(`${p.contract.name} v${p.contract.version}  ${problem ? `not ready: ${problem}` : 'ready'}`);
   }
   for (const e of errors) ctx.out(e);
@@ -115,7 +115,7 @@ export async function typesInstall(
       // (a shipped one gets its setup again at the next sync; a --from one is never marked shipped).
       writeOrigin(dest, origin, true);
       ctx.out(`running the setup of ${name}…`);
-      const why = await runPackSetup({ pack, dir: dest, tools, signal: ctx.signal, write: ctx.write });
+      const why = await runPackSetup({ pack, dir: dest, tools, dirs: ctx.paths, signal: ctx.signal, write: ctx.write });
       if (why) failure = `the setup of ${name} failed (${why.split(': ')[0]})${why.includes(': ') ? `: ${why.slice(why.indexOf(': ') + 2)}` : ''}`;
     }
     if (failure === null) writeOrigin(dest, origin);
@@ -136,7 +136,7 @@ export async function typesInstall(
     }
   }
   if (!installed) return 1;
-  const problem = await checkPack(loadPack(dest), tools, { signal: ctx.signal });
+  const problem = await checkPack(loadPack(dest), tools, ctx.paths, { signal: ctx.signal });
   ctx.out(problem ? `installed ${name} in ${dest}, but it is not ready: ${problem}` : `installed ${name} in ${dest}; it is ready`);
   ctx.out('a running worker picks it up between jobs');
   return problem ? 1 : 0;

@@ -102,7 +102,7 @@ export async function runWorker(o: LoopOptions): Promise<number> {
 
   const refresh = async () => {
     signature = packsSignature(o.paths.typesDir);
-    const { ready, problems } = await preparePacks(o.paths.typesDir, o.tools, { timeoutMs: o.checkTimeoutMs, signal: o.signal });
+    const { ready, problems } = await preparePacks(o.paths, o.tools, { timeoutMs: o.checkTimeoutMs, signal: o.signal });
     // Shutdown during the checks leaves some unchecked: never announce that reduced set (types are not withdrawn on stop).
     if (o.signal.aborted) return;
     for (const p of problems) o.out(`not offered: type pack ${p.name}: ${p.reason}`);

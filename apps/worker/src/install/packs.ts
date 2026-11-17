@@ -89,6 +89,8 @@ function setupNeeded(oldDir: string, oldFiles: Map<string, string>, next: Pack, 
 export type SyncOptions = {
   shippedDir: string;
   typesDir: string;
+  /** Spec 08: the setups and checks of a sync follow the worker's secrets rules. */
+  secretsDir: string;
   tools: Record<string, string>;
   out: (line: string) => void;
   write?: (text: string) => void;
@@ -230,7 +232,7 @@ async function setupAndCheck(o: SyncOptions, name: string, dir: string): Promise
   const pack = loadPack(dir);
   if (pack.impl.setup) {
     o.out(`running the setup of ${name}…`);
-    const why = await runPackSetup({ pack, dir, tools: o.tools, signal: o.signal, write: o.write, timeoutMs: o.setupTimeoutMs });
+    const why = await runPackSetup({ pack, dir, tools: o.tools, dirs: { secretsDir: o.secretsDir, typesDir: o.typesDir }, signal: o.signal, write: o.write, timeoutMs: o.setupTimeoutMs });
     if (why) {
       o.out(`WARN  ${name}: setup failed (${why}); the type is not ready (fornax doctor)`);
       return;
@@ -241,7 +243,7 @@ async function setupAndCheck(o: SyncOptions, name: string, dir: string): Promise
 }
 
 async function checkInstalled(o: SyncOptions, name: string, dir: string): Promise<void> {
-  const problem = await checkPack(loadPack(dir), o.tools, { signal: o.signal, timeoutMs: o.checkTimeoutMs });
+  const problem = await checkPack(loadPack(dir), o.tools, { secretsDir: o.secretsDir, typesDir: o.typesDir }, { signal: o.signal, timeoutMs: o.checkTimeoutMs });
   if (problem) o.out(`WARN  ${name} is not ready: ${problem}`);
 }
 
@@ -267,11 +269,11 @@ export async function syncShippedPacks(o: SyncOptions): Promise<void> {
 }
 
 /** Sync the packs when no worker runs (spec 05c 4.4); 'worker-running' leaves them to the worker's next start. */
-export async function syncPacksUnderLock(paths: Paths, o: Omit<SyncOptions, 'typesDir'>): Promise<'synced' | 'worker-running'> {
+export async function syncPacksUnderLock(paths: Paths, o: Omit<SyncOptions, 'typesDir' | 'secretsDir'>): Promise<'synced' | 'worker-running'> {
   const lock = lockWorker(paths);
   if (!('release' in lock)) return 'worker-running';
   try {
-    await syncShippedPacks({ ...o, typesDir: paths.typesDir });
+    await syncShippedPacks({ ...o, typesDir: paths.typesDir, secretsDir: paths.secretsDir });
     return 'synced';
   } finally {
     lock.release();

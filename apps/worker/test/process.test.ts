@@ -6,7 +6,7 @@ import { FAKE_TOOL, isAlive, readPids, useTempDir, waitFor } from './helpers.js'
 
 const tmp = useTempDir();
 const tool = (...args: string[]) => [process.execPath, FAKE_TOOL, ...args];
-const run = (argv: string[], extra: Partial<RunOptions> = {}) => runProcess({ argv, cwd: tmp(), env: childEnv(process.env, {}), ...extra });
+const run = (argv: string[], extra: Partial<RunOptions> = {}) => runProcess({ argv, cwd: tmp(), env: childEnv(process.env, new Set(), {}), ...extra });
 
 describe('runProcess', () => {
   test('progress lines go to onProgress, everything else to the log; the exit code comes back', async () => {
@@ -27,14 +27,19 @@ describe('runProcess', () => {
   });
 
   test('the tool never sees FORNAX_* variables except the three it is given', async () => {
-    const env = childEnv({ ...process.env, FORNAX_TOKEN: 'secret', fornax_other: 'x' }, { FORNAX_JOB_ID: 'J1', FORNAX_OUT: 'o', FORNAX_WORK: 'w' });
+    const env = childEnv({ ...process.env, FORNAX_TOKEN: 'secret', fornax_other: 'x' }, new Set(), { FORNAX_JOB_ID: 'J1', FORNAX_OUT: 'o', FORNAX_WORK: 'w' });
     const r = await runProcess({ argv: tool('env'), cwd: tmp(), env });
     expect(JSON.parse(r.log.trim())).toEqual(['FORNAX_JOB_ID', 'FORNAX_OUT', 'FORNAX_WORK']);
   });
 
+  test("a secret's name never reaches a tool, in any letter case (spec 08 § 4.2)", () => {
+    const env = childEnv({ EXAMPLE_TOKEN: 'a', example_token: 'b', Example_Token: 'c', OTHER: 'd', FORNAX_X: 'e' }, new Set(['EXAMPLE_TOKEN']), { ADDED: 'f' });
+    expect(env).toEqual({ OTHER: 'd', ADDED: 'f' });
+  });
+
   test('runs in the given working directory', async () => {
     const cwd = tmp();
-    const r = await runProcess({ argv: tool('cwd'), cwd, env: childEnv(process.env, {}) });
+    const r = await runProcess({ argv: tool('cwd'), cwd, env: childEnv(process.env, new Set(), {}) });
     expect(realpathSync(r.log.trim())).toBe(realpathSync(cwd));
   });
 

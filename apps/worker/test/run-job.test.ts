@@ -7,6 +7,7 @@ import { sweepJobs } from '../src/instance.js';
 import { loadPack } from '../src/pack.js';
 import { jobDirs } from '../src/paths.js';
 import { HEARTBEAT_MS, inputFileName, type JobDeps, runJob } from '../src/run-job.js';
+import { writeSecret } from '../src/secrets.js';
 import { fakeApi, fakeClaim, isAlive, jobsLeft, NODE_TOOLS, readPids, testPaths, useTempDir, waitFor, writeEchoPack } from './helpers.js';
 
 const tmp = useTempDir();
@@ -192,6 +193,19 @@ describe('runJob', () => {
       await runJob(fakeClaim({ params: { mode: 'env' } }), pack, deps(f.api));
     } finally {
       delete process.env.FORNAX_TEST_SECRET;
+    }
+    expect(JSON.parse(f.uploads.get('env.json')!)).toEqual(['FORNAX_JOB_ID', 'FORNAX_OUT', 'FORNAX_WORK']);
+  });
+
+  test('the tool never gets an inherited variable named like a stored secret (spec 08 § 4.2)', async () => {
+    const { paths, pack, deps } = setup();
+    writeSecret(paths.secretsDir, 'EXAMPLE_TOKEN', 'hf_test_value_123');
+    const f = fakeApi();
+    process.env.EXAMPLE_TOKEN = 'inherited';
+    try {
+      await runJob(fakeClaim({ params: { mode: 'env' } }), pack, deps(f.api));
+    } finally {
+      delete process.env.EXAMPLE_TOKEN;
     }
     expect(JSON.parse(f.uploads.get('env.json')!)).toEqual(['FORNAX_JOB_ID', 'FORNAX_OUT', 'FORNAX_WORK']);
   });
