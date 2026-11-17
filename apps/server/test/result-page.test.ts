@@ -7,7 +7,7 @@ import { revokeToken } from '../src/domain/tokens.js';
 import { FileStore } from '../src/files/store.js';
 import { resultPath } from '../src/http/links.js';
 import { sign } from '../src/http/signing.js';
-import { renderContract } from './fixtures.js';
+import { leaseContract, renderContract } from './fixtures.js';
 import { announce, issueToken, TEST_SECRET, uploadFile, useTestApp } from './helpers.js';
 
 const t = useTestApp();
@@ -191,5 +191,54 @@ describe('final review 07 #6', () => {
     const page = await open(id);
     expect(page.body).toContain('This job is idle: it waits until the operator starts it or its owner changes its priority.');
     expect(page.body).not.toContain('Place in the queue');
+  });
+
+  const labelledLease = { ...leaseContract, params: { ...leaseContract.params, properties: { ...leaseContract.params.properties, label: { type: 'string', maxLength: 80 } } } };
+
+  /** A lease of bob that ran and ended; `log` is the content of its log.txt (none when undefined). */
+  async function endedLease(o: { agent?: string; label?: string; log?: string } = {}): Promise<string> {
+    announce(t.db, [labelledLease], t.clock.now);
+    const worker = issueToken(t.db, 'pc', 'worker');
+    const bob = issueToken(t.db, 'bob');
+    const payload = { type: 'lease', params: { minutes: 5, ...(o.label ? { label: o.label } : {}) }, ...(o.agent ? { agent: o.agent } : {}) };
+    const id = (await t.app.inject({ method: 'POST', url: '/api/jobs', headers: bearer(bob), payload })).json().id as string;
+    const lease = (await t.app.inject({ method: 'POST', url: '/api/worker/jobs/claim', headers: bearer(worker), payload: { wait: 0 } })).json().lease as string;
+    if (o.log !== undefined) {
+      const res = await t.app.inject({
+        method: 'PUT', url: `/api/worker/jobs/${id}/outputs/log.txt?kind=log`,
+        headers: { ...bearer(worker), 'content-type': 'application/octet-stream', 'x-fornax-lease': lease }, payload: o.log,
+      });
+      expect(res.statusCode).toBe(201);
+    }
+    await t.app.inject({ method: 'POST', url: `/api/worker/jobs/${id}/complete`, headers: bearer(worker), payload: { lease, outputs: {} } });
+    return id;
+  }
+
+  test('who submitted it, the label, times in the server zone (spec 09 § 3.5, § 4)', async () => {
+    const id = await endedLease({ agent: 'agent-a', label: 'dock' });
+    expect((await open(id)).body).toMatch(/Job \w+ · dock · by agent-a · created 2026-11-13 10:00 UTC · finished 2026-11-13 10:00 UTC/);
+    const render = await (await actors()).start();
+    expect((await open(render.id)).body).toContain('· by token alice · created 2026-11-13 10:00 UTC');
+  });
+
+  test('an empty log says so, without an empty block or a download link; a lease without outputs says what it did (spec 09 § 7.1)', async () => {
+    const id = await endedLease({ log: '' });
+    const body = (await open(id)).body;
+    expect(body).toContain('The log is empty.');
+    expect(body).not.toContain('<pre></pre>');
+    expect(body).not.toContain('download');
+    expect(body).toContain("This job only held the card for a program on the worker's PC; it has no outputs.");
+  });
+
+  test('a hostile agent name stays text', async () => {
+    announce(t.db, [renderContract], t.clock.now);
+    const alice = issueToken(t.db, 'alice');
+    const scene = await uploadFile(t.app, alice, 'scene.blend', 'B');
+    // The name rule refuses markup; a row written past it (an older or changed server) must still be escaped.
+    const id = (await t.app.inject({ method: 'POST', url: '/api/jobs', headers: bearer(alice), payload: { type: 'render', params: { frame_start: 1 }, inputs: { scene } } })).json().id as string;
+    t.db.update(jobs).set({ agent: '<b>x</b>' }).where(eq(jobs.id, id)).run();
+    const body = (await open(id)).body;
+    expect(body).toContain('by &lt;b&gt;x&lt;/b&gt;');
+    expect(body).not.toContain('<b>x</b>');
   });
 });

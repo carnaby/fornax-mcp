@@ -3,6 +3,8 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ManifestOutput } from '../../db/schema.js';
 import { type JobRow, jobView } from '../../domain/jobs.js';
 import { downloadableFile } from '../../domain/outputs.js';
+import { dateTimeText } from '../../domain/time-text.js';
+import { byText, labelOf, ownerName } from '../../domain/who.js';
 import { INLINE_IMAGE_BYTES, INLINE_IMAGE_MIMES, INLINE_TEXT_BYTES, isTextMime } from '../../files/mime.js';
 import type { RouteDeps } from '../deps.js';
 import { downloadPath, jobOfResultLink } from '../links.js';
@@ -74,18 +76,33 @@ async function resultPage(deps: RouteDeps, job: JobRow): Promise<string> {
   const logFile = job.manifest?.log ? downloadableFile(deps.db, job, job.manifest.log) : null;
   const log = logFile ? await deps.store.tail(logFile.id, LOG_TAIL_BYTES).catch(() => null) : null;
   const percent = job.progress === null ? null : Math.round(job.progress * 100);
+  const zone = deps.config.timeZone;
+  // Spec 09 § 3.5: label, who submitted it and the times in the server's zone, in one line.
+  const facts = [
+    `Job ${job.id}`,
+    labelOf(job.params) ?? '',
+    byText(job.agent, ownerName(deps.db, job.ownerTokenId)),
+    `created ${dateTimeText(job.createdAt, zone)}`,
+    job.finishedAt ? `finished ${dateTimeText(job.finishedAt, zone)}` : '',
+  ].filter((part) => part !== '').join(' · ');
+  const noOutputs = !outputs.some((o) => o !== null);
   return page({
     title: `Fornax · ${job.type} · ${job.state}`,
     head: active ? html`<meta http-equiv="refresh" content="${REFRESH_S}">` : undefined,
     body: html`<h1>${job.type} <span class="muted">· ${job.state}</span></h1>
-<p class="muted">Job ${job.id} · created ${view.created_at}${view.finished_at ? ` · finished ${view.finished_at}` : ''}</p>
+<p class="muted">${facts}</p>
 ${view.type_unavailable ? html`<p class="error">The worker does not offer this job type now; the job waits until it does.</p>` : null}
 ${view.position !== null ? html`<p>Place in the queue: ${view.position}</p>` : null}
 ${job.state === 'queued' && view.priority === 'idle' ? html`<p>This job is idle: it waits until the operator starts it or its owner changes its priority.</p>` : null}
 ${job.state === 'running' ? html`<p><progress max="100" value="${percent ?? 0}"></progress></p><p>${percent === null ? '' : `${percent} % `}${job.progressMessage ?? ''}</p>` : null}
 ${job.error ? html`<p class="error">${job.error}</p>` : null}
 ${active ? html`<p class="muted">This page refreshes every ${REFRESH_S} seconds.</p>` : null}
-${outputs.some((o) => o !== null) ? html`<h2>Outputs</h2>${outputs}` : null}
-${log && logFile ? html`<h2>Log</h2><p class="muted">${log.truncated ? 'The last 100 kB · ' : ''}<a href="${downloadPath(deps, job, logFile).path}">download</a></p><pre>${log.text}</pre>` : null}`,
+${noOutputs ? null : html`<h2>Outputs</h2>${outputs}`}
+${job.type === 'lease' && job.state === 'succeeded' && noOutputs ? html`<p>This job only held the card for a program on the worker's PC; it has no outputs.</p>` : null}
+${log && logFile
+  ? log.text === ''
+    ? html`<h2>Log</h2><p class="muted">The log is empty.</p>`
+    : html`<h2>Log</h2><p class="muted">${log.truncated ? 'The last 100 kB · ' : ''}<a href="${downloadPath(deps, job, logFile).path}">download</a></p><pre>${log.text}</pre>`
+  : null}`,
   });
 }
