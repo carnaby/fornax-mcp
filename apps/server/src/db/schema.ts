@@ -106,6 +106,8 @@ export const jobs = sqliteTable(
     stoppedLeaseId: text('stopped_lease_id'),
     /** Spec 07 § 2.3: since when the job is idle; null when it is not. */
     idleSince: ts('idle_since'),
+    /** Spec 09 § 2: who submitted the job, as the agent named itself; every client sees it. Null without one. */
+    agent: text('agent'),
   },
   (t) => [index('jobs_queue').on(t.state, t.queueRank), index('jobs_owner').on(t.ownerTokenId), index('jobs_group').on(t.group)],
 );

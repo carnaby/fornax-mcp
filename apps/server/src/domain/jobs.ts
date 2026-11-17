@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { extname } from 'node:path';
-import { defaultPriority, JOB_STATES, PRIORITIES, type Priority, validateParams } from '@fornax/protocol';
+import { AGENT_RULE, agentProblem, defaultPriority, JOB_STATES, PRIORITIES, type Priority, validateParams } from '@fornax/protocol';
 import { and, count, desc, eq, inArray, lt, ne, or } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import type { Config } from '../config.js';
@@ -29,6 +29,8 @@ export type SubmitInput = {
   priority?: Priority;
   group?: string | null;
   callback_url?: string | null;
+  /** Spec 09 § 2.3: who submits it; '' is none. */
+  agent?: string | null;
 };
 
 export function submitJob(db: Db, config: Config, owner: string, input: SubmitInput, now: Date): JobRow {
@@ -41,6 +43,9 @@ export function submitJob(db: Db, config: Config, owner: string, input: SubmitIn
     throw unprocessable('callback_url is not allowed on this server');
   }
   const callbackHref = input.callback_url == null ? null : new URL(input.callback_url).href;
+  // Spec 09 § 2.2: an empty name is no agent.
+  const agent = input.agent ? input.agent : null;
+  if (agent !== null && agentProblem(agent)) throw unprocessable(`agent ${AGENT_RULE}`);
   const given = input.inputs ?? {};
   for (const name of Object.keys(given)) if (!Object.hasOwn(contract.inputs, name)) throw unprocessable(`unknown input ${name}`);
   if (new Set(Object.values(given)).size !== Object.values(given).length) throw unprocessable('one file cannot be two inputs');
@@ -70,7 +75,7 @@ export function submitJob(db: Db, config: Config, owner: string, input: SubmitIn
       priority: PRIORITIES.indexOf(priority), group: input.group ?? null, callbackUrl: callbackHref,
       state: 'queued', attempts: 0, envReleases: 0, runAfter: now, leaseId: null, leaseExpiresAt: null, confirmedAt: null, progress: null, progressMessage: null,
       error: null, manifest: null, createdAt: now, startedAt: null, finishedAt: null, updatedAt: now,
-      queueRank: null, stoppedLeaseId: null, idleSince: priority === 'idle' ? now : null,
+      queueRank: null, stoppedLeaseId: null, idleSince: priority === 'idle' ? now : null, agent,
     };
     tx.insert(jobs).values(row).run();
     const ids = Object.values(inputs);
@@ -148,6 +153,7 @@ export function jobView(db: Db, row: JobRow) {
     state: row.state,
     priority: PRIORITIES[row.priority] ?? 'normal',
     group: row.group,
+    agent: row.agent,
     params: row.params,
     inputs: row.inputs,
     attempts: row.attempts,

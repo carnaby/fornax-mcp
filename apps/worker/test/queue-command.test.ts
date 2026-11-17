@@ -42,7 +42,7 @@ const view = (over: Partial<OperatorQueue> = {}): OperatorQueue => ({
   running: null, queued: [], finished: [], ...over,
 });
 const job = (over: Partial<OperatorQueue['queued'][number]> = {}): OperatorQueue['queued'][number] => ({
-  id: '01JTEST', type: 'upscale', owner: 'carol', state: 'queued', label: null, group: null, priority: 'normal',
+  id: '01JTEST', type: 'upscale', owner: 'carol', agent: null, state: 'queued', label: null, group: null, priority: 'normal',
   inputs: { video: 'clip.mp4' }, attempts: 0, type_unavailable: false, run_after: null, idle_since: null,
   created_at: '2026-11-15T13:56:00.000Z', started_at: null, finished_at: null,
   progress: null, progress_message: null, error: null, result_url: 'https://fornax.example.com/r/x', ...over,

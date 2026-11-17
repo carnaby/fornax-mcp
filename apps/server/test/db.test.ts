@@ -18,7 +18,7 @@ test('migrations create the tables', () => {
   expect(row?.status).toBe('pending');
 });
 
-/** A database as 0.8.0 left it: 0007 not applied, its new columns absent, a job saved with priority 0 (then: low). */
+/** A database as 0.8.0 left it: 0007 and 0008 not applied, their new columns absent, a job saved with priority 0 (then: low). */
 function databaseOf080(file: string): void {
   const opened = openDb(file);
   try {
@@ -33,9 +33,10 @@ function databaseOf080(file: string): void {
   }
   const raw = new SqliteDatabase(file);
   try {
-    raw.exec('DELETE FROM __drizzle_migrations WHERE created_at = (SELECT max(created_at) FROM __drizzle_migrations)');
+    raw.exec('DELETE FROM __drizzle_migrations WHERE created_at IN (SELECT created_at FROM __drizzle_migrations ORDER BY created_at DESC LIMIT 2)');
     raw.exec('ALTER TABLE jobs DROP COLUMN stopped_lease_id');
     raw.exec('ALTER TABLE jobs DROP COLUMN idle_since');
+    raw.exec('ALTER TABLE jobs DROP COLUMN agent');
   } finally {
     raw.close();
   }
@@ -51,13 +52,13 @@ function withDb<T>(file: string, fn: (db: ReturnType<typeof openDb>['db']) => T)
   }
 }
 
-test('0007: a low job of 0.8.0 becomes normal once; an idle job later stays idle (spec 07 § 2.1)', () => {
+test('0007 and 0008: a low job of 0.8.0 becomes normal once and has no agent; an idle job later stays idle (spec 07 § 2.1, spec 09 § 2.1)', () => {
   const dir = mkdtempSync(join(tmpdir(), 'fornax-0007-'));
   try {
     const file = join(dir, 'fornax.db');
     databaseOf080(file);
     withDb(file, (db) => {
-      expect(db.select().from(jobs).where(eq(jobs.id, 'J1')).get()).toMatchObject({ priority: 1, stoppedLeaseId: null, idleSince: null });
+      expect(db.select().from(jobs).where(eq(jobs.id, 'J1')).get()).toMatchObject({ priority: 1, stoppedLeaseId: null, idleSince: null, agent: null });
       db.update(jobs).set({ priority: 0 }).where(eq(jobs.id, 'J1')).run();
     });
     withDb(file, (db) => expect(db.select().from(jobs).where(eq(jobs.id, 'J1')).get()?.priority).toBe(0));

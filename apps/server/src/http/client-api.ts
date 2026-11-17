@@ -50,6 +50,7 @@ export const clientRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps) => 
     inputs: z.record(z.string(), z.string().min(1).max(40)).default({}),
     priority: priorityInput.optional(),
     group: z.string().regex(GROUP).nullable().default(null),
+    agent: z.string().max(200).nullable().default(null),
     callback_url: z.string().max(2000).nullable().default(null),
   });
 

@@ -92,6 +92,9 @@ export function buildMcpServer(ctx: McpContext): McpServer {
         inputs: z.record(z.string(), z.string().min(1).max(40)).default({}).describe('Input name to file_id from create_upload, after the upload finished.'),
         priority: priorityInput.optional().describe("high, normal or idle (low is taken as normal); without it the type's default_priority."),
         group: z.string().regex(GROUP).optional().describe('A label for related jobs (e.g. one per animation), to find them with list_jobs.'),
+        agent: z
+          .string().max(200).optional()
+          .describe('The name other agents reach you by (e.g. your session name). Every client of this server sees it next to the job, so put nothing secret in it.'),
         callback_url: z.string().max(2000).optional().describe('Gets a signed POST when the job finishes; only URLs under a prefix the server allows.'),
       }),
     },
@@ -99,7 +102,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
       runJson(ctx, (me) => {
         const row = submitJob(
           db, deps.config, me.tokenId,
-          { type: a.type, params: a.params, inputs: a.inputs, ...(a.priority ? { priority: a.priority } : {}), group: a.group ?? null, callback_url: a.callback_url ?? null },
+          { type: a.type, params: a.params, inputs: a.inputs, ...(a.priority ? { priority: a.priority } : {}), group: a.group ?? null, callback_url: a.callback_url ?? null, agent: a.agent ?? null },
           deps.clock(),
         );
         const d = jobDetail(db, deps.config, row, deps.clock());

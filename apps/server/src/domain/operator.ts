@@ -40,6 +40,7 @@ export function operatorQueue(db: Db, now: Date, resultUrlOf: (job: JobRow) => s
     id: j.id,
     type: j.type,
     owner: owners.get(j.ownerTokenId) ?? null,
+    agent: j.agent,
     state: j.state,
     label: typeof j.params.label === 'string' ? j.params.label : null,
     group: j.group,
