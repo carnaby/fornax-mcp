@@ -49,6 +49,16 @@ const job = (over: Partial<OperatorQueue['queued'][number]> = {}): OperatorQueue
 });
 
 describe('renderQueue', () => {
+  test('a job with an agent shows it with its token; a job without agent shows its token (spec 09 § 3.4)', () => {
+    const lines = renderQueue(view({
+      running: job({ id: 'R1', state: 'running', agent: 'agent-a', owner: 'bob', started_at: '2026-11-15T13:59:00.000Z' }),
+      queued: [job({ id: 'Q1', agent: 'agent-b' }), job({ id: 'Q2' })],
+    }));
+    expect(lines[1]).toContain('upscale  agent-a (bob)  clip.mp4');
+    expect(lines[2]).toContain('1  upscale  agent-b (carol)  clip.mp4');
+    expect(lines[3]).toContain('2  upscale  carol  clip.mp4');
+  });
+
   test('a high job says high; an idle job says since when (spec 07 § 4.3)', () => {
     const lines = renderQueue(view({ queued: [job({ id: 'QH', priority: 'high' }), job({ id: 'QI', priority: 'idle', idle_since: '2026-11-15T13:30:00.000Z' })] }));
     expect(lines.find((l) => l.includes('QH'))).toContain('  high  ');

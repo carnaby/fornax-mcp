@@ -85,6 +85,7 @@ describe('fornax CLI', () => {
       ['lease', '--priority', 'urgent', '--', process.execPath],
       ['lease', '--priority', '', '--', process.execPath],
       ['lease', '--label', 'a;b', '--', process.execPath],
+      ['lease', '--agent', 'a;b', '--', process.execPath],
       ['lease', '--bogus', '--', process.execPath],
       ['lease', 'extra', '--', process.execPath],
       ['lease', 'token', 'extra'],
@@ -95,6 +96,11 @@ describe('fornax CLI', () => {
       expect(r.code, argv.join(' ')).toBe(120);
       expect(r.text, argv.join(' ')).toContain('usage: fornax lease');
     }
+    ctx.env = { FORNAX_AGENT: '-x' };
+    const badAgent = await run('lease', '--', process.execPath);
+    expect(badAgent.code).toBe(120);
+    expect(badAgent.text).toContain('fornax lease: FORNAX_AGENT may hold at most 80 characters');
+    ctx.env = {};
     const none = await run('lease', '--', process.execPath);
     expect(none.code).toBe(121);
     expect(none.text).toBe('fornax lease: no client token: store one with fornax lease token (or set FORNAX_CLIENT_TOKEN)');

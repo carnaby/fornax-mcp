@@ -1,5 +1,5 @@
 import { parseArgs } from 'node:util';
-import { type Priority, priorityInput } from '@fornax/protocol';
+import { AGENT_RULE, agentProblem, type Priority, priorityInput } from '@fornax/protocol';
 import { ClientApi } from '../client-api.js';
 import { ConfigError, readClientToken, readWorkerConfig } from '../config.js';
 import { defaultLabel, labelProblem } from '../lease/program.js';
@@ -9,7 +9,7 @@ import { leaseToken } from './lease-token.js';
 
 /** The forms of `fornax lease`: the one source of its lines in its own usage and in the CLI's. */
 export const LEASE_FORMS = [
-  'fornax lease [--minutes N] [--wait-minutes N] [--rerun] [--priority high|normal|idle] [--label TEXT] -- <program> [args…]',
+  'fornax lease [--minutes N] [--wait-minutes N] [--rerun] [--priority high|normal|idle] [--label TEXT] [--agent NAME] -- <program> [args…]',
   'fornax lease token        (reads a client token from standard input)',
 ] as const;
 
@@ -23,6 +23,13 @@ function whole(raw: string | undefined, fallback: number | null, min: number, ma
   if (raw === undefined) return fallback;
   if (!/^[0-9]{1,7}$/.test(raw) || Number(raw) < min || Number(raw) > max) return `${name} must be a whole number from ${min} to ${max}`;
   return Number(raw);
+}
+
+/** Spec 09 § 2.3: --agent, else FORNAX_AGENT, else none; a blank value is none; a bad one names its source. */
+export function agentOf(flag: string | undefined, env: NodeJS.ProcessEnv): { agent: string | null } | { problem: string } {
+  const [source, raw] = flag !== undefined ? ['--agent', flag] : ['FORNAX_AGENT', env.FORNAX_AGENT ?? ''];
+  if (raw.trim() === '') return { agent: null };
+  return agentProblem(raw) ? { problem: `${source} ${AGENT_RULE}` } : { agent: raw };
 }
 
 /**
@@ -50,6 +57,7 @@ export async function leaseCommand(argv: string[], ctx: Ctx): Promise<number> {
         rerun: { type: 'boolean' },
         priority: { type: 'string' },
         label: { type: 'string' },
+        agent: { type: 'string' },
         help: { type: 'boolean', short: 'h' },
       },
     });
@@ -86,8 +94,10 @@ export async function leaseCommand(argv: string[], ctx: Ctx): Promise<number> {
     if (problem) return usage(problem);
   }
   const label = v.label !== undefined ? v.label || null : defaultLabel(program);
-
   const env = ctx.env ?? process.env;
+  const agent = agentOf(v.agent, env);
+  if ('problem' in agent) return usage(agent.problem);
+
   let server: string;
   let token: string | null;
   try {
@@ -103,7 +113,7 @@ export async function leaseCommand(argv: string[], ctx: Ctx): Promise<number> {
     return LEASE_EXIT.noLease;
   }
   return runLease(
-    { minutes: minutes ?? 60, waitMinutes, rerun: v.rerun === true, priority, label, program, args },
+    { minutes: minutes ?? 60, waitMinutes, rerun: v.rerun === true, priority, label, agent: agent.agent, program, args },
     { api: new ClientApi({ server, token }), leasesDir: ctx.paths.leasesDir, say: err, signal: ctx.signal, env, cwd: process.cwd(), timings: ctx.leaseTimings },
   );
 }

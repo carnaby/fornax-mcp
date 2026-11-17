@@ -20,6 +20,8 @@ export type LeaseRequest = {
   /** None: the type's default (spec 07 § 4.4). */
   priority?: Priority;
   label: string | null;
+  /** Spec 09 § 2.3: who asks for the lease (--agent or FORNAX_AGENT); null: none. */
+  agent: string | null;
   program: string;
   args: string[];
 };
@@ -429,7 +431,10 @@ export async function runLease(req: LeaseRequest, d: LeaseDeps): Promise<number>
   let view: ClientJobView;
   try {
     const params = { minutes: req.minutes, ...(req.label ? { label: req.label } : {}) };
-    view = await persist((signal) => d.api.submit({ type: LEASE_TYPE, params, ...(req.priority ? { priority: req.priority } : {}) }, signal), d.signal, { deadline });
+    view = await persist(
+      (signal) => d.api.submit({ type: LEASE_TYPE, params, ...(req.priority ? { priority: req.priority } : {}), ...(req.agent ? { agent: req.agent } : {}) }, signal),
+      d.signal, { deadline },
+    );
   } catch (e) {
     if (e instanceof Stopped) {
       say('interrupted before a lease was asked for');

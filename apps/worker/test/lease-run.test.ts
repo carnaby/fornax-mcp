@@ -80,7 +80,7 @@ function lease(
   const lines: string[] = [];
   const leasesDir = extra.leasesDir ?? join(tmp(), 'leases');
   const run = runLease(
-    { minutes: 60, waitMinutes: null, rerun: false, priority: 'normal', label: null, program: process.execPath, args: [LEASE_PROGRAM, ...args], ...o },
+    { minutes: 60, waitMinutes: null, rerun: false, priority: 'normal', label: null, agent: null, program: process.execPath, args: [LEASE_PROGRAM, ...args], ...o },
     {
       api: server.api, leasesDir, signal: extra.signal ?? new AbortController().signal,
       say: (l) => {
@@ -94,6 +94,30 @@ function lease(
 }
 
 describe('runLease', () => {
+  test.each([
+    [null, false],
+    ['agent-a', true],
+  ] as const)('agent %s: the submit sends it only when there is one (spec 09 § 2.3)', async (agent, sent) => {
+    const s = fakeServer();
+    const l = lease(s, ['--exit', '0'], { agent });
+    await waitFor(() => s.calls.includes('job'), 5000, 'the wait');
+    s.set({ state: 'running', started_at: STARTED, note: null, position: null });
+    expect(await l.run).toBe(0);
+    const body = s.bodies[0] as Record<string, unknown>;
+    expect('agent' in body).toBe(sent);
+    if (sent) expect(body.agent).toBe(agent);
+  });
+
+  test("FORNAX_AGENT stays in the program's environment (spec 09 § 2.3)", async () => {
+    const s = fakeServer();
+    const report = join(tmp(), 'report.json');
+    const l = lease(s, ['--report', report, '--exit', '0'], { agent: 'agent-a' }, { env: { ...process.env, FORNAX_AGENT: 'agent-a' } });
+    await waitFor(() => s.calls.includes('job'), 5000, 'the wait');
+    s.set({ state: 'running', started_at: STARTED, note: null, position: null });
+    expect(await l.run).toBe(0);
+    expect(readJson<{ fornax: string[] }>(report)!.fornax).toContain('FORNAX_AGENT');
+  });
+
   test.each(['', '  '])('a blank FORNAX_LEASE (%j, as `FORNAX_LEASE= cmd` passes it) is taken as not set: a lease is asked for', async (blank) => {
     const s = fakeServer();
     const l = lease(s, ['--exit', '5'], {}, { env: { ...process.env, FORNAX_LEASE: blank } });

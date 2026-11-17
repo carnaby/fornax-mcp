@@ -36,6 +36,8 @@ export function duration(ms: number): string {
 
 /** What a job works on: its label, else its first input's file name, else its group. */
 const what = (j: OperatorJob): string => j.label ?? Object.values(j.inputs).find((n) => n) ?? j.group ?? '';
+/** Spec 09 § 2.4: who submitted a job: "agent (token)", else the token's name, else "?" (a server older than 0.11.0 sends no agent). */
+const who = (j: OperatorJob): string => (j.agent ? `${j.agent} (${j.owner ?? '?'})` : (j.owner ?? '?'));
 const cols = (...parts: string[]) => parts.filter((p) => p !== '').join('  ');
 
 function headline(q: OperatorQueue): string {
@@ -57,7 +59,7 @@ export function renderQueue(q: OperatorQueue, finishedShown = 10): string[] {
   if (r) {
     const elapsed = r.started_at ? duration(now - Date.parse(r.started_at)) : '';
     const progress = r.progress !== null ? `${Math.round(r.progress * 100)} %` : '';
-    lines.push(cols('running ', r.type, r.owner ?? '?', what(r), elapsed, progress, r.progress_message ?? '', r.id));
+    lines.push(cols('running ', r.type, who(r), what(r), elapsed, progress, r.progress_message ?? '', r.id));
   } else {
     lines.push('running   nothing');
   }
@@ -66,11 +68,11 @@ export function renderQueue(q: OperatorQueue, finishedShown = 10): string[] {
     // Spec 07 § 4.3: high and idle are said; normal is the plain case.
     const priority = j.priority === 'high' ? 'high' : j.priority === 'idle' ? (j.idle_since ? `idle since ${clock(j.idle_since)}` : 'idle') : '';
     const notes = [priority, j.type_unavailable ? 'type not offered' : '', j.run_after ? `retry at ${clock(j.run_after)}` : ''].filter(Boolean).join(', ');
-    lines.push(cols(i === 0 ? 'waiting ' : '        ', String(i + 1), j.type, j.owner ?? '?', what(j), `waits ${duration(now - Date.parse(j.created_at))}`, notes, j.id));
+    lines.push(cols(i === 0 ? 'waiting ' : '        ', String(i + 1), j.type, who(j), what(j), `waits ${duration(now - Date.parse(j.created_at))}`, notes, j.id));
   });
   q.finished.slice(0, finishedShown).forEach((j, i) => {
     const took = j.started_at && j.finished_at ? `took ${duration(Date.parse(j.finished_at) - Date.parse(j.started_at))}` : '';
-    lines.push(cols(i === 0 ? 'finished' : '        ', j.state, j.type, j.owner ?? '?', what(j), took, j.finished_at ? `at ${clock(j.finished_at)}` : '', j.id));
+    lines.push(cols(i === 0 ? 'finished' : '        ', j.state, j.type, who(j), what(j), took, j.finished_at ? `at ${clock(j.finished_at)}` : '', j.id));
     if (j.state === 'failed' && j.error) lines.push(`          ${j.error}`);
   });
   return lines;

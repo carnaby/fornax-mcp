@@ -92,7 +92,7 @@ function leaseAt(server: string, token: string, leasesDir: string, args: string[
   const lines: string[] = [];
   const stop = new AbortController();
   const run = runLease(
-    { minutes: 60, waitMinutes: null, rerun: false, priority: 'normal', label: 'test', program: process.execPath, args: [LEASE_PROGRAM, ...args], ...o },
+    { minutes: 60, waitMinutes: null, rerun: false, priority: 'normal', label: 'test', agent: null, program: process.execPath, args: [LEASE_PROGRAM, ...args], ...o },
     {
       api: new ClientApi({ server, token }), leasesDir, say: (l) => lines.push(l),
       signal: stop.signal, env: baseEnv(), cwd: tmp(), timings: { ...fast, ...timings },
