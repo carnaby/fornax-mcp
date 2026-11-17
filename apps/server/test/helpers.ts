@@ -31,6 +31,8 @@ export function testConfig(dataDir: string, overrides: Partial<Config> = {}): Co
     limits: { maxUploadBytes: 1024 * 1024, maxOutputBytes: 1024 * 1024, maxQueuedPerToken: 50 },
     retention: { finishedMs: 14 * 86_400_000, orphanUploadMs: 24 * 3_600_000, unavailableTypeMs: 7 * 86_400_000, pendingTokenMs: 7 * 86_400_000 },
     webhooks: { allowedPrefixes: [] },
+    timeZone: 'UTC',
+    timeZoneProblem: null,
     ...overrides,
   };
 }

@@ -123,6 +123,11 @@ describe('loadConfig', () => {
     expect(loadConfig(env({ FORNAX_WEBHOOK_PREFIXES: ' , ' })).webhooks.allowedPrefixes).toEqual([]);
   });
 
+  test('TZ: the zone of times in sentences; an unknown one falls back to UTC with a reason (spec 09 § 4)', () => {
+    expect(loadConfig(env({ TZ: 'Europe/Bratislava' }))).toMatchObject({ timeZone: 'Europe/Bratislava', timeZoneProblem: null });
+    expect(loadConfig(env({ TZ: 'Nowhere/Else' }))).toMatchObject({ timeZone: 'UTC', timeZoneProblem: expect.stringContaining('TZ Nowhere/Else') });
+  });
+
   test('.env.example lists exactly the variables the server reads, with values it accepts', () => {
     const text = readFileSync(new URL('../../../.env.example', import.meta.url), 'utf8');
     const entries = text

@@ -12,6 +12,7 @@ import { getOfferedType, isOffered } from './job-types.js';
 import { queuePaused } from './queue-control.js';
 import { IDLE, placeJob } from './queue-order.js';
 import { jobChanges, jobSignal } from './signal.js';
+import { timeText } from './time-text.js';
 import { callbackAllowed } from './webhooks.js';
 import { workerOnline, type WorkerView } from './worker-state.js';
 
@@ -170,8 +171,6 @@ export const IDLE_NOTE = 'this job is idle: it waits until the operator starts i
 export const IDLE_WARNING = 'this job waits until the operator starts it; pass priority normal to run it automatically';
 export const submitWarning = (row: JobRow): string | null => (row.priority === IDLE ? IDLE_WARNING : null);
 
-/** "13:40 UTC": a time in a sentence does not depend on the server's time zone; exact times are in the fields. */
-const hhmm = (d: Date): string => `${d.toISOString().slice(11, 16)} UTC`;
 const AGAIN = 'asking again changes nothing';
 
 /**
@@ -181,11 +180,13 @@ const AGAIN = 'asking again changes nothing';
  */
 export function jobNote(db: Db, config: Config, row: JobRow, worker: WorkerView, now: Date): string | null {
   if (row.state !== 'queued') return null;
+  // Spec 09 § 4: times in the server's zone; exact times are in the fields.
+  const at = (d: Date) => timeText(d, now, config.timeZone);
   if (row.priority === IDLE && isOffered(db, row.type)) return IDLE_NOTE;
   if (!worker.online) {
     return worker.last_seen === null
       ? `waiting: the worker has not connected yet; the job starts when the worker runs, ${AGAIN}`
-      : `waiting: the worker is offline since ${hhmm(new Date(worker.last_seen))}; the job starts when the worker runs again, ${AGAIN}`;
+      : `waiting: the worker is offline since ${at(new Date(worker.last_seen))}; the job starts when the worker runs again, ${AGAIN}`;
   }
   const position = queuePosition(db, row);
   if (position === null) {
@@ -194,9 +195,9 @@ export function jobNote(db: Db, config: Config, row: JobRow, worker: WorkerView,
   }
   if (queuePaused(db)) return `waiting: the worker's operator paused the queue; the job waits until they resume it, ${AGAIN}`;
   if (worker.waiting) return worker.waiting.message;
-  const retry = row.runAfter.getTime() > now.getTime() ? `; the next attempt starts at ${hhmm(row.runAfter)} at the earliest` : '';
+  const retry = row.runAfter.getTime() > now.getTime() ? `; the next attempt starts at ${at(row.runAfter)} at the earliest` : '';
   const running = db.select({ type: jobs.type, startedAt: jobs.startedAt }).from(jobs).where(eq(jobs.state, 'running')).get();
-  if (running) return `waiting, position ${position}; running ${running.type} since ${hhmm(running.startedAt ?? now)}${retry}`;
+  if (running) return `waiting, position ${position}; running ${running.type} since ${at(running.startedAt ?? now)}${retry}`;
   if (position === 1) return `waiting, position 1; the worker takes it next${retry}`;
   return `waiting, position ${position}; the worker takes the jobs ahead first${retry}`;
 }

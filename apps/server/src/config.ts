@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { timeZoneOf } from './domain/time-text.js';
 
 const MB = 1024 * 1024;
 const HOUR = 3_600_000;
@@ -26,6 +27,7 @@ export const CONFIG_VARIABLES = [
   'FORNAX_WORKER_ZIP',
   'FORNAX_TRAY_MSI',
   'FORNAX_TRAY_DEB',
+  'TZ',
 ] as const;
 
 export type Config = {
@@ -49,6 +51,10 @@ export type Config = {
   /** Spec 06d 2.1: the tray's installers served at /downloads/fornax-tray.msi|deb. */
   trayMsi: string;
   trayDeb: string;
+  /** Spec 09 § 4: the zone of times in sentences (notes, the result page); from TZ, else the system's. */
+  timeZone: string;
+  /** Why TZ was not taken (it is then UTC); logged once at start. */
+  timeZoneProblem: string | null;
 };
 
 type Env = Record<string, string | undefined>;
@@ -134,6 +140,7 @@ export function loadConfig(env: Env = process.env): Config {
   const dataDir = valueOf(env, 'DATA_DIR') ?? '/data';
   const port = wholeNumber(env, 'PORT', 3000, 1, 65_535);
   const publicUrl = publicUrlOf(valueOf(env, 'PUBLIC_URL'));
+  const tz = timeZoneOf(valueOf(env, 'TZ'));
   return {
     dataDir,
     dbFile: join(dataDir, 'fornax.db'),
@@ -159,5 +166,7 @@ export function loadConfig(env: Env = process.env): Config {
     workerZip: valueOf(env, 'FORNAX_WORKER_ZIP') ?? defaultWorkerZip(),
     trayMsi: valueOf(env, 'FORNAX_TRAY_MSI') ?? defaultTrayFile('msi'),
     trayDeb: valueOf(env, 'FORNAX_TRAY_DEB') ?? defaultTrayFile('deb'),
+    timeZone: tz.zone,
+    timeZoneProblem: tz.problem,
   };
 }

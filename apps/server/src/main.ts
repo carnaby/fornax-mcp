@@ -15,6 +15,7 @@ const app = await buildApp({ config, db, store, maintenanceAt: () => maintenance
 if (!config.publicUrlConfigured) {
   app.log.warn({ publicUrl: config.publicUrl }, 'PUBLIC_URL is not set: invite and upload links will point to localhost');
 }
+if (config.timeZoneProblem) app.log.warn({ timeZone: config.timeZone }, config.timeZoneProblem);
 
 let inFlight = false;
 const tick = async () => {
