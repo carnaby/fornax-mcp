@@ -43,12 +43,18 @@ const view = (over: Partial<OperatorQueue> = {}): OperatorQueue => ({
 });
 const job = (over: Partial<OperatorQueue['queued'][number]> = {}): OperatorQueue['queued'][number] => ({
   id: '01JTEST', type: 'upscale', owner: 'carol', state: 'queued', label: null, group: null, priority: 'normal',
-  inputs: { video: 'clip.mp4' }, attempts: 0, type_unavailable: false, run_after: null,
+  inputs: { video: 'clip.mp4' }, attempts: 0, type_unavailable: false, run_after: null, idle_since: null,
   created_at: '2026-11-15T13:56:00.000Z', started_at: null, finished_at: null,
   progress: null, progress_message: null, error: null, result_url: 'https://fornax.example.com/r/x', ...over,
 });
 
 describe('renderQueue', () => {
+  test('a high job says high; an idle job says since when (spec 07 § 4.3)', () => {
+    const lines = renderQueue(view({ queued: [job({ id: 'QH', priority: 'high' }), job({ id: 'QI', priority: 'idle', idle_since: '2026-11-15T13:30:00.000Z' })] }));
+    expect(lines.find((l) => l.includes('QH'))).toContain('  high  ');
+    expect(lines.find((l) => l.includes('QI'))).toMatch(/idle since \d\d:\d\d/);
+  });
+
   test('headline, running with elapsed time and progress, waiting in order with notes, finished with errors', () => {
     const lines = renderQueue(view({
       running: job({ id: 'R1', state: 'running', started_at: '2026-11-15T13:47:13.000Z', progress: 0.62, progress_message: 'encoding batch 2/4' }),
@@ -113,6 +119,28 @@ describe('fornax queue (spec 06 3.1)', () => {
     ]);
   });
 
+  test('priority, requeue and start-idle say what they did; --json prints the answered queue (spec 07 § 4.3)', async () => {
+    const { ctx, out, client } = await setup();
+    const a = await client.submit('echo', { mode: 'ok' });
+    expect(await runCli(['queue', 'priority', a.id, 'idle'], ctx)).toBe(0);
+    expect(out.at(-1)).toBe(`job ${a.id} is idle now`);
+    expect(await runCli(['queue', 'priority', a.id, 'low'], ctx)).toBe(0);
+    expect(out.at(-1)).toBe(`job ${a.id} is normal now`);
+    expect(await runCli(['queue', 'priority', a.id, 'idle', '--json'], ctx)).toBe(0);
+    expect(JSON.parse(out.at(-1)!)).toMatchObject({ ok: true, queued: [{ id: a.id, priority: 'idle', idle_since: expect.any(String) }] });
+    expect(await runCli(['queue', 'start-idle'], ctx)).toBe(0);
+    expect(out.at(-1)).toBe('the idle jobs wait for their turn now');
+    expect(await runCli(['queue', 'start-idle', '--json'], ctx)).toBe(0);
+    expect(JSON.parse(out.at(-1)!)).toMatchObject({ ok: true, queued: [{ id: a.id, priority: 'normal' }] });
+  });
+
+  test('requeue of a job that does not run: the server says why, exit 1', async () => {
+    const { ctx, err, client } = await setup();
+    const a = await client.submit('echo', { mode: 'ok' });
+    expect(await runCli(['queue', 'requeue', a.id, '--idle'], ctx)).toBe(1);
+    expect(err.at(-1)).toBe(`job ${a.id} is queued; only a running job can go back to the queue`);
+  });
+
   test('pause and resume --json print the queue the server answered with (the tray reads its time)', async () => {
     const { ctx, out } = await setup();
     expect(await runCli(['queue', 'pause', '--json'], ctx)).toBe(0);
@@ -143,6 +171,10 @@ describe('fornax queue (spec 06 3.1)', () => {
     expect(await runCli(['queue', 'move', 'X', '--top', '--bottom'], ctx)).toBe(2);
     expect(await runCli(['queue', 'cancel', 'X', '--json'], ctx)).toBe(2);
     expect(await runCli(['queue', 'pause', '--top'], ctx)).toBe(2);
+    expect(await runCli(['queue', 'priority', 'X', 'soon'], ctx)).toBe(2);
+    expect(await runCli(['queue', 'priority', 'X'], ctx)).toBe(2);
+    expect(await runCli(['queue', 'requeue', 'X', '--top'], ctx)).toBe(2);
+    expect(await runCli(['queue', 'start-idle', 'X'], ctx)).toBe(2);
   });
 });
 

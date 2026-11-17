@@ -6,7 +6,8 @@ const ANSWER_MARGIN_MS = 15_000;
 /** A plain request (whoami, submit, cancel). */
 const REQUEST_TIMEOUT_MS = 30_000;
 
-export type LeaseSubmit = { type: string; params: Record<string, unknown>; priority: Priority };
+/** Without a priority the server takes the type's default (spec 07 § 4.4). */
+export type LeaseSubmit = { type: string; params: Record<string, unknown>; priority?: Priority };
 
 /** The client REST API (spec 8.2) as fornax lease uses it, with a client token. Errors are ApiError and NetworkError. */
 export class ClientApi {

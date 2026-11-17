@@ -5,7 +5,7 @@ import { hostname } from 'node:os';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { ReadableStream as WebReadableStream } from 'node:stream/web';
-import { type ClaimedJob, claimedJob, type JobTypeContract, type MoveTarget, type OperatorQueue, type OutputsJson, type ReleaseReason, WORKER_HEADERS, type WorkerWaiting } from '@fornax/protocol';
+import { type ClaimedJob, claimedJob, type JobTypeContract, type MoveTarget, type OperatorQueue, type OutputsJson, type Priority, type ReleaseReason, WORKER_HEADERS, type WorkerWaiting } from '@fornax/protocol';
 import { WORKER_VERSION } from './version.js';
 
 /** The server answered with an error status. */
@@ -143,9 +143,13 @@ export class WorkerApi {
     return claimedJob.parse(await res.json());
   }
 
-  async heartbeat(id: string, lease: string, progress: number | null, message: string | null, signal?: AbortSignal): Promise<{ cancel: boolean }> {
+  /** `requeued` with `cancel` (spec 07 § 3.2): the job went back to the queue; a server older than 0.9.0 never says it. */
+  async heartbeat(
+    id: string, lease: string, progress: number | null, message: string | null, signal?: AbortSignal,
+  ): Promise<{ cancel: boolean; requeued?: boolean }> {
     const res = await this.request('POST', `/jobs/${enc(id)}/heartbeat`, { json: { lease, progress, message }, signal });
-    return { cancel: ((await res.json()) as { cancel?: unknown }).cancel === true };
+    const body = (await res.json()) as { cancel?: unknown; requeued?: unknown };
+    return { cancel: body.cancel === true, requeued: body.requeued === true };
   }
 
   async fail(id: string, lease: string, error: string, permanent: boolean): Promise<'queued' | 'failed'> {
@@ -189,6 +193,21 @@ export class WorkerApi {
 
   async cancelAnyJob(id: string): Promise<OperatorQueue> {
     return this.jsonOf<OperatorQueue>(await this.request('POST', `/jobs/${enc(id)}/cancel`));
+  }
+
+  /** Spec 07 § 4.2: a waiting job of any client gets a new priority. */
+  async setPriority(id: string, priority: Priority): Promise<OperatorQueue> {
+    return this.jsonOf<OperatorQueue>(await this.request('POST', `/jobs/${enc(id)}/priority`, { json: { priority } }));
+  }
+
+  /** Spec 07 § 4.2: a running job back to the queue (idle: Pause). */
+  async requeueJob(id: string, idle: boolean): Promise<OperatorQueue> {
+    return this.jsonOf<OperatorQueue>(await this.request('POST', `/jobs/${enc(id)}/requeue`, { json: { idle } }));
+  }
+
+  /** Spec 07 § 4.2: Start all. */
+  async startIdle(): Promise<OperatorQueue> {
+    return this.jsonOf<OperatorQueue>(await this.request('POST', '/idle/start'));
   }
 
   async setPaused(paused: boolean): Promise<OperatorQueue> {

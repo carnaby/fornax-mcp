@@ -1,5 +1,5 @@
 import { parseArgs } from 'node:util';
-import { PRIORITIES, type Priority } from '@fornax/protocol';
+import { type Priority, priorityInput } from '@fornax/protocol';
 import { ClientApi } from '../client-api.js';
 import { ConfigError, readClientToken, readWorkerConfig } from '../config.js';
 import { defaultLabel, labelProblem } from '../lease/program.js';
@@ -9,7 +9,7 @@ import { leaseToken } from './lease-token.js';
 
 /** The forms of `fornax lease`: the one source of its lines in its own usage and in the CLI's. */
 export const LEASE_FORMS = [
-  'fornax lease [--minutes N] [--wait-minutes N] [--rerun] [--priority low|normal|high] [--label TEXT] -- <program> [args…]',
+  'fornax lease [--minutes N] [--wait-minutes N] [--rerun] [--priority high|normal|idle] [--label TEXT] -- <program> [args…]',
   'fornax lease token        (reads a client token from standard input)',
 ] as const;
 
@@ -74,8 +74,13 @@ export async function leaseCommand(argv: string[], ctx: Ctx): Promise<number> {
   if (typeof minutes === 'string') return usage(minutes);
   const waitMinutes = whole(v['wait-minutes'], null, 1, 1_000_000, '--wait-minutes');
   if (typeof waitMinutes === 'string') return usage(waitMinutes);
-  const priority = v.priority ?? 'normal';
-  if (!(PRIORITIES as readonly string[]).includes(priority)) return usage('--priority must be low, normal or high');
+  // Spec 07 § 4.3: without --priority the type's default; low is taken as normal.
+  let priority: Priority | undefined;
+  if (v.priority !== undefined) {
+    const p = priorityInput.safeParse(v.priority);
+    if (!p.success) return usage('--priority must be high, normal or idle');
+    priority = p.data;
+  }
   if (v.label !== undefined) {
     const problem = labelProblem(v.label);
     if (problem) return usage(problem);
@@ -98,7 +103,7 @@ export async function leaseCommand(argv: string[], ctx: Ctx): Promise<number> {
     return LEASE_EXIT.noLease;
   }
   return runLease(
-    { minutes: minutes ?? 60, waitMinutes, rerun: v.rerun === true, priority: priority as Priority, label, program, args },
+    { minutes: minutes ?? 60, waitMinutes, rerun: v.rerun === true, priority, label, program, args },
     { api: new ClientApi({ server, token }), leasesDir: ctx.paths.leasesDir, say: err, signal: ctx.signal, env, cwd: process.cwd(), timings: ctx.leaseTimings },
   );
 }

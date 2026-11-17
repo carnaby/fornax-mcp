@@ -56,7 +56,8 @@ describe('built-in type packs', () => {
 
   test('upscale: contract, tools and commands', () => {
     const pack = loadPack(shippedPack('upscale')!);
-    expect(pack.contract).toMatchObject({ name: 'upscale', version: 1, max_runtime_s: 3 * 3600 });
+    expect(pack.contract).toMatchObject({ name: 'upscale', version: 1, max_runtime_s: 3 * 3600, default_priority: 'idle' });
+    for (const other of ['lease', 'render', 'transcribe']) expect(loadPack(shippedPack(other)!).contract, other).not.toHaveProperty('default_priority');
     expect(Object.keys(pack.contract.inputs)).toEqual(['video']);
     expect(pack.contract.inputs.video).toMatchObject({ extensions: ['.mp4', '.mov'], max_mb: 1024 });
     expect(Object.keys(pack.contract.params.properties).sort()).toEqual(['audio', 'batch', 'overlap', 'resolution']);

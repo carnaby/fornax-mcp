@@ -15,6 +15,8 @@ params:
     overlap:    { type: integer, minimum: 0, maximum: 28, default: 3, description: Frames two neighbouring batches share; must be smaller than the batch. }
     audio:      { type: boolean, default: false, description: Keep the source's sound track. }
 max_runtime: 3h
+# Spec 07: an upscale batch waits in Idle until the worker's operator starts it; a client may still send normal or high.
+default_priority: idle
 tools: [python, ffmpeg, ffprobe]
 setup: ["{tool.python}", "{pack}/scripts/setup.py"]
 check: ["{python}", "{pack}/scripts/check.py", "--ffmpeg", "{tool.ffmpeg}", "--ffprobe", "{tool.ffprobe}"]

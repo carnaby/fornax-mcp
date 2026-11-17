@@ -2,14 +2,14 @@
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { FORNAX_VERSION, type MoveTarget } from '@fornax/protocol';
+import { FORNAX_VERSION, type MoveTarget, priorityInput } from '@fornax/protocol';
 import { ApiError, NetworkError } from './api.js';
 import type { Ctx } from './commands/context.js';
 import { doctor } from './commands/doctor.js';
 import { installCommand } from './commands/install.js';
 import { LEASE_FORMS, leaseCommand, usageText } from './commands/lease.js';
 import { pair } from './commands/pair.js';
-import { queueCancel, queueMove, queuePause, queueShow, queueWatch } from './commands/queue.js';
+import { queueCancel, queueMove, queuePause, queuePriority, queueRequeue, queueShow, queueStartIdle, queueWatch } from './commands/queue.js';
 import { trayInstallCommand } from './commands/tray.js';
 import { typesAdd, typesInstall, typesList } from './commands/types.js';
 import { updateCommand } from './commands/update.js';
@@ -31,6 +31,9 @@ export const USAGE = usageText([
   'fornax queue move <id> (--top | --bottom | --before <id> | --after <id>)',
   'fornax queue cancel <id>',
   'fornax queue pause | resume [--json]',
+  'fornax queue priority <id> high|normal|idle [--json]',
+  'fornax queue requeue <id> [--idle] [--json]',
+  'fornax queue start-idle [--json]',
   'fornax doctor [type]',
   'fornax types list',
   'fornax types install <name> [--from <dir>]',
@@ -57,6 +60,7 @@ type Flags = {
   bottom?: boolean;
   before?: string;
   after?: string;
+  idle?: boolean;
   events?: boolean;
   'wait-pid'?: string;
   relaunch?: string;
@@ -115,6 +119,7 @@ export async function runCli(argv: string[], ctx: Ctx): Promise<number> {
         bottom: { type: 'boolean' },
         before: { type: 'string' },
         after: { type: 'string' },
+        idle: { type: 'boolean' },
         events: { type: 'boolean' },
         'wait-pid': { type: 'string' },
         relaunch: { type: 'string' },
@@ -137,7 +142,7 @@ export async function runCli(argv: string[], ctx: Ctx): Promise<number> {
   }
   /** Exactly `n` words, and no flag the command does not take (a typo must not silently change the meaning). */
   const shape = (n: number, ...allowed: (keyof Flags)[]) => words.length === n && Object.keys(flags).every((k) => allowed.includes(k as keyof Flags));
-  const [group, sub, arg] = words;
+  const [group, sub, arg, arg2] = words;
   if (group === 'queue') {
     try {
       if (sub === undefined && shape(1, 'json', 'watch')) {
@@ -147,6 +152,11 @@ export async function runCli(argv: string[], ctx: Ctx): Promise<number> {
       if (sub === 'move' && arg !== undefined && target && shape(3, 'top', 'bottom', 'before', 'after')) return await queueMove(ctx, arg, target);
       if (sub === 'cancel' && arg !== undefined && shape(3)) return await queueCancel(ctx, arg);
       if ((sub === 'pause' || sub === 'resume') && shape(2, 'json')) return await queuePause(ctx, sub === 'pause', { json: flags.json === true });
+      // Spec 07 § 4.3; an unknown priority falls through to the usage.
+      const priority = sub === 'priority' && arg2 !== undefined ? priorityInput.safeParse(arg2) : null;
+      if (priority?.success && arg !== undefined && shape(4, 'json')) return await queuePriority(ctx, arg, priority.data, { json: flags.json === true });
+      if (sub === 'requeue' && arg !== undefined && shape(3, 'idle', 'json')) return await queueRequeue(ctx, arg, { idle: flags.idle === true, json: flags.json === true });
+      if (sub === 'start-idle' && shape(2, 'json')) return await queueStartIdle(ctx, { json: flags.json === true });
     } catch (e) {
       return reportError(e, ctx.err ?? ctx.out);
     }

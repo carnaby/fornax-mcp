@@ -82,6 +82,7 @@ describe('fornax CLI', () => {
       ['lease', '--minutes', '1.5', '--', process.execPath],
       ['lease', '--wait-minutes', '0', '--', process.execPath],
       ['lease', '--priority', 'urgent', '--', process.execPath],
+      ['lease', '--priority', '', '--', process.execPath],
       ['lease', '--label', 'a;b', '--', process.execPath],
       ['lease', '--bogus', '--', process.execPath],
       ['lease', 'extra', '--', process.execPath],

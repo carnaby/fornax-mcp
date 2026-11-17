@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import { isWindowsReservedName, type JobTypeContract, jobTypeContract, type ParamProperty } from '@fornax/protocol';
+import { isWindowsReservedName, type JobTypeContract, jobTypeContract, type ParamProperty, PRIORITIES } from '@fornax/protocol';
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 import { TOOL_NAME } from './config.js';
@@ -35,6 +35,8 @@ const typeYaml = z.strictObject({
   inputs: z.record(z.string(), z.unknown()).nullish(),
   params: z.unknown(),
   max_runtime: z.string(),
+  /** Spec 07 § 4.4: the priority of a job submitted without one. */
+  default_priority: z.enum(PRIORITIES).optional(),
   tools: z.array(z.string().regex(TOOL_NAME, 'tool names are a-z, 0-9 and "_", starting with a letter')).max(20).nullish(),
   setup: argv.optional(),
   check: argv.optional(),
@@ -138,6 +140,8 @@ export function loadPack(dir: string): Pack {
     inputs: y.data.inputs ?? {},
     params: y.data.params,
     max_runtime_s: seconds,
+    // Absent stays absent: the contract hash of a pack without it does not change.
+    ...(y.data.default_priority ? { default_priority: y.data.default_priority } : {}),
   });
   if (!c.success) throw problem(z.prettifyError(c.error));
   const contract = c.data;

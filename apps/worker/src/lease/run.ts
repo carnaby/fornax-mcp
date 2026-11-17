@@ -17,7 +17,8 @@ export type LeaseRequest = {
   minutes: number;
   waitMinutes: number | null;
   rerun: boolean;
-  priority: Priority;
+  /** None: the type's default (spec 07 § 4.4). */
+  priority?: Priority;
   label: string | null;
   program: string;
   args: string[];
@@ -428,7 +429,7 @@ export async function runLease(req: LeaseRequest, d: LeaseDeps): Promise<number>
   let view: ClientJobView;
   try {
     const params = { minutes: req.minutes, ...(req.label ? { label: req.label } : {}) };
-    view = await persist((signal) => d.api.submit({ type: LEASE_TYPE, params, priority: req.priority }, signal), d.signal, { deadline });
+    view = await persist((signal) => d.api.submit({ type: LEASE_TYPE, params, ...(req.priority ? { priority: req.priority } : {}) }, signal), d.signal, { deadline });
   } catch (e) {
     if (e instanceof Stopped) {
       say('interrupted before a lease was asked for');

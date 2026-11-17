@@ -124,7 +124,7 @@ export async function runWorker(o: LoopOptions): Promise<number> {
       api: o.api, paths: o.paths, tools: o.tools, signal: o.signal, log: (l) => o.out(`job ${job.id}: ${l}`), ...o.jobOptions,
     });
     // The detail of a failure may hold tool output or local paths: only the outcome (and the output count) is printed.
-    o.out(`job ${job.id}: ${r.outcome}${r.outcome === 'succeeded' ? ` (${r.detail})` : ''}`);
+    o.out(`job ${job.id}: ${r.outcome}${r.outcome === 'succeeded' || r.outcome === 'requeued' ? ` (${r.detail})` : ''}`);
     if (r.outcome === 'broken') {
       offered.delete(job.type);
       o.out(`type ${job.type} is no longer offered: fix its environment, check it with fornax doctor ${job.type}, then restart the worker`);

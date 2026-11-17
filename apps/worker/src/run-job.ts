@@ -55,7 +55,9 @@ export type JobDeps = {
   removeDir?: (dir: string) => Promise<void>;
 };
 
-export type JobOutcome = 'succeeded' | 'retry' | 'failed' | 'canceled' | 'released' | 'broken' | 'lost';
+export type JobOutcome = 'succeeded' | 'retry' | 'failed' | 'canceled' | 'requeued' | 'released' | 'broken' | 'lost';
+/** Spec 07 § 3.2: why a job stopped when Requeue or Pause took it back. */
+export const REQUEUED = 'back in the queue (the operator or its owner put it back)';
 export type JobResult = { outcome: JobOutcome; detail: string };
 
 /** in/<input name><ext>: the extension of the client's file name, lower-cased, kept only when it is plain. */
@@ -142,7 +144,7 @@ function startHeartbeat(every: number, beat: (progress: number | null, message: 
   };
 }
 
-type Stop = 'cancel' | 'lost' | 'shutdown';
+type Stop = 'cancel' | 'requeue' | 'lost' | 'shutdown';
 
 /**
  * One claimed job, start to end. Never rejects: the result says what became of the job.
@@ -205,6 +207,7 @@ export async function runJob(job: ClaimedJob, pack: Pack, deps: JobDeps): Promis
   const stopped = async (why: Stop): Promise<JobResult> => {
     await quiet();
     if (why === 'shutdown') return await release('released', 'the worker is stopping');
+    if (why === 'requeue') return { outcome: 'requeued', detail: REQUEUED };
     if (why === 'cancel') return { outcome: 'canceled', detail: 'canceled by the client' };
     return { outcome: 'lost', detail: 'the job is no longer held by this worker' };
   };
@@ -271,7 +274,7 @@ export async function runJob(job: ClaimedJob, pack: Pack, deps: JobDeps): Promis
     // At once: confirms the claim to the server and learns about a cancel before any work.
     const first = await call(() => deps.api.heartbeat(job.id, job.lease, 0, null, beatSignal()));
     lastBeat = Date.now();
-    if (first.cancel) return { outcome: 'canceled', detail: 'canceled before it started' };
+    if (first.cancel) return first.requeued ? { outcome: 'requeued', detail: REQUEUED } : { outcome: 'canceled', detail: 'canceled before it started' };
     // One line per outage, not one every few seconds: the first failure, then the first heartbeat that gets through.
     let failing = false;
     beats = startHeartbeat(deps.heartbeatMs ?? HEARTBEAT_MS, async (progress, message) => {
@@ -280,7 +283,7 @@ export async function runJob(job: ClaimedJob, pack: Pack, deps: JobDeps): Promis
         lastBeat = Date.now();
         if (failing) say('heartbeats get through again');
         failing = false;
-        if (answer.cancel) end('cancel');
+        if (answer.cancel) end(answer.requeued ? 'requeue' : 'cancel');
       } catch (e) {
         if (e instanceof LeaseLostError) end('lost');
         else if (!signal.aborted && !failing) {

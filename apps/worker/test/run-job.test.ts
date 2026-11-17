@@ -120,6 +120,26 @@ describe('runJob', () => {
     expect(jobsLeft(paths)).toEqual([]);
   });
 
+  test('requeued by the operator: the tree is stopped, nothing is uploaded or reported, outcome requeued (spec 07 § 3.2)', async () => {
+    const { paths, pack, deps } = setup();
+    const pidFile = join(tmp(), 'pids.json');
+    let beats = 0;
+    const f = fakeApi({ heartbeat: async () => (++beats > 1 && readPids(pidFile) !== null ? { cancel: true, requeued: true } : { cancel: false }) });
+    const job = fakeClaim({ params: { mode: 'hang', pid_file: pidFile } });
+    expect(await runJob(job, pack, deps(f.api))).toEqual({ outcome: 'requeued', detail: 'back in the queue (the operator or its owner put it back)' });
+    const pids = readPids(pidFile)!;
+    await waitFor(() => !isAlive(pids.parent) && !isAlive(pids.child), 5000, 'the tree to die');
+    for (const m of ['fail', 'release', 'complete', 'uploadOutput'] as const) expect(f.called(m), m).toHaveLength(0);
+    expect(jobsLeft(paths)).toEqual([]);
+  });
+
+  test('requeued before the tool started: outcome requeued, nothing runs', async () => {
+    const { pack, deps } = setup();
+    const f = fakeApi({ heartbeat: async () => ({ cancel: true, requeued: true }) });
+    expect((await runJob(fakeClaim({ params: { mode: 'ok' } }), pack, deps(f.api))).outcome).toBe('requeued');
+    expect(f.called('downloadInput')).toHaveLength(0);
+  });
+
   test('a lost lease (409) stops the tool and drops the job', async () => {
     const { paths, pack, deps } = setup();
     const pidFile = join(tmp(), 'pids.json');

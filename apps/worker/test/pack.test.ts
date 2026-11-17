@@ -44,6 +44,12 @@ describe('loadPack', () => {
     expect(p.impl).toEqual({ tools: ['blender'], check: base.check, run: base.run });
   });
 
+  test('default_priority goes into the contract; a wrong value is a pack problem (spec 07 § 4.4)', () => {
+    expect(loadPack(pack({ default_priority: 'idle' })).contract.default_priority).toBe('idle');
+    expect(loadPack(pack()).contract).not.toHaveProperty('default_priority');
+    refused({ default_priority: 'low' }, /default_priority/);
+  });
+
   test('durations', () => {
     expect([parseDuration('30s'), parseDuration('10m'), parseDuration('6h'), parseDuration('2d')]).toEqual([30, 600, 21_600, 172_800]);
     for (const bad of ['', '0s', '10', '1w', '-1m', '1.5h']) expect(parseDuration(bad), bad).toBeNull();

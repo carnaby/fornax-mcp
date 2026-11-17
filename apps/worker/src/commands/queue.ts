@@ -1,5 +1,5 @@
 import { setTimeout as sleep } from 'node:timers/promises';
-import type { MoveTarget, OperatorJob, OperatorQueue } from '@fornax/protocol';
+import type { MoveTarget, OperatorJob, OperatorQueue, Priority } from '@fornax/protocol';
 import { ApiError, NetworkError, WorkerApi } from '../api.js';
 import { ConfigError, readToken, readWorkerConfig, serverWarning } from '../config.js';
 import type { Ctx } from './context.js';
@@ -63,7 +63,9 @@ export function renderQueue(q: OperatorQueue, finishedShown = 10): string[] {
   }
   if (!q.queued.length) lines.push('waiting   nothing');
   q.queued.forEach((j, i) => {
-    const notes = [j.type_unavailable ? 'type not offered' : '', j.run_after ? `retry at ${clock(j.run_after)}` : ''].filter(Boolean).join(', ');
+    // Spec 07 § 4.3: high and idle are said; normal is the plain case.
+    const priority = j.priority === 'high' ? 'high' : j.priority === 'idle' ? (j.idle_since ? `idle since ${clock(j.idle_since)}` : 'idle') : '';
+    const notes = [priority, j.type_unavailable ? 'type not offered' : '', j.run_after ? `retry at ${clock(j.run_after)}` : ''].filter(Boolean).join(', ');
     lines.push(cols(i === 0 ? 'waiting ' : '        ', String(i + 1), j.type, j.owner ?? '?', what(j), `waits ${duration(now - Date.parse(j.created_at))}`, notes, j.id));
   });
   q.finished.slice(0, finishedShown).forEach((j, i) => {
@@ -98,6 +100,27 @@ export async function queueMove(ctx: Ctx, id: string, target: MoveTarget): Promi
 export async function queueCancel(ctx: Ctx, id: string): Promise<number> {
   await connectOperator(ctx).api.cancelAnyJob(id);
   ctx.out(`canceled job ${id}`);
+  return 0;
+}
+
+/** `fornax queue priority <id> high|normal|idle [--json]` (spec 07 § 4.3); low is taken as normal. */
+export async function queuePriority(ctx: Ctx, id: string, priority: Priority, o: { json: boolean } = { json: false }): Promise<number> {
+  const q = await connectOperator(ctx).api.setPriority(id, priority);
+  ctx.out(o.json ? jsonLine(q) : `job ${id} is ${priority} now`);
+  return 0;
+}
+
+/** `fornax queue requeue <id> [--idle] [--json]`: a running job back to the queue (Pause with --idle). */
+export async function queueRequeue(ctx: Ctx, id: string, o: { idle: boolean; json: boolean }): Promise<number> {
+  const q = await connectOperator(ctx).api.requeueJob(id, o.idle);
+  ctx.out(o.json ? jsonLine(q) : o.idle ? `job ${id} stops and waits in Idle` : `job ${id} stops and goes back to the queue`);
+  return 0;
+}
+
+/** `fornax queue start-idle [--json]`: every idle job becomes normal. */
+export async function queueStartIdle(ctx: Ctx, o: { json: boolean } = { json: false }): Promise<number> {
+  const q = await connectOperator(ctx).api.startIdle();
+  ctx.out(o.json ? jsonLine(q) : 'the idle jobs wait for their turn now');
   return 0;
 }
 

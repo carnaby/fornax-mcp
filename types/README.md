@@ -34,6 +34,7 @@ params:                      # a strict subset of JSON Schema, see below
     samples:     { type: integer, minimum: 1, maximum: 4096, default: 128 }
     format:      { enum: [png, jpg], default: png }
 max_runtime: 6h              # 30s, 10m, 6h or 2d; at most 7 days
+# default_priority: idle     # optional: high, normal (the default) or idle
 tools: [blender]             # their paths come from worker.yaml on this PC
 # setup: [...]               # optional: installs into {pack}/env
 check: ["{tool.blender}", "-b", "--factory-startup", "--python-exit-code", "1", "--python", "{pack}/scripts/check.py"]
@@ -42,7 +43,8 @@ run: ["{tool.blender}", "-b", "--factory-startup", "--disable-autoexec", "--pyth
       "--python", "{pack}/scripts/render.py", "--", "--params", "{params_json}", "--scene", "{input.scene}", "--out", "{out}"]
 ```
 
-The **contract** is `name`, `version`, `description`, `inputs`, `params` and `max_runtime`. The **implementation** is
+The **contract** is `name`, `version`, `description`, `inputs`, `params`, `max_runtime` and the optional
+`default_priority`. The **implementation** is
 `tools`, `setup`, `check` and `run`. Any other key is an error.
 
 The tools live in the worker's `worker.yaml` (`%APPDATA%\fornax\worker.yaml` or `~/.config/fornax/worker.yaml`):
@@ -107,6 +109,9 @@ Rules, checked when the pack loads:
   `{"frame_0001.png": {"meta": {"width": 1920}, "preview": "previews/frame_0001.jpg"}}`. A file named as a preview is
   not listed as an output of its own.
 - `max_runtime` is enforced: the whole process tree is killed and the job fails (and may be retried).
+- `default_priority` is the priority of a job submitted without one: `high`, `normal` (the default) or `idle`. An idle
+  job never starts by itself: the worker's operator starts it (tray, `fornax queue start-idle`) or its client changes
+  its priority. The built-in `upscale` pack is `idle`: its batches wait until someone starts them.
 - The built-in `lease` pack is an example of a tool that only holds the card: it waits for files that `fornax lease`
   writes in `<data>/leases/<FORNAX_JOB_ID>/` and ends with 0 when the program is done, with 4 otherwise.
 

@@ -75,7 +75,7 @@ describe('WorkerApi', () => {
     const dest = join(tmp(), 'source.txt');
     await api.downloadInput(job.id, job.lease, job.inputs[0]!, dest);
     expect(readFileSync(dest, 'utf8')).toBe('hello');
-    expect(await api.heartbeat(job.id, job.lease, 0.5, 'half')).toEqual({ cancel: false });
+    expect(await api.heartbeat(job.id, job.lease, 0.5, 'half')).toEqual({ cancel: false, requeued: false });
     const out = join(tmp(), 'result.txt');
     writeFileSync(out, 'HELLO');
     await api.uploadOutput(job.id, job.lease, 'result.txt', 'output', out);

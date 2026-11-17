@@ -15,7 +15,7 @@ beforeEach(() => {
   announce(t.db, [renderContract, transcribeContract], t.clock.now);
 });
 
-async function job(priority: 'low' | 'normal' | 'high' = 'normal') {
+async function job(priority: 'idle' | 'normal' | 'high' = 'normal') {
   const alice = issueToken(t.db, `m${++n}`);
   const scene = await uploadFile(t.app, alice, 'scene.blend', 'B');
   return submitJob(t.db, t.config, tokenIdOf(t.db, `m${n}`), { type: 'render', params: { frame_start: 1 }, inputs: { scene }, priority }, t.clock.now);

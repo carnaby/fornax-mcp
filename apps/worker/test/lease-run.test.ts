@@ -22,6 +22,8 @@ function fakeServer() {
   };
   const wakes = new Set<() => void>();
   const calls: string[] = [];
+  /** The bodies of the submits. */
+  const bodies: unknown[] = [];
   /** Thrown by the next calls, in turn. */
   const failures: Error[] = [];
   const set = (patch: Partial<ClientJobView>) => {
@@ -33,8 +35,9 @@ function fakeServer() {
     if (e) throw e;
   };
   const api: LeaseClient = {
-    async submit() {
+    async submit(body) {
       calls.push('submit');
+      bodies.push(body);
       next();
       return { ...job };
     },
@@ -62,7 +65,7 @@ function fakeServer() {
       return { ...job };
     },
   };
-  return { api, set, calls, failures, get job() { return job; } };
+  return { api, set, calls, bodies, failures, get job() { return job; } };
 }
 
 const fast: LeaseTimings = { pollS: 1, aliveMs: 50, noteMs: 60_000, interruptMs: 300, killGraceMs: 300, minuteMs: 60_000, backoff: { baseMs: 10, maxMs: 40 } };
@@ -115,6 +118,21 @@ describe('runLease', () => {
     expect(readFileSync(join(l.dir, 'alive'), 'utf8')).toBe(STARTED);
     expect(readFileSync(join(l.dir, 'done'), 'utf8')).toBe(STARTED);
     expect(l.lines[0]).toBe('fornax lease: waiting, position 1; the worker takes it next');
+  });
+
+  test.each([
+    [undefined, false],
+    ['idle', true],
+    ['high', true],
+  ] as const)('priority %s: the submit sends it only when asked for (spec 07 § 4.3)', async (priority, sent) => {
+    const s = fakeServer();
+    const l = lease(s, ['--exit', '0'], { priority });
+    await waitFor(() => s.calls.includes('job'), 5000, 'the wait');
+    s.set({ state: 'running', started_at: STARTED, note: null, position: null });
+    expect(await l.run).toBe(0);
+    const body = s.bodies[0] as Record<string, unknown>;
+    expect('priority' in body).toBe(sent);
+    if (sent) expect(body.priority).toBe(priority);
   });
 
   test('a changed note is shown at once', async () => {
