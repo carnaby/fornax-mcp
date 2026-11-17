@@ -39,6 +39,7 @@ Configuration is environment variables only; `.env.example` lists every one with
 | `TRUST_PROXY` | `0` | how many reverse proxies may set `X-Forwarded-*` |
 | `FORNAX_MAX_UPLOAD_MB` | `4096` | largest input file |
 | `FORNAX_WEBHOOK_PREFIXES` | empty (off) | allowed `callback_url` prefixes, comma-separated, each ending with `/` |
+| `TZ` | the system's (UTC in the image) | the time zone of times in sentences (job notes, the result page), e.g. `Europe/Bratislava`; data fields stay ISO 8601 in UTC |
 | `FORNAX_WORKER_ZIP` | the image's `downloads/fornax-worker.zip` | the worker bundle served at `/downloads/fornax-worker.zip`; leave it empty in the image |
 | `FORNAX_TRAY_MSI`, `FORNAX_TRAY_DEB` | the image's `downloads/fornax-tray.msi` and `.deb` | the tray's installers served at `/downloads/fornax-tray.msi` and `.deb`; leave them empty in the image |
 
@@ -100,7 +101,8 @@ Job files are kept 14 days after a job finishes (`FORNAX_FINISHED_DAYS`); the da
 
 MCP tools: `list_job_types`, `create_upload`, `submit_job`, `get_job`, `get_output`, `list_jobs`, `cancel_job`,
 `queue_status`. Large files go through `create_upload`, which returns a one-time link and a ready `curl -T` command
-(`curl --fail-with-body` needs curl 7.76 or newer; use `-f` with an older one).
+(`curl --fail-with-body` needs curl 7.76 or newer; use `-f` with an older one). Agents pass `agent` with `submit_job`
+(the name other agents reach them by): every client sees who runs and who waits, so whoever waits knows whom to ask.
 
 `get_job` takes `wait_seconds` (up to 25) and the `change` of the previous answer and then answers as soon as the job
 changes. While a job waits, `note` says why in one sentence (the worker is offline, the type is not offered, other
@@ -115,14 +117,14 @@ All with `Authorization: Bearer <token>`:
 | `GET /api/types` | offered job types with their schemas |
 | `POST /api/files?name=<file name>` | upload a file (streamed body) → `{id, name, size, …}` (`id` is the file id for `inputs`) |
 | `POST /api/uploads` | a one-time upload link (`PUT /api/uploads/<signed>`, no token) |
-| `POST /api/jobs` | submit `{type, params, inputs, priority?, group?, callback_url?}`; `priority` is `high`, `normal` or `idle` (`low` is taken as `normal`), without it the type's `default_priority` |
+| `POST /api/jobs` | submit `{type, params, inputs, priority?, group?, agent?, callback_url?}`; `priority` is `high`, `normal` or `idle` (`low` is taken as `normal`), without it the type's `default_priority`; `agent` is the name other agents reach you by (at most 80 characters: letters, digits, space and `. _ : / -`), shown to every client |
 | `GET /api/jobs`, `GET /api/jobs/:id` | list, details, outputs, result page link; one job also has `worker` and `note` (why it waits) |
 | `GET /api/jobs/:id?wait=25&change=<change>` | answers as soon as the job's `change` differs (at the latest after `wait` seconds, at most 30): wait instead of polling |
 | `POST /api/jobs/:id/cancel` | cancel |
 | `POST /api/jobs/:id/priority` | body `{"priority":"high"}` (`normal`, `idle`); a waiting job of yours, placed as if it were new |
 | `POST /api/jobs/:id/requeue` | body `{"idle":false}` or `{"idle":true}`; a running job of yours back to the queue (or to Idle); it starts again from the beginning |
 | `GET /api/jobs/:id/outputs/<name>` | download (or with a signed `?sig=` link, no token) |
-| `GET /api/queue` | queue summary |
+| `GET /api/queue` | queue summary: counts, the running job (`current`, with `agent`, `owner`, `label`) and `ahead`, the waiting jobs in queue order (at most 20) with who submitted them; `?job_id=<your job>` lists only the jobs before it |
 
 Another client's job or file answers `404`.
 
@@ -280,7 +282,7 @@ token cannot submit jobs):
 `FORNAX_CLIENT_TOKEN` wins over the stored file. Then:
 
 ```
-fornax lease [--minutes N] [--wait-minutes N] [--rerun] [--priority high|normal|idle] [--label TEXT] -- <program> [args…]
+fornax lease [--minutes N] [--wait-minutes N] [--rerun] [--priority high|normal|idle] [--label TEXT] [--agent NAME] -- <program> [args…]
 fornax lease -- blender.exe -b scene.blend -f 1
 ```
 
@@ -289,7 +291,8 @@ environment (plus `FORNAX_LEASE=<job id>`, without the client token), and gives 
 program itself, not a `.cmd`/`.bat` launcher (there is no shell); a launcher or a program that is not found ends
 `fornax lease` before any job is made. `--minutes` (default 60, at most 720) is the longest one run may take;
 `--wait-minutes` gives up waiting for the card; `--label` names the lease in the queue (default: the program's file
-name). Its own lines go to stderr and start with `fornax lease:` (a usage error is followed by the usage);
+name). `--agent` (or the variable `FORNAX_AGENT`, which the program keeps) names who asks for the lease; every client
+sees it next to the job. Its own lines go to stderr and start with `fornax lease:` (a usage error is followed by the usage);
 `fornax lease --help` prints the usage to stdout. Everything else on stdout is the program's.
 
 `fornax lease` inside a lease runs its program at once, under the outer lease. It needs the stored client token
