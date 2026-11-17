@@ -14,3 +14,10 @@ test('a bad name names where it came from', () => {
   expect(agentOf('a;b', {})).toEqual({ problem: `--agent ${AGENT_RULE}` });
   expect(agentOf(undefined, { FORNAX_AGENT: '-x' })).toEqual({ problem: `FORNAX_AGENT ${AGENT_RULE}` });
 });
+
+test('FORNAX_AGENT is trimmed: `set FORNAX_AGENT=agent-a ` in cmd.exe keeps the space (final review #3)', () => {
+  expect(agentOf(undefined, { FORNAX_AGENT: 'agent-a ' })).toEqual({ agent: 'agent-a' });
+  expect(agentOf(undefined, { FORNAX_AGENT: ' agent-a' })).toEqual({ agent: 'agent-a' });
+  // A flag is what the user typed on purpose: checked as it is.
+  expect(agentOf('agent-a ', {})).toEqual({ problem: expect.stringContaining('--agent ') });
+});

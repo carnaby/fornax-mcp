@@ -32,11 +32,14 @@ export function labelProblem(label: string): string | null {
   return null;
 }
 
-/** The caller's environment for the program: without the client token (spec 05a 4.5 step 5), with FORNAX_LEASE. */
-export function leaseEnv(base: NodeJS.ProcessEnv, jobId: string): Record<string, string> {
+/**
+ * The caller's environment for the program: without the client token (spec 05a 4.5 step 5), with FORNAX_LEASE, and with
+ * the lease's agent as FORNAX_AGENT, so a job submitted from inside carries the same name (spec 09 § 2.3).
+ */
+export function leaseEnv(base: NodeJS.ProcessEnv, jobId: string, agent: string | null = null): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(base)) if (v !== undefined && !/^fornax_(client_token|lease)$/i.test(k)) env[k] = v;
-  return { ...env, FORNAX_LEASE: jobId };
+  return { ...env, FORNAX_LEASE: jobId, ...(agent ? { FORNAX_AGENT: agent } : {}) };
 }
 
 export type ProgramExit = { code: number | null; signal: NodeJS.Signals | null; spawnError: string | null };

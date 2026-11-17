@@ -1,5 +1,5 @@
 // A program for fornax lease tests: reports what it saw, then behaves as its arguments say.
-//   --report <file>  JSON {at, pid, lease, fornax: names of FORNAX_* variables}
+//   --report <file>  JSON {at, pid, lease, agent: FORNAX_AGENT, fornax: names of FORNAX_* variables}
 //   --runs <file>    appends "<ms> start <pid>" now and "<ms> end <pid>" when it ends by itself
 //   --tree <file>    starts a child that runs forever; JSON {parent, child}
 //   --print <text> / --eprint <text>   one line to stdout / stderr
@@ -15,7 +15,7 @@ const arg = (name) => {
 const report = arg('report');
 if (report) {
   const fornax = Object.keys(process.env).filter((k) => /^fornax_/i.test(k)).sort();
-  writeFileSync(report, JSON.stringify({ at: Date.now(), pid: process.pid, lease: process.env.FORNAX_LEASE ?? null, fornax }));
+  writeFileSync(report, JSON.stringify({ at: Date.now(), pid: process.pid, lease: process.env.FORNAX_LEASE ?? null, agent: process.env.FORNAX_AGENT ?? null, fornax }));
 }
 const runs = arg('runs');
 if (runs) appendFileSync(runs, `${Date.now()} start ${process.pid}\n`);

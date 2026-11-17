@@ -27,7 +27,8 @@ function whole(raw: string | undefined, fallback: number | null, min: number, ma
 
 /** Spec 09 § 2.3: --agent, else FORNAX_AGENT, else none; a blank value is none; a bad one names its source. */
 export function agentOf(flag: string | undefined, env: NodeJS.ProcessEnv): { agent: string | null } | { problem: string } {
-  const [source, raw] = flag !== undefined ? ['--agent', flag] : ['FORNAX_AGENT', env.FORNAX_AGENT ?? ''];
+  // An environment value is trimmed: `set FORNAX_AGENT=agent-a ` in cmd.exe keeps the trailing space (final review #3).
+  const [source, raw] = flag !== undefined ? ['--agent', flag] : ['FORNAX_AGENT', (env.FORNAX_AGENT ?? '').trim()];
   if (raw.trim() === '') return { agent: null };
   return agentProblem(raw) ? { problem: `${source} ${AGENT_RULE}` } : { agent: raw };
 }

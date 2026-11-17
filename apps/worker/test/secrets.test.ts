@@ -124,4 +124,13 @@ describe('spec 08 final review minors', () => {
     symlinkSync(join(tmp(), 'missing'), join(dir, 'OTHER_TOKEN'));
     expect(storedSecretNames(dir)).toEqual(['EXAMPLE_TOKEN']);
   });
+
+  test.skipIf(process.platform === 'win32')('#8 a symlink loop is not a stored secret and does not break the listing (final review #6)', () => {
+    const dir = join(tmp(), 'secrets');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'EXAMPLE_TOKEN'), `${VALUE}\n`);
+    symlinkSync(join(dir, 'LOOP_B'), join(dir, 'LOOP_A'));
+    symlinkSync(join(dir, 'LOOP_A'), join(dir, 'LOOP_B'));
+    expect(storedSecretNames(dir)).toEqual(['EXAMPLE_TOKEN']);
+  });
 });

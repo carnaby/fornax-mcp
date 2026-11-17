@@ -91,12 +91,23 @@ export function removeSecret(secretsDir: string, name: string): boolean {
   return true;
 }
 
+/**
+ * Final review #8: a symlink to a file is used by the setup, so it counts as stored. A loop or a target that cannot be
+ * read (ELOOP, EACCES) is not one, and must not break the listing (final review #6).
+ */
+function linksToFile(path: string): boolean {
+  try {
+    return statSync(path, { throwIfNoEntry: false })?.isFile() === true;
+  } catch {
+    return false;
+  }
+}
+
 /** Names of the stored secrets: files whose names pass checkSecretName (temporary files and others are not secrets). */
 export function storedSecretNames(secretsDir: string): string[] {
   if (!existsSync(secretsDir)) return [];
   return readdirSync(secretsDir, { withFileTypes: true })
-    // Final review #8: a symlink to a file is used by the setup, so it counts as stored.
-    .filter((d) => (d.isFile() || (d.isSymbolicLink() && statSync(join(secretsDir, d.name), { throwIfNoEntry: false })?.isFile() === true)) && checkSecretName(d.name) === null)
+    .filter((d) => (d.isFile() || (d.isSymbolicLink() && linksToFile(join(secretsDir, d.name)))) && checkSecretName(d.name) === null)
     .map((d) => d.name)
     .sort();
 }

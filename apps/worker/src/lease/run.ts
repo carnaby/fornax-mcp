@@ -189,7 +189,7 @@ export async function runLease(req: LeaseRequest, d: LeaseDeps): Promise<number>
 
   const launch = (id: string, o: { nested?: boolean; onHardQuit?: () => void } = {}): Program =>
     startProgram(req.program, req.args, {
-      cwd: d.cwd, env: leaseEnv(d.env, id), killGraceMs: t.killGraceMs, taskkillProgram: d.taskkillProgram, signalGroup: d.signalGroup,
+      cwd: d.cwd, env: leaseEnv(d.env, id, req.agent), killGraceMs: t.killGraceMs, taskkillProgram: d.taskkillProgram, signalGroup: d.signalGroup,
       onHardQuit: o.onHardQuit,
       // Nested: in the outer program's group, so the outer wrapper's kill of that group reaches this program too.
       ownGroup: !o.nested,

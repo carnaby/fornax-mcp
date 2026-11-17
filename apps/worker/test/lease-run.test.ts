@@ -108,14 +108,29 @@ describe('runLease', () => {
     if (sent) expect(body.agent).toBe(agent);
   });
 
-  test("FORNAX_AGENT stays in the program's environment (spec 09 § 2.3)", async () => {
+  test.each([
+    ['--agent alone', { FORNAX_AGENT: undefined }, 'agent-a'],
+    ['--agent over another FORNAX_AGENT', { FORNAX_AGENT: 'agent-b' }, 'agent-a'],
+  ] as const)("the lease's agent is FORNAX_AGENT in the program's environment: %s (spec 09 § 2.3, final review #1)", async (_case, extra, seen) => {
     const s = fakeServer();
     const report = join(tmp(), 'report.json');
-    const l = lease(s, ['--report', report, '--exit', '0'], { agent: 'agent-a' }, { env: { ...process.env, FORNAX_AGENT: 'agent-a' } });
+    const env: NodeJS.ProcessEnv = { ...process.env, ...extra };
+    if (extra.FORNAX_AGENT === undefined) delete env.FORNAX_AGENT;
+    const l = lease(s, ['--report', report, '--exit', '0'], { agent: 'agent-a' }, { env });
     await waitFor(() => s.calls.includes('job'), 5000, 'the wait');
     s.set({ state: 'running', started_at: STARTED, note: null, position: null });
     expect(await l.run).toBe(0);
-    expect(readJson<{ fornax: string[] }>(report)!.fornax).toContain('FORNAX_AGENT');
+    expect(readJson<{ agent: string | null }>(report)!.agent).toBe(seen);
+  });
+
+  test('without an agent the inherited FORNAX_AGENT is left as it is', async () => {
+    const s = fakeServer();
+    const report = join(tmp(), 'report.json');
+    const l = lease(s, ['--report', report, '--exit', '0'], { agent: null }, { env: { ...process.env, FORNAX_AGENT: '  ' } });
+    await waitFor(() => s.calls.includes('job'), 5000, 'the wait');
+    s.set({ state: 'running', started_at: STARTED, note: null, position: null });
+    expect(await l.run).toBe(0);
+    expect(readJson<{ agent: string | null }>(report)!.agent).toBe('  ');
   });
 
   test.each(['', '  '])('a blank FORNAX_LEASE (%j, as `FORNAX_LEASE= cmd` passes it) is taken as not set: a lease is asked for', async (blank) => {
