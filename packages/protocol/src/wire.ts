@@ -99,8 +99,8 @@ export type OperatorJob = {
   type: string;
   /** The owner's token name. */
   owner: string | null;
-  /** Spec 09 § 2: the name the submitting agent gave, null without one (and from a server older than 0.11.0). */
-  agent: string | null;
+  /** Spec 09 § 2: the name the submitting agent gave, null without one; a server older than 0.11.0 leaves the key out. */
+  agent?: string | null;
   state: 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled';
   /** params.label when it is a string (fornax lease --label), else null. */
   label: string | null;

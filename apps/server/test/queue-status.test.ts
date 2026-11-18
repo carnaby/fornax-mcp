@@ -103,6 +103,17 @@ test("ahead with job_id cuts at that job, not at the token's first one; null onc
   expect((await queue(alice, mine)).body.ahead).toBeNull();
 });
 
+test('ahead with job_id is null for a finished job and for a job whose type is no longer offered', async () => {
+  const { alice, submit, queue } = people();
+  const finished = await submit(alice);
+  await t.app.inject({ method: 'POST', url: `/api/jobs/${finished}/cancel`, headers: bearer(alice) });
+  const held = await submit(alice, { type: 'hold' });
+  expect((await queue(alice, held)).body.ahead).toEqual([]);
+  announce(t.db, [labelled], t.clock.now);
+  expect((await queue(alice, held)).body.ahead).toBeNull();
+  expect((await queue(alice, finished)).body.ahead).toBeNull();
+});
+
 test('ahead without job_id tells two agents on one token apart', async () => {
   const { alice, bob, submit, queue } = people();
   await submit(alice, { agent: 'agent-a' });

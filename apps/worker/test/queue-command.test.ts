@@ -61,7 +61,7 @@ describe('renderQueue', () => {
 
   test('a server older than 0.11.0 sends no agent: the line shows the token, or ? without one', () => {
     const { agent: _agent, ...old } = job({ id: 'Q1' });
-    const lines = renderQueue(view({ queued: [old as OperatorQueue['queued'][number], { ...old, id: 'Q2', owner: null } as unknown as OperatorQueue['queued'][number]] }));
+    const lines = renderQueue(view({ queued: [old, { ...old, id: 'Q2', owner: null }] }));
     expect(lines[2]).toContain('1  upscale  carol  clip.mp4');
     expect(lines[3]).toContain('2  upscale  ?  clip.mp4');
     expect(lines.join('\n')).not.toContain('undefined');
