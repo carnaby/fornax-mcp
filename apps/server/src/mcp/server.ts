@@ -1,4 +1,4 @@
-import { FORNAX_VERSION, priorityInput } from '@fornax/protocol';
+import { AGENT_RULE, FORNAX_VERSION, priorityInput } from '@fornax/protocol';
 import { McpServer } from '@modelcontextprotocol/server';
 import type { FastifyBaseLogger } from 'fastify';
 import { z } from 'zod';
@@ -94,7 +94,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
         group: z.string().regex(GROUP).optional().describe('A label for related jobs (e.g. one per animation), to find them with list_jobs.'),
         agent: z
           .string().max(200).optional()
-          .describe('The name other agents reach you by (e.g. your session name). Every client of this server sees it next to the job, so put nothing secret in it.'),
+          .describe(`The name other agents reach you by (e.g. your session name); it ${AGENT_RULE}. Every client of this server sees it next to the job, so put nothing secret in it.`),
         callback_url: z.string().max(2000).optional().describe('Gets a signed POST when the job finishes; only URLs under a prefix the server allows.'),
       }),
     },

@@ -103,6 +103,23 @@ test("ahead with job_id cuts at that job, not at the token's first one; null onc
   expect((await queue(alice, mine)).body.ahead).toBeNull();
 });
 
+test('ahead without job_id tells two agents on one token apart', async () => {
+  const { alice, bob, submit, queue } = people();
+  await submit(alice, { agent: 'agent-a' });
+  await submit(alice, { agent: 'agent-b' });
+  const ahead = (await queue(bob)).body.ahead;
+  expect(ahead.map((j: { agent: string; owner: string }) => [j.agent, j.owner])).toEqual([['agent-a', 'alice'], ['agent-b', 'alice']]);
+});
+
+test('a waiting job whose token is gone stays in ahead: owner null, its agent kept', async () => {
+  const { alice, bob, submit, queue } = people();
+  await submit(bob, { agent: 'agent-b' });
+  await submit(bob);
+  t.db.delete(tokens).where(eq(tokens.name, 'bob')).run();
+  const ahead = (await queue(alice)).body.ahead;
+  expect(ahead.map((j: { position: number; agent: string | null; owner: string | null }) => [j.position, j.agent, j.owner])).toEqual([[1, 'agent-b', null], [2, null, null]]);
+});
+
 test('ahead holds at most 20 jobs', async () => {
   const { alice, submit, queue } = people();
   for (let i = 0; i < 22; i++) await submit(alice);

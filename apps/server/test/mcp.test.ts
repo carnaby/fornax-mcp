@@ -36,6 +36,7 @@ describe('the MCP endpoint', () => {
     for (const tool of tools) expect(tool.description, tool.name).toBeTruthy();
     expect(tools.find((x) => x.name === 'queue_status')!.description).toContain('worker.waiting');
     expect(tools.find((x) => x.name === 'queue_status')!.description).toContain('ahead');
+    expect(tools.find((x) => x.name === 'queue_status')!.description).toContain('ahead is null');
     const ins = client.getInstructions() ?? '';
     expect(ins).toContain('Pass agent with submit_job');
     expect(ins).toMatch(/^Fornax is a job queue for one GPU worker/);

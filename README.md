@@ -117,14 +117,14 @@ All with `Authorization: Bearer <token>`:
 | `GET /api/types` | offered job types with their schemas |
 | `POST /api/files?name=<file name>` | upload a file (streamed body) → `{id, name, size, …}` (`id` is the file id for `inputs`) |
 | `POST /api/uploads` | a one-time upload link (`PUT /api/uploads/<signed>`, no token) |
-| `POST /api/jobs` | submit `{type, params, inputs, priority?, group?, agent?, callback_url?}`; `priority` is `high`, `normal` or `idle` (`low` is taken as `normal`), without it the type's `default_priority`; `agent` is the name other agents reach you by (at most 80 characters: letters, digits, space and `. _ : / -`), shown to every client |
+| `POST /api/jobs` | submit `{type, params, inputs, priority?, group?, agent?, callback_url?}`; `priority` is `high`, `normal` or `idle` (`low` is taken as `normal`), without it the type's `default_priority`; `agent` is the name other agents reach you by (at most 80 characters: letters, digits, space and `. _ : / -`, not starting with `-` or a space, not ending with a space), shown to every client |
 | `GET /api/jobs`, `GET /api/jobs/:id` | list, details, outputs, result page link; one job also has `worker` and `note` (why it waits) |
 | `GET /api/jobs/:id?wait=25&change=<change>` | answers as soon as the job's `change` differs (at the latest after `wait` seconds, at most 30): wait instead of polling |
 | `POST /api/jobs/:id/cancel` | cancel |
 | `POST /api/jobs/:id/priority` | body `{"priority":"high"}` (`normal`, `idle`); a waiting job of yours, placed as if it were new |
 | `POST /api/jobs/:id/requeue` | body `{"idle":false}` or `{"idle":true}`; a running job of yours back to the queue (or to Idle); it starts again from the beginning |
 | `GET /api/jobs/:id/outputs/<name>` | download (or with a signed `?sig=` link, no token) |
-| `GET /api/queue` | queue summary: counts, the running job (`current`, with `agent`, `owner`, `label`) and `ahead`, the waiting jobs in queue order (at most 20) with who submitted them; `?job_id=<your job>` lists only the jobs before it |
+| `GET /api/queue` | queue summary: counts, the running job (`current`, with `agent`, `owner`, `label`) and `ahead`, the waiting jobs in queue order (at most 20) with who submitted them; `?job_id=<your job>` lists only the jobs before it, and `ahead` is `null` when that job has no place in the queue (it runs, has finished, is idle or its type is not offered) |
 
 Another client's job or file answers `404`.
 

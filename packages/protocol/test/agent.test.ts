@@ -11,5 +11,5 @@ test('anything else is refused with the one rule', () => {
   for (const bad of ['x'.repeat(AGENT_MAX + 1), 'a;b', 'agent"x', '-agent', ' agent', 'agent ', '', 'a\tb', 'ágent']) {
     expect(agentProblem(bad), JSON.stringify(bad)).toBe(AGENT_RULE);
   }
-  expect(AGENT_RULE).toBe('may hold at most 80 characters: letters, digits, space and . _ : / -, not starting with - or a space');
+  expect(AGENT_RULE).toBe('may hold at most 80 characters: letters, digits, space and . _ : / -, not starting with - or a space, not ending with a space');
 });

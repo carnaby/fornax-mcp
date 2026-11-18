@@ -32,6 +32,13 @@ test('REST and MCP keep agent; get_job, list_jobs and the operator queue show it
   expect(q.queued.map((j: { agent: string | null }) => j.agent)).toEqual(['agent-a', null, 'agent-b']);
 });
 
+test('submit_job tells a client the rule its agent is checked against, before the first refusal', async () => {
+  const client = await mcp.connect('/mcp', bearerHeader(issueToken(t.db, 'alice')));
+  const submit = (await client.listTools()).tools.find((x) => x.name === 'submit_job')!;
+  const agent = (submit.inputSchema.properties as Record<string, { description: string }>).agent!;
+  expect(agent.description).toContain(AGENT_RULE);
+});
+
 test('a bad agent is 422 with the rule, in REST and MCP; an empty one is no agent', async () => {
   announce(t.db, [leaseContract], t.clock.now);
   const alice = issueToken(t.db, 'alice');

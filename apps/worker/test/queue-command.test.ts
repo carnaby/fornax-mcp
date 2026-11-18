@@ -59,6 +59,14 @@ describe('renderQueue', () => {
     expect(lines[3]).toContain('2  upscale  carol  clip.mp4');
   });
 
+  test('a server older than 0.11.0 sends no agent: the line shows the token, or ? without one', () => {
+    const { agent: _agent, ...old } = job({ id: 'Q1' });
+    const lines = renderQueue(view({ queued: [old as OperatorQueue['queued'][number], { ...old, id: 'Q2', owner: null } as unknown as OperatorQueue['queued'][number]] }));
+    expect(lines[2]).toContain('1  upscale  carol  clip.mp4');
+    expect(lines[3]).toContain('2  upscale  ?  clip.mp4');
+    expect(lines.join('\n')).not.toContain('undefined');
+  });
+
   test('a high job says high; an idle job says since when (spec 07 § 4.3)', () => {
     const lines = renderQueue(view({ queued: [job({ id: 'QH', priority: 'high' }), job({ id: 'QI', priority: 'idle', idle_since: '2026-11-15T13:30:00.000Z' })] }));
     expect(lines.find((l) => l.includes('QH'))).toContain('  high  ');

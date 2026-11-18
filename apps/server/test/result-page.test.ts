@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm';
 import sharp from 'sharp';
 import { describe, expect, test } from 'vitest';
 import { rmSync } from 'node:fs';
-import { files as filesTable, jobs } from '../src/db/schema.js';
+import { files as filesTable, jobs, tokens } from '../src/db/schema.js';
 import { revokeToken } from '../src/domain/tokens.js';
 import { FileStore } from '../src/files/store.js';
 import { resultPath } from '../src/http/links.js';
@@ -228,6 +228,14 @@ describe('final review 07 #6', () => {
     expect(body).not.toContain('<pre></pre>');
     expect(body).not.toContain('download');
     expect(body).toContain("This job only held the card for a program on the worker's PC; it has no outputs.");
+  });
+
+  test('the page of a job whose token is gone is not found, like a revoked one', async () => {
+    const id = await endedLease({ agent: 'agent-a' });
+    t.db.delete(tokens).where(eq(tokens.name, 'bob')).run();
+    const page = await open(id);
+    expect(page.statusCode).toBe(404);
+    expect(page.body).not.toContain('agent-a');
   });
 
   test('a hostile agent name stays text', async () => {
