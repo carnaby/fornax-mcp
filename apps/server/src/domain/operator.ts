@@ -13,7 +13,8 @@ import { workerOnline } from './worker-state.js';
 export const OPERATOR_FINISHED = 50;
 
 const iso = (d: Date | null) => d?.toISOString() ?? null;
-type Seen = Omit<OperatorJob, 'result_url'>;
+/** `agent` is optional on the wire only for older servers; this server always sends it. */
+type Seen = Omit<OperatorJob, 'result_url' | 'agent'> & { agent: string | null };
 
 /**
  * Spec 06 2.3: the whole queue for the worker's operator: every owner's jobs, the waiting ones in queue order. `change`

@@ -117,7 +117,7 @@ All with `Authorization: Bearer <token>`:
 | `GET /api/types` | offered job types with their schemas |
 | `POST /api/files?name=<file name>` | upload a file (streamed body) → `{id, name, size, …}` (`id` is the file id for `inputs`) |
 | `POST /api/uploads` | a one-time upload link (`PUT /api/uploads/<signed>`, no token) |
-| `POST /api/jobs` | submit `{type, params, inputs, priority?, group?, agent?, callback_url?}`; `priority` is `high`, `normal` or `idle` (`low` is taken as `normal`), without it the type's `default_priority`; `agent` is the name other agents reach you by (at most 80 characters: ASCII letters, digits, space and `. _ : / -`, not starting with `-` or a space, not ending with a space), shown to every client |
+| `POST /api/jobs` | submit `{type, params, inputs, priority?, group?, agent?, callback_url?}`; `priority` is `high`, `normal` or `idle` (`low` is taken as `normal`), without it the type's `default_priority`; `agent` is the name other agents reach you by (at most 80 characters: ASCII letters and digits, space and `. _ : / -`, not starting with `-` or a space, not ending with a space), shown to every client |
 | `GET /api/jobs`, `GET /api/jobs/:id` | list, details, outputs, result page link; one job also has `worker` and `note` (why it waits) |
 | `GET /api/jobs/:id?wait=25&change=<change>` | answers as soon as the job's `change` differs (at the latest after `wait` seconds, at most 30): wait instead of polling |
 | `POST /api/jobs/:id/cancel` | cancel |
