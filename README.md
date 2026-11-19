@@ -3,6 +3,8 @@
 **A GPU job queue served over MCP.** One worker on a PC with a GPU owns the card; agents and apps on other machines
 send it jobs (transcription, rendering, upscaling, and any type you add) and get the results back with a manifest.
 
+**[What Fornax is, in one page](https://carnaby.github.io/fornax-mcp/)** — with screenshots of the tray.
+
 *Fornax* is Latin for an oven, and the name of a constellation.
 
 Status: an early release (0.4). The API may still change.
