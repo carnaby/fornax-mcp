@@ -21,7 +21,7 @@ import { renderLog } from './log';
 import { initQuit, renderQuit } from './quit';
 import { renderRunning } from './running';
 import { mountSkeleton } from './skeleton';
-import { initTabs } from './tabs';
+import { initTabs, tabsDrawn } from './tabs';
 import { dayKey } from './text';
 import type { Snapshot } from './types';
 import { el, setOffset, setRerender, tickTimes } from './ui';
@@ -63,6 +63,7 @@ function render(s: Snapshot, force = false): void {
     }
   }
   renderQuit(s);
+  tabsDrawn();
 }
 
 mountSkeleton(el('app'));

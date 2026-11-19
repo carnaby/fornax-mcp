@@ -75,11 +75,14 @@ impl Prefs {
         }
     }
 
-    pub fn layout(&self) -> Layout {
+    /// `cap`: the highest window the screen shows (logical pixels, without the window's frame); the closed window is
+    /// never higher, and its page then scrolls.
+    pub fn layout(&self, cap: Option<f64>) -> Layout {
         if self.history_open {
             return Layout { min: (MIN_WIDTH, MIN_HEIGHT), max: None, size: (self.width, self.height) };
         }
-        let h = self.fit_height.unwrap_or(MIN_HEIGHT);
+        let fit = self.fit_height.unwrap_or(MIN_HEIGHT);
+        let h = cap.filter(|c| c.is_finite() && *c > 0.0).map_or(fit, |c| fit.min(c));
         Layout { min: (MIN_WIDTH, h), max: Some((ANY_WIDTH, h)), size: (self.width, h) }
     }
 
@@ -149,12 +152,14 @@ pub struct Store {
     file: PathBuf,
     prefs: Mutex<Prefs>,
     changed: Mutex<Sender<()>>,
+    /// One write at a time: the saver thread and a flush share the temporary file.
+    writing: Mutex<()>,
 }
 
 impl Store {
     pub fn open(file: PathBuf) -> Arc<Store> {
         let (tx, rx) = channel::<()>();
-        let store = Arc::new(Store { prefs: Mutex::new(load(&file)), file, changed: Mutex::new(tx) });
+        let store = Arc::new(Store { prefs: Mutex::new(load(&file)), file, changed: Mutex::new(tx), writing: Mutex::new(()) });
         let weak = Arc::downgrade(&store);
         std::thread::spawn(move || {
             while rx.recv().is_ok() {
@@ -186,33 +191,49 @@ impl Store {
         }
     }
 
-    /// Writes the state now (the window was hidden). A failure is not shown: the window then opens as before.
+    /// Writes the state now (the window was hidden, the tray ends). A failure is not shown: the window then opens as
+    /// before.
     pub fn flush(&self) {
+        let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
         let _ = save(&self.file, &self.get());
     }
 }
 
-/// Gives the window the sizes of `prefs`; `place`: also its remembered place, when a monitor still shows it.
+/// The highest window the monitor it is on shows: its work area less the window's frame, in logical pixels.
+fn screen_cap(window: &WebviewWindow) -> Option<f64> {
+    let monitor = window.current_monitor().ok().flatten()?;
+    let scale = monitor.scale_factor();
+    let (outer, inner) = (window.outer_size().ok()?, window.inner_size().ok()?);
+    let frame = f64::from(outer.height.saturating_sub(inner.height));
+    Some((f64::from(monitor.work_area().size.height) - frame) / scale)
+}
+
+/// Gives the window the sizes of `prefs`; `place`: first its remembered place when a monitor still shows it, else the
+/// middle of the screen (the window starts there).
 pub fn apply(window: &WebviewWindow, prefs: &Prefs, place: bool) {
-    let l = prefs.layout();
     let size = |(w, h): (f64, f64)| LogicalSize::new(w, h);
+    let mut placed = false;
+    if place {
+        let areas: Vec<Area> = window
+            .available_monitors()
+            .unwrap_or_default()
+            .iter()
+            .map(|m| {
+                let a = m.work_area();
+                Area { x: a.position.x, y: a.position.y, width: a.size.width, height: a.size.height }
+            })
+            .collect();
+        if let Some((x, y)) = prefs.place(&areas) {
+            placed = window.set_position(PhysicalPosition::new(x, y)).is_ok();
+        }
+    }
+    let l = prefs.layout(screen_cap(window));
     let _ = window.set_max_size(l.max.map(size));
     let _ = window.set_min_size(Some(size(l.min)));
     let _ = window.set_size(size(l.size));
-    if !place {
-        return;
-    }
-    let areas: Vec<Area> = window
-        .available_monitors()
-        .unwrap_or_default()
-        .iter()
-        .map(|m| {
-            let a = m.work_area();
-            Area { x: a.position.x, y: a.position.y, width: a.size.width, height: a.size.height }
-        })
-        .collect();
-    if let Some((x, y)) = prefs.place(&areas) {
-        let _ = window.set_position(PhysicalPosition::new(x, y));
+    // Centred again for the size it has now.
+    if place && !placed {
+        let _ = window.center();
     }
 }
 
@@ -224,7 +245,7 @@ mod tests {
     #[test]
     fn a_new_window_is_400_by_820_with_the_card_open() {
         let p = Prefs::default();
-        assert_eq!(p.layout(), Layout { min: (400.0, 720.0), max: None, size: (400.0, 820.0) });
+        assert_eq!(p.layout(None), Layout { min: (400.0, 720.0), max: None, size: (400.0, 820.0) });
         assert_eq!(p.place(&[Area { x: 0, y: 0, width: 1920, height: 1040 }]), None);
     }
 
@@ -232,14 +253,27 @@ mod tests {
     fn closed_the_window_is_as_high_as_it_measured_and_only_its_width_changes() {
         let mut p = Prefs { width: 520.0, height: 900.0, ..Prefs::default() };
         assert!(p.set_history(false, Some(480.0)));
-        assert_eq!(p.layout(), Layout { min: (400.0, 480.0), max: Some((ANY_WIDTH, 480.0)), size: (520.0, 480.0) });
+        assert_eq!(p.layout(None), Layout { min: (400.0, 480.0), max: Some((ANY_WIDTH, 480.0)), size: (520.0, 480.0) });
         // A drag of the closed window's edge: the width is kept, the height of the open window stays.
         assert!(p.resized(610.0, 480.0));
         assert_eq!((p.width, p.height), (610.0, 900.0));
         // Opened again: the height it had open.
         assert!(p.set_history(true, None));
-        assert_eq!(p.layout(), Layout { min: (400.0, 720.0), max: None, size: (610.0, 900.0) });
+        assert_eq!(p.layout(None), Layout { min: (400.0, 720.0), max: None, size: (610.0, 900.0) });
         assert_eq!(p.fit_height, Some(480.0));
+    }
+
+    #[test]
+    fn a_closed_window_is_never_higher_than_the_screen_shows() {
+        let p = Prefs { history_open: false, fit_height: Some(900.0), width: 450.0, ..Prefs::default() };
+        assert_eq!(p.layout(Some(650.0)), Layout { min: (400.0, 650.0), max: Some((ANY_WIDTH, 650.0)), size: (450.0, 650.0) });
+        assert_eq!(p.layout(Some(1200.0)).size.1, 900.0);
+        // A broken monitor reading changes nothing.
+        assert_eq!(p.layout(Some(f64::NAN)).size.1, 900.0);
+        assert_eq!(p.layout(Some(0.0)).size.1, 900.0);
+        // The open window keeps its own height; it is at least 720 high as before.
+        let open = Prefs { height: 1000.0, ..Prefs::default() };
+        assert_eq!(open.layout(Some(650.0)).size, (400.0, 1000.0));
     }
 
     #[test]
@@ -264,10 +298,10 @@ mod tests {
     fn a_measured_height_is_never_below_the_lowest_closed_window() {
         let mut p = Prefs::default();
         p.set_history(false, Some(12.0));
-        assert_eq!(p.layout().size.1, 200.0);
+        assert_eq!(p.layout(None).size.1, 200.0);
         // Not measured yet: the lowest open window.
         let q = Prefs { history_open: false, ..Prefs::default() };
-        assert_eq!(q.layout().size.1, 720.0);
+        assert_eq!(q.layout(None).size.1, 720.0);
     }
 
     #[test]
@@ -328,6 +362,18 @@ mod tests {
             std::thread::sleep(Duration::from_millis(20));
         }
         assert_eq!(load(&file), Prefs { width: 500.0, height: 800.0, position: Some((10, 20)), ..Prefs::default() });
+    }
+
+    #[test]
+    fn the_store_waits_for_the_last_change_not_the_first() {
+        let dir = TempDir::new("fornax-window ž");
+        let file = dir.join("tray-window.json");
+        let store = Store::open(file.clone());
+        store.update(|p| p.moved(10, 20));
+        std::thread::sleep(SAVE_AFTER * 3 / 5);
+        store.update(|p| p.moved(30, 40));
+        std::thread::sleep(SAVE_AFTER * 3 / 5);
+        assert!(!file.exists(), "written while the window still moved");
     }
 
     #[test]

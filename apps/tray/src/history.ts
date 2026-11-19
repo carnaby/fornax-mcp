@@ -47,6 +47,10 @@ export function renderHistory(s: Snapshot): void {
     return;
   }
   const rows = today.map(historyRow);
-  if (yesterday.length) rows.push(make('li', 'hday', 'Yesterday'), ...yesterday.map(historyRow));
+  if (yesterday.length) {
+    const line = make('li', 'hday', 'Yesterday');
+    line.setAttribute('role', 'presentation');
+    rows.push(line, ...yesterday.map(historyRow));
+  }
   list.replaceChildren(...rows);
 }

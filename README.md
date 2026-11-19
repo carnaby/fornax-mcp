@@ -368,8 +368,9 @@ worker's state (with Pause queue and Start/Stop worker), the GPU strip the card'
 holds it (a job, a lease, or programs outside Fornax, with when the next job starts), Running the job with its
 progress and time left (or the lease, with Revoke), Waiting the jobs in the order they will run (drag them, or use ⤒
 and ⤓ on hover), and the tabs History (today's and yesterday's finished jobs, their result page and error) and Worker
-log. The arrow next to the tabs closes them, and the window becomes as high as what it still shows; the window
-remembers its size, its place and whether the tabs are open (in `tray-window.json` in the data folder). Pause queue lets
+log. The arrow next to the tabs hides their content (a click on a tab shows it again), and the window becomes as high
+as what it still shows; the window remembers its size, its place and whether the tabs are open (`tray-window.json` in
+`%LOCALAPPDATA%ornax` or `~/.local/share/fornax`). Pause queue lets
 the running job finish and starts no other; Stop worker gives the running job back to the queue. It tells you when a
 job fails, and when jobs wait while the worker is stopped or the queue is paused. The footer lists the job types the
 worker offers, the ones waiting for the card (dimmed) and the ones whose check failed (red, click for the reason); the

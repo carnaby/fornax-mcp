@@ -120,10 +120,23 @@ fn history_open(store: State<'_, Arc<Store>>) -> bool {
 /// 0.12.0: the card opened or closed; `height`: what the closed window shows, as the window measured it (logical px).
 #[tauri::command]
 fn set_history(open: bool, height: Option<f64>, app: AppHandle, store: State<'_, Arc<Store>>) {
+    let window = app.get_webview_window(WINDOW).filter(|w| !w.is_minimized().unwrap_or(false));
+    // First the size the window has now: on Linux its last Resized may come after this call, and the old width would
+    // pull a window the user is dragging back.
+    if let Some((width, height)) = window.as_ref().and_then(logical_size) {
+        store.update(|p| p.resized(width, height));
+    }
     store.update(|p| p.set_history(open, height));
-    if let Some(window) = app.get_webview_window(WINDOW) {
+    // A minimized window is fitted when it gets the focus again.
+    if let Some(window) = window {
         place::apply(&window, &store.get(), false);
     }
+}
+
+/// The window's inner size in logical pixels.
+fn logical_size(window: &tauri::WebviewWindow) -> Option<(f64, f64)> {
+    let size = window.inner_size().ok()?.to_logical::<f64>(window.scale_factor().ok()?);
+    Some((size.width, size.height))
 }
 
 fn main() {
@@ -194,15 +207,29 @@ fn main() {
                         store.update(|p| p.resized(size.width, size.height));
                     }
                 }
+                // The closed window may have missed a new height while it was minimized.
+                WindowEvent::Focused(true) if still() => {
+                    if let (Some(store), Some(window)) = (store, window.app_handle().get_webview_window(window.label())) {
+                        let prefs = store.get();
+                        if !prefs.history_open {
+                            place::apply(&window, &prefs, false);
+                        }
+                    }
+                }
                 _ => {}
             }
         })
         .build(tauri::generate_context!())
         .expect("error while building the Fornax tray")
-        .run(|_app, event| {
+        .run(|app, event| match event {
             // Only Quit ends the tray (it exits with a code); nothing else may, such as the last window closing.
-            if let RunEvent::ExitRequested { code: None, api, .. } = event {
-                api.prevent_exit();
+            RunEvent::ExitRequested { code: None, api, .. } => api.prevent_exit(),
+            // The window's last moves, before the saver thread wrote them.
+            RunEvent::Exit => {
+                if let Some(store) = app.try_state::<Arc<Store>>() {
+                    store.flush();
+                }
             }
+            _ => {}
         });
 }

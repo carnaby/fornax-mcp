@@ -12,6 +12,8 @@ let active: Tab = 'history';
 let open = true;
 /** The height last sent for the closed window: the window resizes only when what it shows changes. */
 let sentHeight = 0;
+/** Not before the first snapshot is drawn: the bare skeleton would shrink the window, the snapshot grow it again. */
+let drawn = false;
 
 function stored(): Tab {
   try {
@@ -50,7 +52,7 @@ const measured = (): number => Math.ceil(el('tray').getBoundingClientRect().heig
 
 /** Closed: tells the core the window's new height, when it changed. */
 function fit(): void {
-  if (open) return;
+  if (open || !drawn) return;
   const height = measured();
   if (height === sentHeight) return;
   sentHeight = height;
@@ -75,6 +77,13 @@ function setOpen(next: boolean): void {
   } else {
     fit();
   }
+}
+
+/** The window drew its first snapshot: the closed window may now take its height. */
+export function tabsDrawn(): void {
+  if (drawn) return;
+  drawn = true;
+  fit();
 }
 
 export function initTabs(): void {

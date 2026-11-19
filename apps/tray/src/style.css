@@ -155,8 +155,10 @@ button.quit { background: var(--bad); border-color: var(--bad); color: var(--bg)
 .tablist { display: flex; flex: 1; gap: 4px; padding: 0 8px; }
 button.tabs-toggle svg { display: block; margin: auto; transition: transform 0.15s; }
 .history-closed button.tabs-toggle svg { transform: rotate(-90deg); }
-/* 0.12.0: the card closed, the window is as high as what it shows (tabs.ts measures it). */
+/* 0.12.0: the card closed, the window is as high as what it shows (tabs.ts measures it); on a screen too low for
+   that the core makes the window lower and the page scrolls. */
 .tray.history-closed { height: auto; }
+#app { overflow-y: auto; }
 .history-closed .tabs { flex: none; min-height: 0; }
 .history-closed .tabs-head { border-bottom: none; }
 .history-closed .tab[aria-selected='true'] { border-bottom-color: transparent; }

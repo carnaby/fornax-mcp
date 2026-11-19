@@ -116,7 +116,6 @@ export function waitingNotes(j: JobView): { text: string; bad: boolean }[] {
   return notes;
 }
 
-/** Spec 06e § 2.6: the line under a finished job. */
 /** Local midnight of the day `ms` falls on. */
 function dayStart(ms: number): number {
   const d = new Date(ms);
@@ -145,6 +144,7 @@ export function historyDays(finished: JobView[], nowMs: number): { today: JobVie
   return { today, yesterday };
 }
 
+/** Spec 06e § 2.6: the line under a finished job. */
 export function historySub(j: JobView): string {
   const parts = [j.owner];
   if (j.finishedAtMs !== null) parts.push(clock(j.finishedAtMs));
