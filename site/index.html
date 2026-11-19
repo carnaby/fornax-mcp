@@ -75,6 +75,7 @@
           <h3>Lease the card</h3>
           <p class="muted">Programs you run yourself on the GPU PC take their turn too. <code>fornax lease</code> waits in the queue, holds the card while the program runs and gives it back when it ends.</p>
           <pre><code>fornax lease --priority high -- blender -b scene.blend -f 1</code></pre>
+          <p class="small">It needs the <code>lease</code> type and a client token on that PC: <a href="https://github.com/carnaby/fornax-mcp#the-gpu-belongs-to-the-queue">leasing in the README</a></p>
         </div>
         <figure class="shot tall"><img src="img/tray-lease.webp" width="800" height="1640" loading="lazy" alt="The tray while a lease holds the card for a program on the PC, with a Revoke button."></figure>
       </article>
@@ -163,15 +164,18 @@ tools: [blender]</code></pre>
         <li>
           <h3>Connect Claude</h3>
           <pre><code>docker exec fornax fornax-admin tokens invite alice</code></pre>
-          <p class="muted">The invite page makes the token in the browser and shows the command for Claude Code (<code>claude mcp add fornax --transport http https://fornax.example.com/mcp …</code>) and the connector URL for claude.ai.</p>
+          <p class="muted">The invite page makes the token in the browser and shows the command for Claude Code (<code>claude mcp add fornax --scope user --transport http https://fornax.example.com/mcp …</code>) and the connector URL for claude.ai.</p>
           <p class="small"><a href="https://github.com/carnaby/fornax-mcp#connect-a-client">Connecting a client in the README</a></p>
         </li>
         <li>
           <h3>Run the worker on the GPU PC</h3>
-          <pre><code>node fornax-worker/fornax.mjs install
+          <pre><code>docker exec fornax fornax-admin tokens invite pc --worker
+node fornax-worker/fornax.mjs install
 fornax worker pair --server https://fornax.example.com --name pc
+docker exec fornax fornax-admin tokens approve pc
 fornax types install render
 fornax worker</code></pre>
+          <p class="muted">The invite runs on the server; the rest on the GPU PC, except the approval, which follows once you have compared the fingerprint <code>pair</code> shows. Before <code>types install</code>, put the paths of the tools the types need (here <code>blender</code>) into <code>worker.yaml</code>.</p>
           <p class="small">The worker comes from your server (<code>/downloads/fornax-worker.zip</code>) or the GitHub releases and needs Node.js 22. <a href="https://github.com/carnaby/fornax-mcp#run-the-worker">The worker in the README</a></p>
         </li>
         <li>
