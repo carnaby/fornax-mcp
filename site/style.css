@@ -1,0 +1,91 @@
+/* The Fornax landing page (spec 2026-11-19): the tray's dark look (tokens of apps/tray/src/style.css), no JavaScript. */
+@font-face { font-family: Inter; font-style: normal; font-weight: 400; font-display: swap; src: url(fonts/inter-latin-400-normal.woff2) format('woff2'); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: Inter; font-style: normal; font-weight: 400; font-display: swap; src: url(fonts/inter-latin-ext-400-normal.woff2) format('woff2'); unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: Inter; font-style: normal; font-weight: 600; font-display: swap; src: url(fonts/inter-latin-600-normal.woff2) format('woff2'); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: Inter; font-style: normal; font-weight: 600; font-display: swap; src: url(fonts/inter-latin-ext-600-normal.woff2) format('woff2'); unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: Inter; font-style: normal; font-weight: 700; font-display: swap; src: url(fonts/inter-latin-700-normal.woff2) format('woff2'); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: Inter; font-style: normal; font-weight: 700; font-display: swap; src: url(fonts/inter-latin-ext-700-normal.woff2) format('woff2'); unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: 'JetBrains Mono'; font-style: normal; font-weight: 400; font-display: swap; src: url(fonts/jetbrains-mono-latin-400-normal.woff2) format('woff2'); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: 'JetBrains Mono'; font-style: normal; font-weight: 400; font-display: swap; src: url(fonts/jetbrains-mono-latin-ext-400-normal.woff2) format('woff2'); unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+
+:root {
+  --bg: #1a1918; --card: #232120; --border: #34312e; --log-bg: #161514; --btn: #2b2927; --btn-border: #45413d;
+  --text: #edeae6; --text-2: #a8a29c; --text-3: #9a938c; --text-mono: #cfc9c3; --log-text: #bdb6af;
+  --accent: #e8622c; --ok: #4ade80; --lease: #f5b04a;
+  --sans: Inter, 'Segoe UI', system-ui, sans-serif;
+  --mono: 'JetBrains Mono', 'Cascadia Mono', ui-monospace, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+body { margin: 0; background: var(--bg); color: var(--text); font: 16px / 1.6 var(--sans); }
+a { color: var(--accent); }
+a:hover { text-decoration-thickness: 2px; }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 20px; }
+
+.top { display: flex; align-items: center; justify-content: space-between; height: 64px; }
+.brand { display: inline-flex; align-items: center; gap: 10px; color: var(--text); font-size: 18px; font-weight: 700; text-decoration: none; }
+.top-link { color: var(--text-2); font-weight: 600; text-decoration: none; }
+.top-link:hover { color: var(--text); }
+
+section { padding: 56px 0; border-top: 1px solid var(--border); }
+h1 { margin: 0 0 18px; font-size: clamp(38px, 6vw, 58px); line-height: 1.08; letter-spacing: -0.02em; }
+h2 { margin: 0 0 22px; font-size: clamp(26px, 3.4vw, 34px); line-height: 1.2; letter-spacing: -0.01em; }
+h3 { margin: 0 0 10px; font-size: 21px; line-height: 1.3; }
+p { margin: 0 0 14px; }
+.lead { font-size: 19px; color: var(--text-2); }
+.small { font-size: 14px; color: var(--text-3); }
+.muted { color: var(--text-2); }
+
+.hero { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 56px; align-items: center; padding: 48px 0 64px; border-top: none; }
+.buttons { display: flex; flex-wrap: wrap; gap: 12px; margin: 28px 0 18px; }
+.button { display: inline-flex; align-items: center; height: 44px; padding: 0 20px; border: 1px solid var(--btn-border); border-radius: 9px; background: var(--btn); color: var(--text); font-weight: 600; text-decoration: none; }
+.button:hover { border-color: var(--text-3); }
+.button.primary { border-color: var(--accent); background: var(--accent); color: #1a1918; }
+.button.primary:hover { filter: brightness(1.08); }
+
+figure { margin: 0; }
+.shot img { display: block; width: 100%; height: auto; border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45); }
+.shot.tall { justify-self: center; width: 100%; max-width: 320px; }
+
+.points { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; margin: 0; padding: 0; list-style: none; }
+.points li { padding: 20px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); color: var(--text-2); }
+.points strong { display: block; margin-bottom: 6px; color: var(--text); }
+
+.feature { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 48px; align-items: start; padding: 28px 0; }
+/* The text stays in view beside a tall screenshot while the page scrolls. */
+.feature > div { position: sticky; top: 24px; padding-top: 24px; }
+.feature.flip { grid-template-columns: 320px minmax(0, 1fr); }
+.feature.flip > figure, .feature.flip > pre { order: -1; }
+.feature.wide, .feature.wide.flip { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: center; }
+.feature.wide > div { position: static; padding-top: 0; }
+.feature ul { margin: 0 0 14px; padding-left: 20px; color: var(--text-2); }
+
+code { padding: 1px 5px; border-radius: 5px; background: var(--card); color: var(--text-mono); font: 0.9em var(--mono); }
+pre { margin: 0 0 14px; padding: 14px 16px; overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--log-bg); color: var(--log-text); font: 13.5px / 1.6 var(--mono); }
+pre code { padding: 0; background: none; color: inherit; font: inherit; }
+
+.diagram { margin: 8px 0 22px; overflow-x: auto; }
+.diagram svg { display: block; width: 100%; min-width: 620px; height: auto; }
+.d-box { fill: var(--card); stroke: var(--border); stroke-width: 1.5; }
+.d-box.server { stroke: var(--accent); }
+.d-title { fill: var(--text); font: 600 16px var(--sans); }
+.d-sub { fill: var(--text-2); font: 13px var(--sans); }
+.d-line { fill: none; stroke: var(--accent); stroke-width: 2; }
+.d-head { fill: var(--accent); }
+
+.steps { margin: 0; padding: 0; list-style: none; counter-reset: step; }
+.steps > li { position: relative; margin-bottom: 30px; padding-left: 52px; }
+.steps > li::before { position: absolute; top: 0; left: 0; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: var(--accent); color: #1a1918; font-weight: 700; content: counter(step); counter-increment: step; }
+
+.foot { display: flex; flex-wrap: wrap; gap: 8px 20px; justify-content: space-between; padding: 28px 0 40px; border-top: 1px solid var(--border); color: var(--text-3); font-size: 14px; }
+.foot a { color: var(--text-2); }
+
+@media (max-width: 820px) {
+  .hero, .feature, .feature.flip, .feature.wide, .feature.wide.flip { grid-template-columns: minmax(0, 1fr); gap: 32px; }
+  .feature.flip > figure, .feature.flip > pre { order: 0; }
+  .feature > div { position: static; padding-top: 0; }
+  .points { grid-template-columns: minmax(0, 1fr); }
+  section { padding: 44px 0; }
+}

@@ -8,7 +8,7 @@
   "scripts": {
     "build": "pnpm -r --if-present build",
     "typecheck": "pnpm -r --if-present typecheck",
-    "test": "pnpm -r --if-present --workspace-concurrency=1 test && node scripts/test-packs.mjs",
+    "test": "pnpm -r --if-present --workspace-concurrency=1 test && node scripts/test-packs.mjs && node --test scripts/site.test.mjs",
     "bundle:worker": "node apps/worker/scripts/bundle.mjs dist/worker",
     "test:packs": "node scripts/test-packs.mjs"
   },

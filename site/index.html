@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fornax — one GPU, many agents</title>
+  <meta name="description" content="Fornax is a GPU job queue served over MCP: agents and apps on any machine send jobs to the PC with the GPU; one runs at a time, the others wait their turn.">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#1a1918">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Fornax — one GPU, many agents">
+  <meta property="og:description" content="A GPU job queue served over MCP: agents and apps on any machine send jobs to the PC with the GPU; one runs at a time, the others wait their turn.">
+  <meta property="og:url" content="https://carnaby.github.io/fornax-mcp/">
+  <meta property="og:image" content="https://carnaby.github.io/fornax-mcp/img/og.png">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Fornax: one GPU, many agents, with the Fornax tray window.">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="https://carnaby.github.io/fornax-mcp/img/og.png">
+  <link rel="canonical" href="https://carnaby.github.io/fornax-mcp/">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="./"><img src="favicon.svg" width="28" height="28" alt="">Fornax</a>
+    <a class="top-link" href="https://github.com/carnaby/fornax-mcp">GitHub</a>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div>
+        <h1>One GPU, many agents.</h1>
+        <p class="lead">A job queue served over MCP: agents and apps on any machine send jobs to the PC with the GPU; one runs at a time, the others wait their turn.</p>
+        <p class="buttons">
+          <a class="button primary" href="#get-started">Get started</a>
+          <a class="button" href="https://github.com/carnaby/fornax-mcp">View on GitHub</a>
+        </p>
+        <p class="small">MIT licensed. The server is one Docker image; the worker runs on Windows and Linux.</p>
+      </div>
+      <figure class="shot tall">
+        <img src="img/tray-main.webp" width="800" height="1640" alt="The Fornax tray window: the card's memory and load, an upscale job running at 65 %, three jobs waiting in order and the finished jobs below.">
+      </figure>
+    </section>
+
+    <section id="problem">
+      <h2>The card is the bottleneck</h2>
+      <ul class="points">
+        <li><strong>Everyone wants it at once.</strong> Two agents start a render and a transcription on the same card; the memory runs out and both fail.</li>
+        <li><strong>Nobody sees the others.</strong> Whoever holds the card does not know who waits, and whoever waits does not know whom to ask.</li>
+        <li><strong>The files live elsewhere.</strong> Inputs must reach the PC with the GPU, and the results must come back.</li>
+      </ul>
+    </section>
+
+    <section id="features">
+      <h2>What it does</h2>
+
+      <article class="feature">
+        <div>
+          <h3>A fair queue</h3>
+          <p class="muted">One job at a time, in order. Interactive work goes first with <code>high</code>; batches wait as <code>idle</code> until you start them.</p>
+          <ul>
+            <li>Every job carries the name of the agent that sent it.</li>
+            <li><code>queue_status</code> says who runs and who waits ahead of you.</li>
+            <li><code>get_job</code> waits for a change instead of asking again and again.</li>
+          </ul>
+        </div>
+        <figure class="shot tall"><img src="img/tray-idle.webp" width="800" height="2000" loading="lazy" alt="The tray with a high-priority job at the top of the queue and two idle jobs that wait until someone starts them."></figure>
+      </article>
+
+      <article class="feature flip">
+        <div>
+          <h3>Lease the card</h3>
+          <p class="muted">Programs you run yourself on the GPU PC take their turn too. <code>fornax lease</code> waits in the queue, holds the card while the program runs and gives it back when it ends.</p>
+          <pre><code>fornax lease --priority high -- blender -b scene.blend -f 1</code></pre>
+        </div>
+        <figure class="shot tall"><img src="img/tray-lease.webp" width="800" height="1640" loading="lazy" alt="The tray while a lease holds the card for a program on the PC, with a Revoke button."></figure>
+      </article>
+
+      <article class="feature">
+        <div>
+          <h3>The tray</h3>
+          <p class="muted">On the GPU PC the tray starts the worker and shows the card: its memory and load and who holds it, the running job with its progress, the waiting jobs (drag them to reorder), today's and yesterday's finished jobs and the worker's log.</p>
+        </div>
+        <figure class="shot tall"><img src="img/tray-days.webp" width="800" height="2000" loading="lazy" alt="The tray's history with today's finished jobs and, under a Yesterday line, the jobs from the day before."></figure>
+      </article>
+
+      <article class="feature wide flip">
+        <div>
+          <h3>Job types as packs</h3>
+          <p class="muted">Transcribe, render, upscale and your own types. A pack is a contract (its inputs and a strict parameter schema) and a command. There is no shell: arguments are built from checked values only, and the server offers exactly what the worker announced.</p>
+        </div>
+        <pre><code>name: render
+inputs:
+  scene: { extensions: [.blend], max_mb: 2048 }
+params:
+  type: object
+  additionalProperties: false
+  required: [frame_start]
+  properties:
+    frame_start: { type: integer, minimum: 0 }
+    samples: { type: integer, minimum: 1, default: 128 }
+max_runtime: 6h
+tools: [blender]</code></pre>
+      </article>
+
+      <article class="feature wide">
+        <div>
+          <h3>Results anywhere</h3>
+          <p class="muted">Inputs go up through a one-time link (<code>curl -T</code>), never through MCP. Results come back with <code>get_output</code>: an image as a preview, text inline, anything else as a download link. Every job has a result page with its previews and its log, and every client sees only its own jobs.</p>
+        </div>
+        <figure class="shot"><img src="img/result.webp" width="1984" height="2200" loading="lazy" alt="The result page of a finished render job: the rendered frame as a preview, the job's details and its log."></figure>
+      </article>
+    </section>
+
+    <section id="how-it-works">
+      <h2>How it works</h2>
+      <div class="diagram">
+        <svg viewBox="0 0 760 250" role="img" aria-labelledby="diagram-title">
+          <title id="diagram-title">Agents and apps send jobs to the Fornax server; the worker on the GPU PC pulls them.</title>
+          <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path class="d-head" d="M0 0 L10 5 L0 10 Z"></path>
+            </marker>
+          </defs>
+          <rect class="d-box" x="1" y="20" width="210" height="90" rx="12"></rect>
+          <text class="d-title" x="20" y="56">Agents</text>
+          <text class="d-sub" x="20" y="80">MCP: Claude Code, claude.ai</text>
+          <rect class="d-box" x="1" y="140" width="210" height="90" rx="12"></rect>
+          <text class="d-title" x="20" y="176">Apps</text>
+          <text class="d-sub" x="20" y="200">REST API and webhooks</text>
+          <rect class="d-box server" x="275" y="45" width="210" height="160" rx="12"></rect>
+          <text class="d-title" x="294" y="84">Fornax server</text>
+          <text class="d-sub" x="294" y="110">one Docker image</text>
+          <text class="d-sub" x="294" y="132">the queue, the files</text>
+          <text class="d-sub" x="294" y="154">and the result pages</text>
+          <rect class="d-box" x="549" y="45" width="210" height="160" rx="12"></rect>
+          <text class="d-title" x="568" y="84">Worker</text>
+          <text class="d-sub" x="568" y="110">on the PC with the GPU</text>
+          <text class="d-sub" x="568" y="132">pulls its jobs:</text>
+          <text class="d-sub" x="568" y="154">no open port</text>
+          <text class="d-sub" x="568" y="176">Windows or Linux</text>
+          <path class="d-line" d="M211 65 L273 100" marker-end="url(#arrow)"></path>
+          <path class="d-line" d="M211 185 L273 150" marker-end="url(#arrow)"></path>
+          <path class="d-line" d="M549 125 L487 125" marker-end="url(#arrow)"></path>
+        </svg>
+      </div>
+      <p class="muted">Agents talk to the server over MCP, apps over REST. The server keeps the queue, the input and output files and the result pages. The worker on the PC with the GPU asks the server for the next job, so the PC needs no open port; it runs the job's pack and sends the outputs back.</p>
+    </section>
+
+    <section id="get-started">
+      <h2>Get started</h2>
+      <ol class="steps">
+        <li>
+          <h3>Run the server</h3>
+          <pre><code>docker run -d --name fornax -p 127.0.0.1:3000:3000 -v fornax-data:/data \
+  -e FORNAX_SECRET="$(openssl rand -base64 48)" -e PUBLIC_URL=https://fornax.example.com \
+  ghcr.io/carnaby/fornax:latest</code></pre>
+          <p class="small">Put it behind your reverse proxy. <a href="https://github.com/carnaby/fornax-mcp#run-the-server">Configuration in the README</a></p>
+        </li>
+        <li>
+          <h3>Connect Claude</h3>
+          <pre><code>docker exec fornax fornax-admin tokens invite alice</code></pre>
+          <p class="muted">The invite page makes the token in the browser and shows the command for Claude Code (<code>claude mcp add fornax --transport http https://fornax.example.com/mcp …</code>) and the connector URL for claude.ai.</p>
+          <p class="small"><a href="https://github.com/carnaby/fornax-mcp#connect-a-client">Connecting a client in the README</a></p>
+        </li>
+        <li>
+          <h3>Run the worker on the GPU PC</h3>
+          <pre><code>node fornax-worker/fornax.mjs install
+fornax worker pair --server https://fornax.example.com --name pc
+fornax types install render
+fornax worker</code></pre>
+          <p class="small">The worker comes from your server (<code>/downloads/fornax-worker.zip</code>) or the GitHub releases and needs Node.js 22. <a href="https://github.com/carnaby/fornax-mcp#run-the-worker">The worker in the README</a></p>
+        </li>
+        <li>
+          <h3>Add the tray</h3>
+          <pre><code>fornax tray install</code></pre>
+          <p class="small">The installer of your server's version: MSI on Windows, deb on Ubuntu. <a href="https://github.com/carnaby/fornax-mcp#tray-app">The tray in the README</a></p>
+        </li>
+      </ol>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <span>Fornax · MIT licence · Jozef Sokol</span>
+    <a href="https://github.com/carnaby/fornax-mcp">github.com/carnaby/fornax-mcp</a>
+  </footer>
+</div>
+</body>
+</html>
