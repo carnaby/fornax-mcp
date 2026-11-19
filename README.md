@@ -7,7 +7,7 @@ send it jobs (transcription, rendering, upscaling, and any type you add) and get
 
 *Fornax* is Latin for an oven, and the name of a constellation.
 
-Status: an early release (0.4). The API may still change.
+Status: 0.12, in daily use: several agents share one GPU PC through it. The API may still change.
 
 ```
 agent (MCP) ─┐                    ┌─ fornax worker on the GPU PC (pulls jobs; no open port)
@@ -16,6 +16,12 @@ app (REST) ──┘   queue, files,    └─ type packs: transcribe, render, u
                  result pages
 ```
 
+- **One job at a time, in a fair order.** Priorities `high`, `normal` and `idle` (an idle job waits until someone
+  starts it); every job names the agent that sent it, and `queue_status` says who runs and who waits ahead.
+- **Programs on the GPU PC take their turn too.** `fornax lease -- <program>` waits in the queue, holds the card while
+  the program runs and gives it back when it ends.
+- **A tray app** on the GPU PC starts the worker and shows the card, the running job, the queue (drag to reorder) and
+  the history.
 - **Generic.** Job types are packs on the worker PC (`types/`): a contract (inputs, a strict parameter schema) and a
   command. The server offers exactly what the worker announced; nothing else can run.
 - **Safe by construction.** No shell, no arbitrary commands: arguments are built from validated values only; tools
@@ -426,6 +432,12 @@ pnpm test             # all packages, then the type packs' Python tests (needs P
 pnpm bundle:worker    # dist/worker/fornax-worker-<version>.zip
 pnpm --filter @fornax/tray test:rust   # the tray's window build and Rust tests
 ```
+
+`pnpm test` also checks the landing page in `site/` (`scripts/site.test.mjs`: files, anchors, README links, image
+sizes, nothing private). Its screenshots come from invented data only: `node scripts/site-shots.mjs` photographs the
+tray preview (`pnpm --filter @fornax/tray preview` running) and the link-preview image, and
+`FORNAX_SITE_SHOT=1 pnpm --filter @fornax/server exec vitest run test/site-shot.test.ts` the result page of an
+invented job. GitHub Pages publishes `site/` from `main` (`.github/workflows/pages.yml`).
 
 `pnpm test` leaves the tray out; its check, `pnpm --filter @fornax/tray test:rust`, needs Rust 1.90+ and, on Linux,
 the Tauri packages listed in `.github/workflows/ci.yml`.
