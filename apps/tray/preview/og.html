@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Fornax link preview</title>
+    <script type="module">
+      // The link-preview image of the landing page (scripts/site-shots.mjs photographs it at 1200 x 630).
+      import '@fontsource/inter/latin-400.css';
+      import '@fontsource/inter/latin-700.css';
+    </script>
+    <style>
+      html, body { margin: 0; }
+      body { position: relative; width: 1200px; height: 630px; overflow: hidden; background: #1a1918; color: #edeae6; font-family: Inter, 'Segoe UI', sans-serif; }
+      .text { position: absolute; left: 80px; top: 150px; width: 600px; }
+      .brand { display: flex; align-items: center; gap: 16px; font-size: 40px; font-weight: 700; }
+      h1 { margin: 36px 0 20px; font-size: 64px; line-height: 1.08; letter-spacing: -0.02em; }
+      p { margin: 0; font-size: 26px; line-height: 1.4; color: #a8a29c; }
+      iframe { position: absolute; left: 760px; top: 40px; width: 400px; height: 820px; border: 1px solid #34312e; border-radius: 14px; }
+    </style>
+  </head>
+  <body>
+    <div class="text">
+      <div class="brand">
+        <svg width="48" height="48" viewBox="0 0 32 32" aria-hidden="true">
+          <g fill="#e8622c">
+            <rect x="3" y="4" width="26" height="7" rx="2.5"></rect>
+            <rect x="3" y="13" width="26" height="7" rx="2.5" opacity="0.75"></rect>
+            <rect x="3" y="22" width="26" height="7" rx="2.5" opacity="0.5"></rect>
+          </g>
+        </svg>
+        Fornax
+      </div>
+      <h1>One GPU,<br />many agents.</h1>
+      <p>A GPU job queue served over MCP.</p>
+    </div>
+    <iframe src="/preview/?fixture=main" title="The Fornax tray"></iframe>
+  </body>
+</html>
