@@ -17,7 +17,7 @@
         "width": 400,
         "height": 820,
         "minWidth": 400,
-        "maxWidth": 400,
+        "maximizable": false,
         "minHeight": 720,
         "visible": false,
         "center": true,

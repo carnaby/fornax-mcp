@@ -248,6 +248,33 @@ const idleOnly = (): Snapshot => {
 /** Review Focus 5 of plan 07: an older fornax; the Idle block without ▶, Start all and the menu. */
 const idleOldCli = (): Snapshot => ({ ...idle(), canPrioritize: false });
 
+/** 0.12.0: History by day; two jobs from today, three from yesterday, one older (not shown). */
+const days = (): Snapshot => {
+  const t = Date.now();
+  const dayBefore = (n: number, h: number, m: number) => {
+    const d = new Date(t);
+    d.setDate(d.getDate() - n);
+    d.setHours(h, m, 0, 0);
+    return d.getTime();
+  };
+  const done = (id: string, finishedAtMs: number, took: number, over: Partial<JobView> = {}) =>
+    job({ id, state: 'succeeded', startedAtMs: finishedAtMs - took * MIN, finishedAtMs, ...over });
+  return {
+    ...base(),
+    finished: [
+      done('D1', t - 6 * MIN, 3, { type: 'lease', owner: 'bob', what: 'scene_04_cycles' }),
+      done('D2', t - 40 * MIN, 16, { what: 'clip_0412.mp4' }),
+      done('Y1', dayBefore(1, 23, 13), 5, { type: 'lease', owner: 'bob', what: 'station_light' }),
+      done('Y2', dayBefore(1, 22, 37), 2, { type: 'render', owner: 'carol', what: 'scene_03.blend' }),
+      job({ id: 'Y3', type: 'transcribe', owner: 'carol', what: 'talk.m4a', state: 'failed', startedAtMs: dayBefore(1, 9, 2), finishedAtMs: dayBefore(1, 9, 4), error: 'the model could not be loaded\nCUDA out of memory' }),
+      done('O1', dayBefore(2, 18, 0), 4, { what: 'old_clip.mp4' }),
+    ],
+  };
+};
+
+/** 0.12.0: nothing finished today or yesterday; an older job is not shown. */
+const daysOld = (): Snapshot => ({ ...days(), finished: days().finished.filter((j) => j.id === 'O1') });
+
 export const FIXTURES = {
   main: base,
   lease,
@@ -264,4 +291,6 @@ export const FIXTURES = {
   idle,
   'idle-only': idleOnly,
   'idle-oldcli': idleOldCli,
+  days,
+  'days-old': daysOld,
 } satisfies Record<string, () => Snapshot>;

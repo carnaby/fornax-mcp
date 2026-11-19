@@ -151,7 +151,15 @@ button.quit { background: var(--bad); border-color: var(--bad); color: var(--bg)
 
 /* Tabs (spec 06e § 2.6) */
 .tabs { display: flex; flex: 1 1 0; flex-direction: column; min-height: 140px; overflow: hidden; }
-.tablist { display: flex; flex: none; gap: 4px; padding: 0 8px; border-bottom: 1px solid var(--border); }
+.tabs-head { display: flex; flex: none; align-items: center; padding-right: 6px; border-bottom: 1px solid var(--border); }
+.tablist { display: flex; flex: 1; gap: 4px; padding: 0 8px; }
+button.tabs-toggle svg { display: block; margin: auto; transition: transform 0.15s; }
+.history-closed button.tabs-toggle svg { transform: rotate(-90deg); }
+/* 0.12.0: the card closed, the window is as high as what it shows (tabs.ts measures it). */
+.tray.history-closed { height: auto; }
+.history-closed .tabs { flex: none; min-height: 0; }
+.history-closed .tabs-head { border-bottom: none; }
+.history-closed .tab[aria-selected='true'] { border-bottom-color: transparent; }
 .tab { height: 38px; padding: 0 10px; border: none; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--text-2); font-size: 12.5px; }
 .tab[aria-selected='true'] { border-bottom-color: var(--accent); color: var(--text); }
 .panel { flex: 1; min-height: 0; overflow: auto; }
@@ -167,6 +175,7 @@ button.quit { background: var(--bad); border-color: var(--bad); color: var(--bg)
 .herror summary::-webkit-details-marker { display: none; }
 .herror p { margin-top: 4px; color: var(--bad-text); font-size: 11.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .hempty { padding: 10px 12px; color: var(--text-3); font-size: 12px; }
+.hday { padding: 10px 12px 6px; border-bottom: 1px solid var(--row-line); color: var(--text-3); font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
 .log-panel { background: var(--log-bg); }
 .log { margin: 0; padding: 10px 12px; list-style: none; color: var(--log-text); font: 11px / 1.65 var(--mono); }
 .log li { white-space: pre-wrap; overflow-wrap: anywhere; }

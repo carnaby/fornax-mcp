@@ -6,12 +6,13 @@
   </head>
   <body style="margin: 0; background: #000">
     <script>
-      // The preview in a frame of exactly 400 x h px, for screenshots (a headless window's viewport is not its size).
+      // The preview in a frame of exactly w x h px (400 x 820 by default), for screenshots (a headless window's viewport
+      // is not its size).
       const p = new URLSearchParams(location.search);
       const f = document.createElement('iframe');
-      // Every parameter goes on to the preview (fixture, click); h is the frame's height.
+      // Every parameter goes on to the preview (fixture, click); w and h are the frame's size.
       f.src = '/preview/' + location.search;
-      f.width = '400';
+      f.width = p.get('w') ?? '400';
       f.height = p.get('h') ?? '820';
       f.style.border = '0';
       f.style.display = 'block';

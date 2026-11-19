@@ -1,8 +1,9 @@
 // History (spec 06e § 2.6): the finished jobs, newest first; a failed one shows its error's first line, a click shows
-// all of it; Result opens the job's result page.
+// all of it; Result opens the job's result page. Only today and yesterday (0.12.0): yesterday's jobs under a line of
+// their own, older ones not at all.
 import { call } from './bridge';
 import { actionError } from './jobs';
-import { historySub } from './text';
+import { historyDays, historySub } from './text';
 import type { JobView, Snapshot } from './types';
 import { button, el, make } from './ui';
 
@@ -40,9 +41,12 @@ function historyRow(j: JobView): HTMLElement {
 export function renderHistory(s: Snapshot): void {
   for (const id of expanded) if (!s.finished.some((j) => j.id === id)) expanded.delete(id);
   const list = el('history');
-  if (!s.finished.length) {
-    list.replaceChildren(make('li', 'hempty', s.queueKnown ? 'Nothing finished yet.' : (s.queueNote ?? '')));
+  const { today, yesterday } = historyDays(s.finished, Date.now());
+  if (!today.length && !yesterday.length) {
+    list.replaceChildren(make('li', 'hempty', s.queueKnown ? 'Nothing finished today or yesterday.' : (s.queueNote ?? '')));
     return;
   }
-  list.replaceChildren(...s.finished.map(historyRow));
+  const rows = today.map(historyRow);
+  if (yesterday.length) rows.push(make('li', 'hday', 'Yesterday'), ...yesterday.map(historyRow));
+  list.replaceChildren(...rows);
 }

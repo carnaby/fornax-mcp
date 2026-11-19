@@ -22,6 +22,7 @@ import { initQuit, renderQuit } from './quit';
 import { renderRunning } from './running';
 import { mountSkeleton } from './skeleton';
 import { initTabs } from './tabs';
+import { dayKey } from './text';
 import type { Snapshot } from './types';
 import { el, setOffset, setRerender, tickTimes } from './ui';
 import { isDragging, onDragEnd, renderWaiting } from './waiting';
@@ -78,7 +79,15 @@ onDragEnd(() => {
 initHeader();
 initQuit();
 initTabs();
-setInterval(tickTimes, 1000);
+// At local midnight today's jobs become yesterday's: History redraws though no snapshot changed.
+let day = dayKey(Date.now());
+setInterval(() => {
+  tickTimes();
+  const now = dayKey(Date.now());
+  if (now === day) return;
+  day = now;
+  if (current) render(current, true);
+}, 1000);
 
 // The first paint asks for the snapshot; a state event that comes first is newer, and the answer must not undo it.
 let painted = false;

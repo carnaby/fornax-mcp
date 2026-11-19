@@ -10,6 +10,7 @@ pub mod relaunch;
 pub mod state;
 pub mod tray;
 pub mod update;
+pub mod window;
 
 /// A folder for one test, removed when it is dropped (also when the test fails), so the tests leave nothing in the
 /// system's temp folder.
@@ -69,9 +70,11 @@ mod conf_tests {
     fn html_drag_and_drop_reaches_the_window() {
         let conf: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
         assert_eq!(conf["app"]["windows"][0]["dragDropEnabled"], serde_json::Value::Bool(false));
-        // Spec 06e § 2.1: 400 px wide, fixed; 820 px high, at least 720.
+        // 0.12.0: 400 × 820 at first, at least 400 × 720 (window.rs then sets the remembered sizes); as wide as the user
+        // pulls it, and never maximized.
         let w = &conf["app"]["windows"][0];
-        assert_eq!((w["width"].as_i64(), w["minWidth"].as_i64(), w["maxWidth"].as_i64()), (Some(400), Some(400), Some(400)));
+        assert_eq!((w["width"].as_i64(), w["minWidth"].as_i64(), w["maxWidth"].as_i64()), (Some(400), Some(400), None));
         assert_eq!((w["height"].as_i64(), w["minHeight"].as_i64()), (Some(820), Some(720)));
+        assert_eq!(w["maximizable"], serde_json::Value::Bool(false));
     }
 }

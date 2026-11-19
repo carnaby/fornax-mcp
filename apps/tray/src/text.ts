@@ -117,6 +117,34 @@ export function waitingNotes(j: JobView): { text: string; bad: boolean }[] {
 }
 
 /** Spec 06e § 2.6: the line under a finished job. */
+/** Local midnight of the day `ms` falls on. */
+function dayStart(ms: number): number {
+  const d = new Date(ms);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+/** The local day `ms` falls on, as a key that changes at midnight. */
+export const dayKey = (ms: number): string => new Date(dayStart(ms)).toDateString();
+
+/**
+ * The History tab's two days: the jobs that finished today (local midnight on; a job ahead of the clock or without a
+ * finish time counts as today) and yesterday, each in the snapshot's order. Older days are not shown.
+ */
+export function historyDays(finished: JobView[], nowMs: number): { today: JobView[]; yesterday: JobView[] } {
+  const todayStart = dayStart(nowMs);
+  const y = new Date(todayStart);
+  y.setDate(y.getDate() - 1);
+  const yesterdayStart = y.getTime();
+  const today: JobView[] = [];
+  const yesterday: JobView[] = [];
+  for (const j of finished) {
+    if (j.finishedAtMs === null || j.finishedAtMs >= todayStart) today.push(j);
+    else if (j.finishedAtMs >= yesterdayStart) yesterday.push(j);
+  }
+  return { today, yesterday };
+}
+
 export function historySub(j: JobView): string {
   const parts = [j.owner];
   if (j.finishedAtMs !== null) parts.push(clock(j.finishedAtMs));

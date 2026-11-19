@@ -47,9 +47,12 @@ const SKELETON = `
     <ol id="idle" class="list waiting-list"></ol>
   </section>
   <section class="card tabs">
-    <div id="tablist" class="tablist" role="tablist">
-      <button id="tab-history" class="tab" type="button" role="tab" aria-controls="panel-history" data-key="tab-history">History</button>
-      <button id="tab-log" class="tab" type="button" role="tab" aria-controls="panel-log" data-key="tab-log">Worker log</button>
+    <div class="tabs-head">
+      <div id="tablist" class="tablist" role="tablist">
+        <button id="tab-history" class="tab" type="button" role="tab" aria-controls="panel-history" data-key="tab-history">History</button>
+        <button id="tab-log" class="tab" type="button" role="tab" aria-controls="panel-log" data-key="tab-log">Worker log</button>
+      </div>
+      <button id="history-toggle" class="icon tabs-toggle" type="button" aria-expanded="true" aria-controls="panel-history panel-log" title="Hide History and Worker log" aria-label="Hide History and Worker log" data-key="history-toggle"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg></button>
     </div>
     <div id="panel-history" class="panel queue" role="tabpanel" aria-labelledby="tab-history"><ol id="history" class="list"></ol></div>
     <div id="panel-log" class="panel log-panel" role="tabpanel" aria-labelledby="tab-log" hidden><ol id="log" class="log"></ol></div>

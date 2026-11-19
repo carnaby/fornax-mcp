@@ -8,7 +8,8 @@ use fornax_tray_lib::controller::{Controller, Timing};
 use fornax_tray_lib::protocol::is_web_url;
 use fornax_tray_lib::relaunch::{self, Start};
 use fornax_tray_lib::state::{Input, MoveTo, Snapshot};
-use fornax_tray_lib::tray::{show_window, TrayUi};
+use fornax_tray_lib::tray::{show_window, TrayUi, WINDOW};
+use fornax_tray_lib::window::{self as place, Store};
 use tauri::{AppHandle, Manager, RunEvent, State, WindowEvent};
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_notification::NotificationExt as _;
@@ -110,6 +111,21 @@ fn cancel_update(ctl: State<'_, Controller>) {
     ctl.send(Input::CancelUpdate);
 }
 
+/// 0.12.0: whether the History / Worker log card is open, as the window last left it.
+#[tauri::command]
+fn history_open(store: State<'_, Arc<Store>>) -> bool {
+    store.get().history_open
+}
+
+/// 0.12.0: the card opened or closed; `height`: what the closed window shows, as the window measured it (logical px).
+#[tauri::command]
+fn set_history(open: bool, height: Option<f64>, app: AppHandle, store: State<'_, Arc<Store>>) {
+    store.update(|p| p.set_history(open, height));
+    if let Some(window) = app.get_webview_window(WINDOW) {
+        place::apply(&window, &store.get(), false);
+    }
+}
+
 fn main() {
     let paths = Paths::from_env();
     // First, before the single-instance plugin registers: a tray started by the installer starts itself again without
@@ -125,7 +141,7 @@ fn main() {
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec![BACKGROUND])))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![snapshot, start_worker, stop_worker, set_paused, move_job, cancel_job, set_priority, requeue_job, start_idle, open_result, confirm_quit, update, cancel_update])
+        .invoke_handler(tauri::generate_handler![snapshot, start_worker, stop_worker, set_paused, move_job, cancel_job, set_priority, requeue_job, start_idle, open_result, confirm_quit, update, cancel_update, history_open, set_history])
         .setup(move |app| {
             let handle = app.handle().clone();
             // A click on a notification opens the window (Windows reports it while the toast is on screen). Set up before
@@ -136,6 +152,12 @@ fn main() {
                     show_window(&shown);
                 }
             })?;
+            // The remembered size and place, before the window is first shown.
+            let store = Store::open(paths.data.join("tray-window.json"));
+            if let Some(window) = app.get_webview_window(WINDOW) {
+                place::apply(&window, &store.get(), true);
+            }
+            app.manage(store);
             let ui = Arc::new(TrayUi::build(&handle)?);
             let warning = guarded.then(|| relaunch::WARNING.to_string());
             let controller = Controller::start(paths, ui, Timing::default(), warning);
@@ -146,13 +168,33 @@ fn main() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // Closing the window only hides it; the tray keeps running.
-            if let WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                let _ = window.hide();
-                if let Some(ctl) = window.try_state::<Controller>() {
-                    ctl.send(Input::WindowShown(false));
+            let store = window.try_state::<Arc<Store>>();
+            // A minimized window reports 0 × 0 and, on Windows, a place far off screen: neither is remembered.
+            let still = || !window.is_minimized().unwrap_or(false);
+            match event {
+                // Closing the window only hides it; the tray keeps running.
+                WindowEvent::CloseRequested { api, .. } => {
+                    api.prevent_close();
+                    let _ = window.hide();
+                    if let Some(store) = store {
+                        store.flush();
+                    }
+                    if let Some(ctl) = window.try_state::<Controller>() {
+                        ctl.send(Input::WindowShown(false));
+                    }
                 }
+                WindowEvent::Moved(at) if still() => {
+                    if let Some(store) = store {
+                        store.update(|p| p.moved(at.x, at.y));
+                    }
+                }
+                WindowEvent::Resized(size) if still() => {
+                    if let (Some(store), Ok(scale)) = (store, window.scale_factor()) {
+                        let size = size.to_logical::<f64>(scale);
+                        store.update(|p| p.resized(size.width, size.height));
+                    }
+                }
+                _ => {}
             }
         })
         .build(tauri::generate_context!())

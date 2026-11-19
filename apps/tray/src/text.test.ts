@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { base, FIXTURES, job } from '../preview/fixtures';
 import {
-  ago, cardBusySentence, chipClass, clock, duration, etaMs, gb, gbShort, historySub, holderText, idleJobs, idleNote, nothingRuns,
+  ago, cardBusySentence, chipClass, clock, dayKey, duration, etaMs, gb, gbShort, historyDays, historySub, holderText, idleJobs, idleNote, nothingRuns,
   pauseQuestion, progressText, requeueQuestion, uptime, waitingJobs, waitingNote, waitingNotes,
 } from './text';
 
@@ -84,6 +84,39 @@ describe('sentences of the sections', () => {
       `bob · ${clock(t)} · held 1:00`,
     );
     expect(historySub(job({ id: 'F', state: 'canceled', finishedAtMs: t }))).toBe(`alice · ${clock(t)}`);
+  });
+});
+
+describe('history by day', () => {
+  // Local clock times, so the test holds in every time zone.
+  const at = (day: number, h: number, m = 0, s = 0, ms = 0) => new Date(2026, 10, day, h, m, s, ms).getTime();
+  const done = (id: string, finishedAtMs: number | null) => job({ id, state: 'succeeded', finishedAtMs });
+  const ids = (jobs: { id: string }[]) => jobs.map((j) => j.id);
+
+  test('today from local midnight on, yesterday the day before; older days are left out, the order stays', () => {
+    const days = historyDays(
+      [done('T2', at(19, 9)), done('T1', at(19, 0)), done('Y2', at(18, 23, 59, 59, 999)), done('Y1', at(18, 0)), done('O', at(17, 23, 59))],
+      at(19, 10),
+    );
+    expect(ids(days.today)).toEqual(['T2', 'T1']);
+    expect(ids(days.yesterday)).toEqual(['Y2', 'Y1']);
+  });
+
+  test('a job without a finish time and one ahead of the clock count as today', () => {
+    const days = historyDays([done('N', null), done('F', at(19, 11))], at(19, 10));
+    expect(ids(days.today)).toEqual(['N', 'F']);
+    expect(days.yesterday).toEqual([]);
+  });
+
+  test('right after midnight yesterday is the whole day before, across the end of a month', () => {
+    const days = historyDays([done('Y', new Date(2026, 10, 30, 22).getTime()), done('O', new Date(2026, 10, 29, 23).getTime())], new Date(2026, 11, 1, 0, 0, 1).getTime());
+    expect(days.today).toEqual([]);
+    expect(ids(days.yesterday)).toEqual(['Y']);
+  });
+
+  test('dayKey changes at local midnight only', () => {
+    expect(dayKey(at(19, 0))).toBe(dayKey(at(19, 23, 59, 59, 999)));
+    expect(dayKey(at(19, 0))).not.toBe(dayKey(at(18, 23, 59, 59, 999)));
   });
 });
 
