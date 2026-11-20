@@ -3,6 +3,7 @@ and ffprobe."""
 import os
 import subprocess
 import threading
+import time
 from pathlib import Path
 
 from supervise import kill_tree
@@ -15,6 +16,25 @@ class EncodeError(Exception):
 
 class ToolError(Exception):
     """ffmpeg or ffprobe does not run (run.py exits 3)."""
+
+
+# How long a temporary file another process still holds is tried again before it is left behind.
+REMOVE_WAIT_S = 5.0
+
+
+def remove_soon(path, seconds=None):
+    """Removes `path` (already gone is fine); True once it is gone. On Windows a file that is still open cannot be
+    removed (WinError 32): after a kill it stayed locked for up to 0.6 s with no ffmpeg left, so it is tried again
+    until `seconds` (REMOVE_WAIT_S) are up. Never raises: a failed cleanup must not replace the error being raised."""
+    deadline = time.monotonic() + (REMOVE_WAIT_S if seconds is None else seconds)
+    while True:
+        try:
+            Path(path).unlink(missing_ok=True)
+            return True
+        except OSError:
+            if os.name != "nt" or time.monotonic() >= deadline:
+                return False
+            time.sleep(0.05)
 
 
 def _run(argv, timeout):
@@ -99,7 +119,7 @@ def encode_frames(ffmpeg, ffprobe, frames, src, out, audio_source=None, audio=No
             raise EncodeError(f"the encoded file has {written.frames} frames, {len(frames)} went in")
         os.replace(tmp, out)
     except BaseException:
-        tmp.unlink(missing_ok=True)
+        remove_soon(tmp)
         raise
     return written
 

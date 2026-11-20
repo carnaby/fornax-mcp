@@ -3,6 +3,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -100,6 +101,36 @@ class EncodeTest(unittest.TestCase):
             encode.encode_frames(FFMPEG, str(self.dir / "no-ffprobe-here"), self.frames(), self.src, out)
         self.assertFalse(out.exists())
         self.assertFalse((self.dir / "upscaled.part.mp4").exists())
+
+    @unittest.skipUnless(os.name == "nt", "Windows: a file still open cannot be removed")
+    def test_a_file_held_for_a_moment_is_removed_once_it_is_let_go(self):
+        # After a kill the temporary file stayed locked for up to 0.6 s with no ffmpeg left (1 in 150 runs): removing it
+        # at once failed with WinError 32 and that error replaced the interruption.
+        held = self.dir / "held.part.mp4"
+        f = open(held, "wb")  # Python opens without FILE_SHARE_DELETE: removing it fails while it is open
+        try:
+            with self.assertRaises(PermissionError):
+                os.unlink(held)
+            threading.Timer(0.3, f.close).start()
+            self.assertTrue(encode.remove_soon(held, 5))
+        finally:
+            f.close()
+        self.assertFalse(held.exists())
+
+    @unittest.skipUnless(os.name == "nt", "Windows: a file still open cannot be removed")
+    def test_a_temporary_file_that_stays_held_does_not_hide_the_error(self):
+        # Another process holds the temporary file, so the cleanup after a failed read-back cannot remove it in time;
+        # the caller still learns why the encode failed, not that a file could not be removed.
+        part = self.dir / "upscaled.part.mp4"
+        f = open(part, "wb")
+        wait = encode.REMOVE_WAIT_S
+        encode.REMOVE_WAIT_S = 0.2
+        try:
+            with self.assertRaises(encode.ToolError):
+                encode.encode_frames(FFMPEG, str(self.dir / "no-ffprobe-here"), self.frames(), self.src, self.dir / "upscaled.mp4")
+        finally:
+            encode.REMOVE_WAIT_S = wait
+            f.close()
 
     def test_the_temporary_file_is_removed_when_the_feed_is_interrupted(self):
         self.interrupt_the_feed(FFMPEG)
