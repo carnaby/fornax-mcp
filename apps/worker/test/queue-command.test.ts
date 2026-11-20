@@ -73,6 +73,13 @@ describe('renderQueue', () => {
     expect(lines.find((l) => l.includes('QI'))).toMatch(/idle since \d\d:\d\d/);
   });
 
+  test('idle rows get no number: the numbers count only the jobs that can start (deferred 07 #10)', () => {
+    const lines = renderQueue(view({ queued: [job({ id: 'Q1' }), job({ id: 'QI', priority: 'idle' }), job({ id: 'Q2' })] }));
+    expect(lines.find((l) => l.includes('Q1'))).toContain('  1  upscale  carol');
+    expect(lines.find((l) => l.includes('QI'))).toContain('  -  upscale  carol');
+    expect(lines.find((l) => l.includes('Q2'))).toContain('  2  upscale  carol');
+  });
+
   test('headline, running with elapsed time and progress, waiting in order with notes, finished with errors', () => {
     const lines = renderQueue(view({
       running: job({ id: 'R1', state: 'running', started_at: '2026-11-15T13:47:13.000Z', progress: 0.62, progress_message: 'encoding batch 2/4' }),
