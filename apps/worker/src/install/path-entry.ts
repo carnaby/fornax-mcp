@@ -26,16 +26,19 @@ export function mergeUserPath(current: string | null, dir: string, env: NodeJS.P
   return [...parts, dir].join(';');
 }
 
+/** How long one powershell.exe may run before psOut gives up (its callers then tell the user what to run by hand). */
+export const PS_TIMEOUT_MS = 30_000;
+
 /**
  * Run a Windows PowerShell command and return its stdout. Windows PowerShell 5.1 writes piped output in the
  * console (OEM) code page, so the command first switches it to UTF-8; values travel in environment variables,
  * never in the command text.
  */
-export function psOut(command: string, extraEnv: Record<string, string> = {}): string {
+export function psOut(command: string, extraEnv: Record<string, string> = {}, timeoutMs = PS_TIMEOUT_MS): string {
   const r = spawnSync(
     'powershell.exe',
     ['-NoProfile', '-NonInteractive', '-Command', `$ErrorActionPreference = 'Stop'; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${command}`],
-    { encoding: 'utf8', windowsHide: true, timeout: 30_000, env: { ...process.env, ...extraEnv } },
+    { encoding: 'utf8', windowsHide: true, timeout: timeoutMs, env: { ...process.env, ...extraEnv } },
   );
   if (r.error) throw new Error(`powershell.exe: ${(r.error as NodeJS.ErrnoException).code ?? r.error.message}`);
   if (r.status !== 0) throw new Error(`powershell.exe exit code ${r.status}`);
@@ -43,10 +46,12 @@ export function psOut(command: string, extraEnv: Record<string, string> = {}): s
 }
 
 /** The user Path straight from the registry, `%VAR%` entries unexpanded, with its kind (first line) and value (second). */
-export function readUserPathRaw(): { value: string | null; kind: PathKind } {
+export function readUserPathRaw(timeoutMs = PS_TIMEOUT_MS): { value: string | null; kind: PathKind } {
   const out = psOut(
     "$k = Get-Item 'HKCU:\\Environment'; $v = $k.GetValue('Path', $null, 'DoNotExpandEnvironmentNames'); " +
       "$kind = if ($null -ne $v) { $k.GetValueKind('Path') } else { 'ExpandString' }; Write-Output $kind; Write-Output $v",
+    {},
+    timeoutMs,
   ).replace(/\r?\n$/, '');
   const nl = out.indexOf('\n');
   const kind = pathKind((nl < 0 ? out : out.slice(0, nl)).replace(/\r$/, ''));
