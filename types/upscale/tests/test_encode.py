@@ -1,3 +1,4 @@
+import os
 import shutil
 import subprocess
 import sys
@@ -101,6 +102,33 @@ class EncodeTest(unittest.TestCase):
         self.assertFalse((self.dir / "upscaled.part.mp4").exists())
 
     def test_the_temporary_file_is_removed_when_the_feed_is_interrupted(self):
+        self.interrupt_the_feed(FFMPEG)
+
+    @unittest.skipUnless(os.name == "nt", "Windows: a file still open cannot be removed")
+    def test_an_interruption_kills_the_whole_tree_of_a_launcher(self):
+        # Shims (scoop, chocolatey) start the real ffmpeg as their child and end it on their own death, but only after
+        # their kill has returned: ffmpeg still held the temporary file for a moment and removing it failed (WinError 32,
+        # under load). A .cmd in front of ffmpeg is such a launcher; the interruption must take its whole tree.
+        launcher = self.dir / "ffmpeg-launcher.cmd"
+        launcher.write_text(f'@"{FFMPEG}" %*\r\n', encoding="utf-8")
+        killed = []
+        real = encode.kill_tree
+
+        def spy(pid):
+            killed.append(pid)
+            real(pid)
+
+        encode.kill_tree = spy
+        try:
+            self.interrupt_the_feed(str(launcher))
+        finally:
+            encode.kill_tree = real
+        self.assertEqual(len(killed), 1)
+
+    def interrupt_the_feed(self, ffmpeg_cmd):
+        """encode_frames through `ffmpeg_cmd`, interrupted once ffmpeg has created the temporary file: the interruption
+        comes through and nothing is left behind."""
+
         class Stop(Exception):
             pass
 
@@ -125,7 +153,7 @@ class EncodeTest(unittest.TestCase):
             shutil.copyfile(noise, frame)
         out = self.dir / "upscaled.mp4"
         with self.assertRaises(Stop):
-            encode.encode_frames(FFMPEG, FFPROBE, frames, self.src, out, on_progress=stop)
+            encode.encode_frames(ffmpeg_cmd, FFPROBE, frames, self.src, out, on_progress=stop)
         self.assertEqual(len(seen), 1)
         self.assertFalse(out.exists())
         self.assertFalse((self.dir / "upscaled.part.mp4").exists())

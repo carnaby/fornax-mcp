@@ -5,6 +5,7 @@ import subprocess
 import threading
 from pathlib import Path
 
+from supervise import kill_tree
 from upscale_lib import AUDIO_PROBE_ARGS, PROBE_ARGS, Rejected, encode_args, parse_audio_codec, parse_probe, preview_size
 
 
@@ -72,6 +73,10 @@ def encode_frames(ffmpeg, ffprobe, frames, src, out, audio_source=None, audio=No
                 pass
             code = p.wait()
         except BaseException:
+            # A launcher (scoop's or chocolatey's shim) runs the real ffmpeg as its child: killing only the launcher
+            # left ffmpeg holding the temporary file for a moment, and on Windows it could not be removed.
+            if os.name == "nt" and p.poll() is None:  # once reaped, its pid may already be another process's
+                kill_tree(p.pid)
             p.kill()
             p.wait()
             try:
