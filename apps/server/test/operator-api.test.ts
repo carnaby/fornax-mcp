@@ -123,13 +123,19 @@ describe('operator API (spec 06 2.3)', () => {
 });
 
 describe('worker state wakes long-polls only when the view changes (spec 06 2.3)', () => {
-  /** Whether `act` wakes a waiter of jobChanges (a waiter not woken runs into its 300 ms). */
+  /**
+   * Whether `act` wakes a waiter of jobChanges. wake() removes the waiters it wakes at once, so the count tells,
+   * however slow the machine is (a measured time did not: a slow write made a wake look like none).
+   */
   async function wakes(act: () => void): Promise<boolean> {
-    const started = Date.now();
-    const waiting = jobChanges.wait(300);
+    const stop = new AbortController();
+    const waiting = jobChanges.wait(60_000, stop.signal);
+    const before = jobChanges.waiting;
     act();
+    const woken = jobChanges.waiting < before;
+    stop.abort();
     await waiting;
-    return Date.now() - started < 250;
+    return woken;
   }
   const touch = (version: string | null = '0.5.0') => touchWorker(t.db, { tokenId: 'w', hostname: 'pc', version }, t.clock.now);
   const busy = { reason: 'gpu_busy' as const, used_mib: 5120, total_mib: 16311, limit_mib: 2048 };
