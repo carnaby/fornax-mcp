@@ -15,6 +15,12 @@ test('a bad name names where it came from', () => {
   expect(agentOf(undefined, { FORNAX_AGENT: '-x' })).toEqual({ problem: `FORNAX_AGENT ${AGENT_RULE}` });
 });
 
+test('inside a lease the inherited FORNAX_AGENT is not read; a typed --agent is; a blank FORNAX_LEASE is no lease (deferred 09 #2)', () => {
+  expect(agentOf(undefined, { FORNAX_LEASE: '01JTESTLEASE', FORNAX_AGENT: '-x' })).toEqual({ agent: null });
+  expect(agentOf('a;b', { FORNAX_LEASE: '01JTESTLEASE' })).toEqual({ problem: `--agent ${AGENT_RULE}` });
+  expect(agentOf(undefined, { FORNAX_LEASE: '  ', FORNAX_AGENT: '-x' })).toEqual({ problem: `FORNAX_AGENT ${AGENT_RULE}` });
+});
+
 test('FORNAX_AGENT is trimmed: `set FORNAX_AGENT=agent-a ` in cmd.exe keeps the space (final review #3)', () => {
   expect(agentOf(undefined, { FORNAX_AGENT: 'agent-a ' })).toEqual({ agent: 'agent-a' });
   expect(agentOf(undefined, { FORNAX_AGENT: ' agent-a' })).toEqual({ agent: 'agent-a' });

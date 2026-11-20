@@ -38,6 +38,18 @@ test('a job carries a change that stays while nothing it covers changes', async 
   expect((await get()).json().change).not.toBe(a.change);
 });
 
+test('a priority change answers a waiting GET at once, even when the position stays (deferred 07 #3)', async () => {
+  const { alice, job, waiting } = await setup();
+  const pending = waiting(job.change);
+  await until(() => jobChanges.waiting === 1);
+  const set = await t.app.inject({ method: 'POST', url: `/api/jobs/${job.id}/priority`, headers: as(alice), payload: { priority: 'high' } });
+  expect(set.statusCode).toBe(200);
+  const r = await pending;
+  expect(r.body).toMatchObject({ priority: 'high', position: job.position });
+  expect(r.body.change).not.toBe(job.change);
+  expect(r.ms).toBeLessThan(5000);
+});
+
 test('without change, or with another one, the answer comes at once', async () => {
   const { get } = await setup();
   for (const q of ['?wait=10', '?wait=10&change=0000000000000000']) {

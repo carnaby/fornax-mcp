@@ -114,7 +114,7 @@ Rules, checked when the pack loads:
 - `default_priority` is the priority of a job submitted without one: `high`, `normal` (the default) or `idle`. An idle
   job never starts by itself: the worker's operator starts it (tray, `fornax queue start-idle`) or its client changes
   its priority. The built-in `upscale` pack is `idle`: its batches wait until someone starts them. Changing it needs
-  no new version: it only sets the priority of new jobs, and a new version would run the pack's setup again.
+  no new version: it only sets the priority of new jobs, and a new version would run the pack's setup again (if it has one).
 - The built-in `lease` pack is an example of a tool that only holds the card: it waits for files that `fornax lease`
   writes in `<data>/leases/<FORNAX_JOB_ID>/` and ends with 0 when the program is done, with 4 otherwise.
 
