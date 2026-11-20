@@ -97,6 +97,15 @@ describe('changing the priority (spec 07 § 2.3)', () => {
     expect(fresh(h1).idleSince).toBeNull();
   });
 
+  test('a changed priority changes get_job change even when the position stays (deferred 07 #3)', async () => {
+    const n1 = await job('normal');
+    const before = jobView(t.db, fresh(n1));
+    setJobPriority(t.db, n1.id, 'high', t.clock.now, null);
+    const after = jobView(t.db, fresh(n1));
+    expect(after.position).toBe(before.position);
+    expect(after.change).not.toBe(before.change);
+  });
+
   test('the same priority again is a no-op (Review Focus 3)', async () => {
     const n1 = await job('normal');
     const n2 = await job('normal');
@@ -181,7 +190,8 @@ describe('Requeue and Pause (spec 07 § 3)', () => {
     requeueJob(t.db, r.id, { idle: false }, t.clock.now, null);
     cancelJob(t.db, r.ownerTokenId, r.id, t.clock.now);
     expect(fresh(r).state).toBe('canceled');
-    expect(beat(r, c.leaseId!)).toMatchObject({ cancel: true });
+    // 0.12.2: the job was canceled after the requeue, so the old run is told canceled, not requeued.
+    expect(beat(r, c.leaseId!)).toEqual({ leaseUntil: null, cancel: true, requeued: false });
   });
 
   test('only a running job: queued 409, another owner 404, the owner itself may', async () => {

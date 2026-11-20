@@ -137,13 +137,13 @@ export function queuePosition(db: Db, row: JobRow): number | null {
 const iso = (d: Date | null) => d?.toISOString() ?? null;
 
 type Watched = {
-  state: string; started_at: string | null; finished_at: string | null; position: number | null;
+  state: string; priority: string; started_at: string | null; finished_at: string | null; position: number | null;
   progress: number | null; progress_message: string | null; attempts: number;
 };
 
 /** Spec 05a 5.1: 16 hex digits of a SHA-256 over what a waiting client watches; it changes exactly when one of them does. */
 export function jobChange(v: Watched): string {
-  const watched = [v.state, v.started_at, v.finished_at, v.position, v.progress, v.progress_message, v.attempts];
+  const watched = [v.state, v.priority, v.started_at, v.finished_at, v.position, v.progress, v.progress_message, v.attempts];
   return createHash('sha256').update(JSON.stringify(watched)).digest('hex').slice(0, 16);
 }
 

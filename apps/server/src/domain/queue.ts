@@ -137,8 +137,9 @@ export function heartbeatJob(
 ): { leaseUntil: Date | null; cancel: boolean; requeued: boolean } {
   const r = db.transaction(() => {
     // Spec 07 § 3.1: the run that Requeue or Pause stopped; the job itself waits again (or runs under a new lease).
-    const stopped = db.select({ leaseId: jobs.leaseId, stoppedLeaseId: jobs.stoppedLeaseId }).from(jobs).where(eq(jobs.id, id)).get();
-    if (stopped && stopped.stoppedLeaseId === lease && stopped.leaseId !== lease) return { leaseUntil: null, cancel: true, requeued: true };
+    // A job canceled after the Requeue tells the old run canceled, not requeued (deferred 07 #4).
+    const stopped = db.select({ state: jobs.state, leaseId: jobs.leaseId, stoppedLeaseId: jobs.stoppedLeaseId }).from(jobs).where(eq(jobs.id, id)).get();
+    if (stopped && stopped.stoppedLeaseId === lease && stopped.leaseId !== lease) return { leaseUntil: null, cancel: true, requeued: stopped.state !== 'canceled' };
     const row = ownedJob(db, id, lease, ['running', 'queued', 'canceled']);
     if (row.state === 'canceled') return { leaseUntil: null, cancel: true, requeued: false };
     // A late heartbeat may take an expired job back, but not one whose type the worker no longer offers, nor one set idle
