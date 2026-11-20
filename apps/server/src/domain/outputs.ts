@@ -36,7 +36,7 @@ export function downloadableFile(db: Db, job: JobRow, name: string): FileRow | n
 export function outputBudget(deps: RouteDeps, jobId: string, lease: string, rawName: string): number {
   const job = ownedJob(deps.db, jobId, lease, ['running']);
   const name = cleanOutputName(rawName);
-  if (!name) throw badRequest('invalid output name: a relative path of letters, digits, ".", "_" and "-", without leading dots');
+  if (!name) throw badRequest('invalid output name: a relative path of ASCII letters, digits, ".", "_" and "-", without leading dots');
   const [used] = deps.db
     .select({ n: sum(files.size) })
     .from(files)

@@ -61,7 +61,9 @@ describe('outputs', () => {
 
   test('bad names are 400; over the job limit is 413', async () => {
     const r = await running();
-    expect((await r.put('.hidden', 'x')).statusCode).toBe(400);
+    const hidden = await r.put('.hidden', 'x');
+    expect(hidden.statusCode).toBe(400);
+    expect(hidden.body).toContain('ASCII letters, digits');
     expect((await r.put('a%5Cb', 'x')).statusCode).toBe(400);
     expect((await r.put('big.bin', Buffer.alloc(1024 * 1024 + 1))).statusCode).toBe(413);
     expect(t.db.select().from(files).all().filter((f) => f.jobId === r.id && f.kind !== 'input')).toEqual([]);

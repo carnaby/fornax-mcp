@@ -80,7 +80,7 @@ export async function collectOutputs(outDir: string): Promise<CollectedOutputs> 
       if (rel === OUTPUTS_JSON) continue;
       const name = cleanOutputName(rel);
       if (!name) {
-        throw new OutputError(`out/${rel}: an output name is a relative path of letters, digits, ".", "_" and "-" (no leading dot, no Windows device names, at most 8 levels)`);
+        throw new OutputError(`out/${rel}: an output name is a relative path of ASCII letters, digits, ".", "_" and "-" (no leading dot, no Windows device names, at most 8 levels)`);
       }
       if (name.toLowerCase() === LOG_NAME) throw new OutputError(`out/${rel}: ${LOG_NAME} is reserved for the job log`);
       files.push({ name, path: full, size: st.size });

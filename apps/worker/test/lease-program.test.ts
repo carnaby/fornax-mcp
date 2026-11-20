@@ -20,6 +20,7 @@ describe('what fornax lease checks before asking for a lease', () => {
     expect(defaultLabel(`${'a'.repeat(100)}.exe`)).toBe('a'.repeat(80));
     expect(labelProblem('shot 12/40: beauty')).toBeNull();
     for (const bad of ['-x', 'a;b', '\u00e9', 'x'.repeat(81)]) expect(labelProblem(bad), bad).not.toBeNull();
+    expect(labelProblem('a;b')).toContain('ASCII letters and digits');
   });
 
   test('a batch file is refused on Windows; a missing program everywhere; a real one passes', () => {

@@ -27,7 +27,7 @@ export function defaultLabel(program: string): string | null {
 /** Why `--label` cannot be the lease's label, or null. */
 export function labelProblem(label: string): string | null {
   if (label.length > LABEL_MAX || !LABEL.test(label) || label.startsWith('-')) {
-    return `--label may hold at most ${LABEL_MAX} characters: letters, digits, space and . _ : / -, not starting with -`;
+    return `--label may hold at most ${LABEL_MAX} characters: ASCII letters and digits, space and . _ : / -, not starting with -`;
   }
   return null;
 }

@@ -105,7 +105,7 @@ Rules, checked when the pack loads:
 - A stdout line `{"progress": 0.4, "message": "frame 3/10"}` is progress (0 to 1, the message optional). Every other
   stdout line and all of stderr go to the job log; the last 1 MiB is kept and uploaded as `log.txt`.
 - Every file in `{out}`, recursively, is an output; its path relative to `{out}`, with `/`, is its name. Names are
-  letters, digits, `.`, `_` and `-`, no leading dot, no Windows device names, at most 8 levels. Links are refused, and
+  ASCII letters, digits, `.`, `_` and `-`, no leading dot, no Windows device names, at most 8 levels. Links are refused, and
   so are two names that differ only in letter case, and an output named `log.txt`.
 - An optional `{out}/outputs.json` adds metadata and previews:
   `{"frame_0001.png": {"meta": {"width": 1920}, "preview": "previews/frame_0001.jpg"}}`. A file named as a preview is

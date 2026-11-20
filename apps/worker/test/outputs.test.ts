@@ -50,6 +50,7 @@ describe('collectOutputs', () => {
   test('names the server would refuse fail here, naming the file', async () => {
     await expect(collectOutputs(outDir({ '.hidden': 'x' }))).rejects.toThrow(/out\/\.hidden/);
     await expect(collectOutputs(outDir({ 'with space.txt': 'x' }))).rejects.toThrow(/with space/);
+    await expect(collectOutputs(outDir({ 'with space.txt': 'x' }))).rejects.toThrow(/ASCII letters, digits/);
   });
 
   test.skipIf(process.platform === 'win32')('device names and case twins are refused (they cannot both exist on Windows)', async () => {
