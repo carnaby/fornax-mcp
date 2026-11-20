@@ -20,7 +20,7 @@ A type pack teaches the Fornax worker one kind of job. It lives on the worker PC
 
 ```yaml
 name: render                 # a-z, 0-9 and "-"; the same as the directory name
-version: 1                   # a whole number; a changed contract is a new version
+version: 1                   # a whole number; a changed contract is a new version (default_priority aside, see below)
 description: Render one frame or a frame range of a .blend scene with Cycles.
 inputs:
   scene: { extensions: [.blend], max_mb: 2048 }     # required: true unless set to false
@@ -113,7 +113,8 @@ Rules, checked when the pack loads:
 - `max_runtime` is enforced: the whole process tree is killed and the job fails (and may be retried).
 - `default_priority` is the priority of a job submitted without one: `high`, `normal` (the default) or `idle`. An idle
   job never starts by itself: the worker's operator starts it (tray, `fornax queue start-idle`) or its client changes
-  its priority. The built-in `upscale` pack is `idle`: its batches wait until someone starts them.
+  its priority. The built-in `upscale` pack is `idle`: its batches wait until someone starts them. Changing it needs
+  no new version: it only sets the priority of new jobs, and a new version would run the pack's setup again.
 - The built-in `lease` pack is an example of a tool that only holds the card: it waits for files that `fornax lease`
   writes in `<data>/leases/<FORNAX_JOB_ID>/` and ends with 0 when the program is done, with 4 otherwise.
 

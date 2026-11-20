@@ -77,7 +77,6 @@ export function holderText(s: Snapshot): string {
   }
 }
 
-/** Spec 06e § 2.4: the empty Running card, first match wins. */
 /** Spec 07 § 5.1–5.2: Waiting shows the jobs that can start; Idle the ones that wait for a person. */
 export const isIdle = (j: JobView): boolean => j.priority === 'idle';
 export const waitingJobs = (s: Snapshot): JobView[] => s.queued.filter((j) => !isIdle(j));
@@ -88,6 +87,7 @@ export const requeueQuestion = (j: JobView): string => `Put the ${j.type} job of
 export const pauseQuestion = (j: JobView): string =>
   `Pause the ${j.type} job of ${j.owner}? It goes to Idle and starts again from the beginning when you start it.`;
 
+/** Spec 06e § 2.4: the empty Running card, first match wins. */
 export function nothingRuns(s: Snapshot): string {
   if (!s.queueKnown) return s.queueNote ?? '';
   const n = waitingJobs(s).length;
