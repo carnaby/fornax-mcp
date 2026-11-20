@@ -181,7 +181,9 @@ describe('webhook deliveries', () => {
     await canceledJob(r.url);
     const loop = startWebhookLoop(deps(), log, 20);
     try {
-      for (let i = 0; i < 200 && r.hits.length === 0; i++) await new Promise((resolve) => setTimeout(resolve, 10));
+      // Wait for the recorded outcome, not for the hit: the receiver records the hit before it answers, and a stop()
+      // between the two aborts the delivery in flight, which then stays pending (that is what stop() is for).
+      for (let i = 0; i < 200 && deliveries()[0]?.status === 'pending'; i++) await new Promise((resolve) => setTimeout(resolve, 10));
     } finally {
       await loop.stop();
     }
