@@ -100,6 +100,12 @@ describe('fornax CLI', () => {
     const badAgent = await run('lease', '--', process.execPath);
     expect(badAgent.code).toBe(120);
     expect(badAgent.text).toContain('fornax lease: FORNAX_AGENT may hold at most 80 characters');
+    // A nested lease submits no job, so the inherited FORNAX_AGENT is not read; a typed --agent is still checked (deferred 09 #2).
+    ctx.env = { FORNAX_LEASE: '01JTESTLEASE', FORNAX_AGENT: '-x' };
+    const nested = await run('lease', '--', process.execPath);
+    expect(nested.code, nested.text).toBe(121);
+    expect(nested.text).not.toContain('FORNAX_AGENT');
+    expect((await run('lease', '--agent', 'a;b', '--', process.execPath)).code).toBe(120);
     ctx.env = {};
     const none = await run('lease', '--', process.execPath);
     expect(none.code).toBe(121);
