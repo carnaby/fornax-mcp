@@ -134,13 +134,14 @@ def strip_markdown(text):
         if HEADING.match(line):
             line = CLOSING_HASHES.sub("", HEADING.sub("", line))
             own = True
+        structural = own  # a heading or a table row: its own paragraph, and not a list item
         line = QUOTE.sub("", line)
         if BULLET.match(line):
             line = BULLET.sub("", line)
             own = item = True
         elif ORDERED.match(line):
-            item = True
-            own = prev in (None, "blank", "item")
+            item = not structural
+            own = own or prev in (None, "blank", "item")
         line = EMPHASIS.sub("", STRONG.sub("", LINK.sub(r"\1", IMAGE.sub("", line)))).replace("`", "")
         lines.extend(["", line, ""] if own else [line])
         prev = "blank" if not stripped else "item" if item else "other"

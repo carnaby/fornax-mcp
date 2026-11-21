@@ -78,6 +78,11 @@ class MarkdownTest(unittest.TestCase):
         self.assertEqual(lib.paragraphs(lib.strip_markdown(NL.join(["Úlohy:", "", "1. kúpiť mlieko", "2. zavolať"]))), ["Úlohy:", "1. kúpiť mlieko", "2. zavolať"])
         self.assertEqual(lib.paragraphs(lib.strip_markdown(NL.join(["- jedna", "2. dve"]))), ["jedna", "2. dve"])
 
+    def test_a_heading_or_table_row_starting_with_a_number_stays_its_own_paragraph(self):
+        NL = chr(10)
+        self.assertEqual(lib.paragraphs(lib.strip_markdown(NL.join(["Úvod", "# 1. Kapitola", "Text"]))), ["Úvod", "1. Kapitola", "Text"])
+        self.assertEqual(lib.paragraphs(lib.strip_markdown(NL.join(["Pred", "| 1. a | b |", "Po"]))), ["Pred", "1. a, b", "Po"])
+
     def test_code_blocks_rules_and_tables(self):
         md = chr(10).join([
             "Pred.", "```python", "print('nie')", "```", "~~~", "ani toto", "~~~",
