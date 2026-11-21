@@ -7,12 +7,12 @@ send it jobs (transcription, rendering, upscaling, and any type you add) and get
 
 *Fornax* is Latin for an oven, and the name of a constellation.
 
-Status: 0.12, in daily use: several agents share one GPU PC through it. The API may still change.
+Status: 0.13, in daily use: several agents share one GPU PC through it. The API may still change.
 
 ```
 agent (MCP) ─┐                    ┌─ fornax worker on the GPU PC (pulls jobs; no open port)
              ├──► Fornax server ◄─┤
-app (REST) ──┘   queue, files,    └─ type packs: transcribe, render, upscale, your own
+app (REST) ──┘   queue, files,    └─ type packs: transcribe, render, upscale, tts, your own
                  result pages
 ```
 
@@ -201,7 +201,7 @@ On the PC with the GPU (Windows or Linux, Node.js 22 or newer):
    ```
 
 4. Install job types and check them: `fornax types install transcribe`, `fornax types install render`,
-   `fornax types install upscale` (needs ffprobe in `worker.yaml`), `fornax doctor`. The `render` pack needs scenes
+   `fornax types install upscale` (needs ffprobe in `worker.yaml`), `fornax types install tts`, `fornax doctor`. The `render` pack needs scenes
    that are self-contained (File > External Data > Pack Resources).
 5. Start it: `fornax worker`. Ctrl+C gives the running job back; a second Ctrl+C kills the tool.
 
