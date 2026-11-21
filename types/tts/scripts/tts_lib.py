@@ -85,9 +85,15 @@ def decode_text(data):
         raise Rejected("the text file is not UTF-8; save it as UTF-8") from None
 
 
+CR, LF, TAB = chr(13), chr(10), chr(9)
+CRLF = CR + LF
+
+
 def normalize(text):
-    """NFC (a letter and its combining mark become one) and one kind of line end."""
-    return unicodedata.normalize("NFC", text).replace("\r\n", "\n").replace("\r", "\n")
+    """NFC (a letter and its combining mark become one), one kind of line end, and no control or format characters
+    (categories Cc and Cf, such as NUL or a zero-width space) except newline and tab."""
+    text = unicodedata.normalize("NFC", text).replace(CRLF, LF).replace(CR, LF)
+    return "".join(c for c in text if c in (LF, TAB) or unicodedata.category(c) not in ("Cc", "Cf"))
 
 
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
@@ -101,6 +107,9 @@ ORDERED = re.compile(r"^\s*\d{1,9}[.)]\s+")
 IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
 LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
 STRONG = re.compile(r"\*\*|__")
+TASK_BOX = re.compile(r"^\[[ xX]\]\s+")
+HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+FRONT_MATTER = re.compile(r"\A---\n(?:.*?\n)??(?:---|\.\.\.)(?:\n|\Z)", re.DOTALL)
 EMPHASIS = re.compile(r"(?<!\w)[*_](?=\S)|(?<=\S)[*_](?!\w)")
 
 
@@ -108,7 +117,9 @@ def strip_markdown(text):
     """The text of a Markdown document as it is read aloud (spec 10 § 4.2): code blocks, rules and table separators
     go; headings, bullet items and table rows become paragraphs of their own (plan ruling); inline marks go, link
     texts stay. An ordered item keeps its number, so "5. mája" is read as written: the item is a paragraph of its own
-    only when it starts a list (the line before is blank, a list item, or nothing), else it continues its paragraph."""
+    only when it starts a list (the line before is blank, a list item, or nothing), else it continues its paragraph.
+    An indented line after a list item continues that item. YAML front matter, HTML comments and task boxes go."""
+    text = HTML_COMMENT.sub("", FRONT_MATTER.sub("", text, count=1))
     lines, fence = [], None
     prev = None  # the previous source line outside code fences: None (the start), "blank", "item" or "other"
     for line in text.split("\n"):
@@ -128,6 +139,17 @@ def strip_markdown(text):
             continue
         own = item = False
         stripped = line.strip()
+        if prev == "item" and line[:1] in (" ", chr(9)) and stripped and not (
+                BULLET.match(line) or ORDERED.match(line) or HEADING.match(line) or stripped.startswith("|")):
+            # an indented line after a list item continues the item: it joins its paragraph, the next item starts its own
+            line = EMPHASIS.sub("", STRONG.sub("", LINK.sub(r"\1", IMAGE.sub("", QUOTE.sub("", line))))).replace("`", "")
+            closed = bool(lines) and lines[-1] == ""
+            if closed:
+                lines.pop()
+            lines.append(line)
+            if closed:
+                lines.append("")
+            continue
         if stripped.startswith("|"):
             line = ", ".join(c.strip() for c in stripped.strip("|").split("|") if c.strip())
             own = True
@@ -137,7 +159,7 @@ def strip_markdown(text):
         structural = own  # a heading or a table row: its own paragraph, and not a list item
         line = QUOTE.sub("", line)
         if BULLET.match(line):
-            line = BULLET.sub("", line)
+            line = TASK_BOX.sub("", BULLET.sub("", line))
             own = item = True
         elif ORDERED.match(line):
             item = not structural

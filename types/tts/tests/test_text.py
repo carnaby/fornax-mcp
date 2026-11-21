@@ -83,6 +83,20 @@ class MarkdownTest(unittest.TestCase):
         self.assertEqual(lib.paragraphs(lib.strip_markdown(NL.join(["Úvod", "# 1. Kapitola", "Text"]))), ["Úvod", "1. Kapitola", "Text"])
         self.assertEqual(lib.paragraphs(lib.strip_markdown(NL.join(["Pred", "| 1. a | b |", "Po"]))), ["Pred", "1. a, b", "Po"])
 
+    def test_an_indented_line_after_a_list_item_continues_it(self):
+        NL = chr(10)
+        self.assertEqual(lib.paragraphs(lib.strip_markdown("- odrážka ktorá je dlhá a pokračuje" + NL + "  na ďalšom riadku.")), ["odrážka ktorá je dlhá a pokračuje na ďalšom riadku."])
+        self.assertEqual(lib.paragraphs(lib.strip_markdown(NL.join(["2. Odoslať faktúru", "   do piatku.", "3. Skontrolovať účty."]))), ["2. Odoslať faktúru do piatku.", "3. Skontrolovať účty."])
+        self.assertEqual(lib.paragraphs(lib.strip_markdown(NL.join(["- prvá", "- druhá dlhá", "  pokračuje", "- tretia"]))), ["prvá", "druhá dlhá pokračuje", "tretia"])
+
+    def test_front_matter_html_comments_and_task_boxes_go(self):
+        NL = chr(10)
+        self.assertEqual(lib.paragraphs(lib.strip_markdown(NL.join(["---", "title: x", "---", "Text."]))), ["Text."])
+        self.assertEqual(lib.paragraphs(lib.strip_markdown(NL.join(["---", "title: x", "...", "Text."]))), ["Text."])
+        self.assertEqual(lib.paragraphs(lib.strip_markdown(NL.join(["Úvod", "---", "Text."]))), ["Úvod", "Text."])
+        self.assertEqual(lib.paragraphs(lib.strip_markdown("Pred <!-- skryté --> po." + NL + "<!-- viac" + NL + "riadkov -->" + NL + "Koniec.")), ["Pred po.", "Koniec."])  # a comment on its own lines is a block: it ends the paragraph
+        self.assertEqual(lib.paragraphs(lib.strip_markdown(NL.join(["- [ ] kúpiť", "- [x] zavolať", "- [X] poslať"]))), ["kúpiť", "zavolať", "poslať"])
+
     def test_code_blocks_rules_and_tables(self):
         md = chr(10).join([
             "Pred.", "```python", "print('nie')", "```", "~~~", "ani toto", "~~~",
@@ -93,6 +107,12 @@ class MarkdownTest(unittest.TestCase):
     def test_only_a_code_block_leaves_nothing(self):
         with self.assertRaisesRegex(Rejected, r"^there is nothing to speak: the text is empty without its Markdown marks$"):
             lib.prepare(chr(10).join(["```", "x = 1", "```"]), markdown=True)
+
+
+class NormalizeTest(unittest.TestCase):
+    def test_control_and_format_characters_go_but_newline_and_tab_stay(self):
+        text = "a" + chr(0) + "b" + chr(0x200B) + "c" + chr(7) + chr(10) + "d" + chr(9) + "e" + chr(0xFEFF)
+        self.assertEqual(lib.normalize(text), "abc" + chr(10) + "d" + chr(9) + "e")
 
 
 class ChunkTest(unittest.TestCase):
