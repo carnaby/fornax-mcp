@@ -38,9 +38,10 @@ class RunCase(unittest.TestCase):
         path.write_bytes(content if isinstance(content, bytes) else content.encode("utf-8"))
         return path
 
-    def run_job(self, params, text_file=None, behavior=None, ffmpeg=None):
+    def run_job(self, params, text_file=None, behavior=None, ffmpeg=None, raw_params=None):
         make_pack(self.root, behavior)
-        (self.work / "params.json").write_text(json.dumps(params), encoding="utf-8")
+        text = raw_params if raw_params is not None else json.dumps(params)
+        (self.work / "params.json").write_text(text, encoding="utf-8")
         argv = [sys.executable, str(self.root / "wrap_run.py"), "--params", str(self.work / "params.json"),
                 "--text-file", str(text_file) if text_file else "", "--ffmpeg", ffmpeg or FFMPEG or "ffmpeg",
                 "--out", str(self.out), "--work", str(self.work)]
@@ -88,6 +89,21 @@ class RejectTest(RunCase):
         self.assertEqual(code, 1)
         self.assertEqual(last_line(err), "tts: the omnivoice model did not load (RuntimeError: the weights are broken)")
 
+    def test_a_missing_text_file_is_exit_1(self):
+        code, _, err = self.run_job({}, self.root / "in" / "gone.txt", ffmpeg="no-ffmpeg")
+        self.assertEqual(code, 1)
+        self.assertTrue(last_line(err).startswith("tts: the job's files cannot be read ("), err)
+
+    def test_params_that_are_not_an_object_are_exit_2(self):
+        code, _, err = self.run_job({}, raw_params="[1, 2]", ffmpeg="no-ffmpeg")
+        self.assertEqual(code, 2)
+        self.assertTrue(last_line(err).startswith("tts: params.json does not hold valid parameters ("), err)
+
+    def test_a_broken_environment_is_exit_3(self):
+        code, _, err = self.run_job({"text": "Ahoj."}, behavior={"mode": "import-error"}, ffmpeg="no-ffmpeg")
+        self.assertEqual(code, 3)
+        self.assertEqual(last_line(err), "tts: the pack's Python environment is broken (ImportError: No module named 'torch'): run fornax types setup tts")
+
     def test_ffmpeg_that_does_not_run_is_exit_3(self):
         code, _, err = self.run_job({"text": "Ahoj."}, ffmpeg=str(self.root / "no-ffmpeg"))
         self.assertEqual(code, 3)
@@ -134,6 +150,12 @@ class SpeakTest(RunCase):
         self.assertEqual(code, 0, err)
         self.assertEqual(len(calls(self.root)), 1)
         self.assertEqual(self.outputs(), ["outputs.json", "speech.opus"])
+
+    def test_a_failed_outputs_json_write_leaves_no_output(self):
+        code, _, err = self.run_job({"text": "Ahoj."}, behavior={"block_outputs": str(self.out / "outputs.json")})
+        self.assertEqual(code, 1)
+        self.assertTrue(last_line(err).startswith("tts: outputs.json could not be written ("), err)
+        self.assertEqual([p.name for p in self.out.iterdir() if p.name.startswith("speech")], [])
 
     def test_a_failure_while_speaking_leaves_no_output(self):
         sentence = "Toto je jedna dlhšia veta s niekoľkými slovami navyše."

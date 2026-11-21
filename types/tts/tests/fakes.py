@@ -41,6 +41,8 @@ class Engine:
         return a.tobytes()
 
     def meta(self):
+        if B.get("block_outputs"):
+            os.makedirs(B["block_outputs"], exist_ok=True)
         return {"model_repo": "fake/" + self.model, "revision": "0" * 40}
 
 
@@ -50,6 +52,8 @@ def load(model, voice):
         raise Unavailable("model.safetensors is missing in env/models/omnivoice: run fornax types setup tts")
     if mode == "load-error":
         raise RuntimeError("the weights are broken")
+    if mode == "import-error":
+        raise ImportError("No module named 'torch'")
     return Engine(model, voice)
 '''
 
