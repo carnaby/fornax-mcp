@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""The tts pack's check (runs in {pack}/env, at most 120 s, without loading a model; spec 10 § 3.3): ffmpeg runs,
+the model files and voices are in place, omnivoice and piper are installed, PyTorch sees CUDA. argv: --ffmpeg <ffmpeg>.
+Exit 0 ready (one summary line), 3 not ready (one sentence)."""
+import argparse
+import importlib.metadata
+import importlib.util
+import os
+import platform
+import subprocess
+import sys
+
+import common
+from common import ENVIRONMENT, say, setup_streams
+
+
+def runs(tool):
+    try:
+        return subprocess.run([tool, "-version"], stdin=subprocess.DEVNULL, capture_output=True, timeout=30).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def version(dist):
+    try:
+        return importlib.metadata.version(dist)
+    except importlib.metadata.PackageNotFoundError:
+        return "?"
+
+
+def fail(message):
+    say(message)
+    sys.exit(ENVIRONMENT)
+
+
+def main(argv=None):
+    setup_streams()
+    os.environ.update(common.library_env())
+    p = argparse.ArgumentParser(prog="check.py")
+    p.add_argument("--ffmpeg", required=True)
+    a = p.parse_args(argv)
+    if not runs(a.ffmpeg):
+        fail("ffmpeg does not run: check tools.ffmpeg in worker.yaml")
+    problems = common.file_problems(common.OMNIVOICE_DIR, common.OMNIVOICE_FILES) + common.file_problems(common.PIPER_DIR, common.PIPER_FILES)
+    if problems:
+        fail("; ".join(problems) + ": run fornax types setup tts")
+    problems = common.voice_problems()
+    if problems:
+        fail("; ".join(problems))
+    for module in ("omnivoice", "piper"):
+        if importlib.util.find_spec(module) is None:
+            fail(f"{module} is not installed in this pack: run fornax types setup tts")
+    try:
+        import torch
+    except Exception as e:  # a broken env raises anything at import
+        fail(f"PyTorch does not load ({e}): run fornax types setup tts")
+    if not torch.cuda.is_available():
+        fail("PyTorch sees no CUDA device: install or update the NVIDIA driver")
+    print(f"Python {platform.python_version()}, PyTorch {torch.__version__} (CUDA {torch.version.cuda}), omnivoice {version('omnivoice')}, piper-tts {version('piper-tts')}; {torch.cuda.get_device_name(0)}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
