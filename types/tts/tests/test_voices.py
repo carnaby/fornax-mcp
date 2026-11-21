@@ -2,12 +2,16 @@
 § 7). type.yaml is read with regular expressions: the tests have the standard library only."""
 import json
 import re
+import sys
 import unittest
 import wave
 from pathlib import Path
 
 PACK = Path(__file__).resolve().parent.parent
 VOICES_DIR = PACK / "voices"
+sys.path.insert(0, str(PACK / "scripts"))
+
+import tts_lib  # noqa: E402
 
 
 def enum_of(param):
@@ -43,6 +47,12 @@ class VoicesTest(unittest.TestCase):
             self.assertTrue(entry["text"].strip(), name)
             self.assertEqual(entry["origin"]["model"], "k2-fsa/OmniVoice", name)
             self.assertEqual(len(entry["origin"]["revision"]), 40, name)
+
+    def test_tts_lib_knows_the_same_models_voices_and_formats(self):
+        self.assertEqual(enum_of("model"), list(tts_lib.VOICES))
+        self.assertEqual(tts_lib.VOICES["omnivoice"], tuple(self.voices))
+        self.assertEqual(enum_of("voice"), [*tts_lib.VOICES["piper"], *tts_lib.VOICES["omnivoice"]])
+        self.assertEqual(enum_of("format"), list(tts_lib.FORMATS))
 
 
 if __name__ == "__main__":
