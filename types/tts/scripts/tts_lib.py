@@ -96,7 +96,8 @@ TABLE_SEPARATOR = re.compile(r"^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$")
 HEADING = re.compile(r"^ {0,3}#{1,6}(\s+|$)")
 CLOSING_HASHES = re.compile(r"\s+#+\s*$")
 QUOTE = re.compile(r"^\s*(>\s?)+")
-LIST_MARK = re.compile(r"^\s*([-*+]|\d{1,9}[.)])\s+")
+BULLET = re.compile(r"^\s*[-*+]\s+")
+ORDERED = re.compile(r"^\s*\d{1,9}[.)]\s+")
 IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
 LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
 STRONG = re.compile(r"\*\*|__")
@@ -105,22 +106,27 @@ EMPHASIS = re.compile(r"(?<!\w)[*_](?=\S)|(?<=\S)[*_](?!\w)")
 
 def strip_markdown(text):
     """The text of a Markdown document as it is read aloud (spec 10 § 4.2): code blocks, rules and table separators
-    go; headings, list items and table rows become paragraphs of their own (plan ruling); inline marks go, link
-    texts stay."""
+    go; headings, bullet items and table rows become paragraphs of their own (plan ruling); inline marks go, link
+    texts stay. An ordered item keeps its number, so "5. mája" is read as written: the item is a paragraph of its own
+    only when it starts a list (the line before is blank, a list item, or nothing), else it continues its paragraph."""
     lines, fence = [], None
+    prev = None  # the previous source line outside code fences: None (the start), "blank", "item" or "other"
     for line in text.split("\n"):
         m = FENCE.match(line)
         if fence is not None:
             if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence):
                 fence = None
+                prev = "other"
             continue
         if m:
             fence = m.group(1)
+            prev = "other"
             continue
         if RULE.match(line) or ("-" in line and TABLE_SEPARATOR.match(line)):
             lines.append("")
+            prev = "other"
             continue
-        own = False
+        own = item = False
         stripped = line.strip()
         if stripped.startswith("|"):
             line = ", ".join(c.strip() for c in stripped.strip("|").split("|") if c.strip())
@@ -129,11 +135,15 @@ def strip_markdown(text):
             line = CLOSING_HASHES.sub("", HEADING.sub("", line))
             own = True
         line = QUOTE.sub("", line)
-        if LIST_MARK.match(line):
-            line = LIST_MARK.sub("", line)
-            own = True
+        if BULLET.match(line):
+            line = BULLET.sub("", line)
+            own = item = True
+        elif ORDERED.match(line):
+            item = True
+            own = prev in (None, "blank", "item")
         line = EMPHASIS.sub("", STRONG.sub("", LINK.sub(r"\1", IMAGE.sub("", line)))).replace("`", "")
         lines.extend(["", line, ""] if own else [line])
+        prev = "blank" if not stripped else "item" if item else "other"
     return "\n".join(lines)
 
 

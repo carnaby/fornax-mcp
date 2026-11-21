@@ -67,7 +67,16 @@ class MarkdownTest(unittest.TestCase):
 
     def test_headings_and_list_items_are_paragraphs(self):
         md = chr(10).join(["## Úlohy", "- kúpiť mlieko", "- zavolať", "1. prvý bod", "Bežný text", "pokračuje."])
-        self.assertEqual(lib.paragraphs(lib.strip_markdown(md)), ["Úlohy", "kúpiť mlieko", "zavolať", "prvý bod", "Bežný text pokračuje."])
+        self.assertEqual(lib.paragraphs(lib.strip_markdown(md)), ["Úlohy", "kúpiť mlieko", "zavolať", "1. prvý bod", "Bežný text pokračuje."])
+
+    def test_a_line_starting_with_an_ordinal_continues_its_paragraph(self):
+        self.assertEqual(lib.paragraphs(lib.strip_markdown("Stretnutie bude" + chr(10) + "5. mája o desiatej v zasadačke.")), ["Stretnutie bude 5. mája o desiatej v zasadačke."])
+        self.assertEqual(lib.paragraphs(lib.strip_markdown("5. mája bude stretnutie.")), ["5. mája bude stretnutie."])
+
+    def test_a_numbered_list_keeps_its_numbers_as_paragraphs(self):
+        NL = chr(10)
+        self.assertEqual(lib.paragraphs(lib.strip_markdown(NL.join(["Úlohy:", "", "1. kúpiť mlieko", "2. zavolať"]))), ["Úlohy:", "1. kúpiť mlieko", "2. zavolať"])
+        self.assertEqual(lib.paragraphs(lib.strip_markdown(NL.join(["- jedna", "2. dve"]))), ["jedna", "2. dve"])
 
     def test_code_blocks_rules_and_tables(self):
         md = chr(10).join([
