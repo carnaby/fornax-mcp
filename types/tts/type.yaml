@@ -1,0 +1,22 @@
+name: tts
+version: 1
+description: >-
+  Speak a Slovak text. model piper (default) is fast and runs on the CPU; omnivoice sounds natural and runs on the
+  GPU (about 4 GB). Give the text as the text parameter (one line) or as a .txt/.md file. The output is speech.<format>.
+inputs:
+  text_file: { extensions: [.txt, .md], max_mb: 1, required: false }
+params:
+  type: object
+  additionalProperties: false
+  properties:
+    text:   { type: string, maxLength: 2000, description: "The text to speak, one line; or send text_file instead." }
+    model:  { enum: [piper, omnivoice], default: piper }
+    voice:  { enum: [lili, klara, peter], description: "piper: lili; omnivoice: klara (default) or peter." }
+    format: { enum: [mp3, opus, wav], default: mp3 }
+    speed:  { type: number, minimum: 0.5, maximum: 2, default: 1, description: Speaking rate; 1 is normal. }
+max_runtime: 1h
+tools: [python, ffmpeg]
+setup: ["{tool.python}", "{pack}/scripts/setup.py"]
+check: ["{python}", "{pack}/scripts/check.py", "--ffmpeg", "{tool.ffmpeg}"]
+run: ["{python}", "{pack}/scripts/run.py", "--params", "{params_json}", "--text-file", "{input.text_file}",
+      "--ffmpeg", "{tool.ffmpeg}", "--out", "{out}", "--work", "{work}"]

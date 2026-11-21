@@ -1,0 +1,26 @@
+{
+  "klara": {
+    "file": "klara.wav",
+    "text": "Dobrý deň. Toto je ukážka hlasu, ktorý vám bude čítať ranné správy a krátke upozornenia.",
+    "origin": {
+      "model": "k2-fsa/OmniVoice",
+      "revision": "3fc979d1cd72492cd679c5ac2611e0d7ac047ba1",
+      "mode": "auto",
+      "seed": 23,
+      "instruct": "female",
+      "made": "2026-11-21"
+    }
+  },
+  "peter": {
+    "file": "peter.wav",
+    "text": "Dobrý deň. Toto je ukážka hlasu, ktorý vám bude čítať ranné správy a krátke upozornenia.",
+    "origin": {
+      "model": "k2-fsa/OmniVoice",
+      "revision": "3fc979d1cd72492cd679c5ac2611e0d7ac047ba1",
+      "mode": "auto",
+      "seed": 11,
+      "instruct": "male",
+      "made": "2026-11-21"
+    }
+  }
+}

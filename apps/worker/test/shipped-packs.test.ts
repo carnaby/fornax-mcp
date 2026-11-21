@@ -57,7 +57,7 @@ describe('built-in type packs', () => {
   test('upscale: contract, tools and commands', () => {
     const pack = loadPack(shippedPack('upscale')!);
     expect(pack.contract).toMatchObject({ name: 'upscale', version: 1, max_runtime_s: 3 * 3600, default_priority: 'idle' });
-    for (const other of ['lease', 'render', 'transcribe']) expect(loadPack(shippedPack(other)!).contract, other).not.toHaveProperty('default_priority');
+    for (const other of ['lease', 'render', 'transcribe', 'tts']) expect(loadPack(shippedPack(other)!).contract, other).not.toHaveProperty('default_priority');
     expect(Object.keys(pack.contract.inputs)).toEqual(['video']);
     expect(pack.contract.inputs.video).toMatchObject({ extensions: ['.mp4', '.mov'], max_mb: 1024 });
     expect(Object.keys(pack.contract.params.properties).sort()).toEqual(['audio', 'batch', 'overlap', 'resolution']);
@@ -80,7 +80,37 @@ describe('built-in type packs', () => {
     ]);
   });
 
+
+  test('tts: contract, tools and commands; text_file is optional', () => {
+    const pack = loadPack(shippedPack('tts')!);
+    expect(pack.contract).toMatchObject({ name: 'tts', version: 1, max_runtime_s: 3600 });
+    expect(pack.contract).not.toHaveProperty('default_priority');
+    expect(Object.keys(pack.contract.inputs)).toEqual(['text_file']);
+    expect(pack.contract.inputs.text_file).toMatchObject({ extensions: ['.txt', '.md'], max_mb: 1, required: false });
+    const props = pack.contract.params.properties;
+    expect(Object.keys(props).sort()).toEqual(['format', 'model', 'speed', 'text', 'voice']);
+    expect(props.text).toMatchObject({ type: 'string', maxLength: 2000 });
+    expect(props.model).toMatchObject({ enum: ['piper', 'omnivoice'], default: 'piper' });
+    expect(props.voice).toMatchObject({ enum: ['lili', 'klara', 'peter'] });
+    expect(props.voice).not.toHaveProperty('default');
+    expect(props.format).toMatchObject({ enum: ['mp3', 'opus', 'wav'], default: 'mp3' });
+    expect(props.speed).toMatchObject({ type: 'number', minimum: 0.5, maximum: 2, default: 1 });
+    expect(pack.contract.description.length).toBeLessThanOrEqual(500);
+    expect(pack.impl.tools).toEqual(['python', 'ffmpeg']);
+    const tools = { python: 'py', ffmpeg: 'ff' };
+    const tail = ['--ffmpeg', 'ff', '--out', '/w/out', '--work', '/w/work'];
+    const withFile = { ...job, inputs: { text_file: '/w/in/text_file.md' } };
+    expect(expandArgv(pack.impl.run, { pack: '/p', tools, job: withFile, platform: 'linux' })).toEqual([
+      '/p/env/bin/python', '/p/scripts/run.py', '--params', '/w/work/params.json', '--text-file', '/w/in/text_file.md', ...tail,
+    ]);
+    // Without the optional input the argument is empty: run.py reads it as "no file".
+    expect(expandArgv(pack.impl.run, { pack: '/p', tools, job: { ...job, inputs: {} }, platform: 'linux' })).toEqual([
+      '/p/env/bin/python', '/p/scripts/run.py', '--params', '/w/work/params.json', '--text-file', '', ...tail,
+    ]);
+    expect(expandArgv(pack.impl.setup!, { pack: '/p', tools, platform: 'linux' })).toEqual(['py', '/p/scripts/setup.py']);
+    expect(expandArgv(pack.impl.check!, { pack: '/p', tools, platform: 'linux' })).toEqual(['/p/env/bin/python', '/p/scripts/check.py', '--ffmpeg', 'ff']);
+  });
   test('the prompt for a new type gets every built-in pack as an example', () => {
-    expect(shippedExamples().map((e) => e.name)).toEqual(['lease', 'render', 'transcribe', 'upscale']);
+    expect(shippedExamples().map((e) => e.name)).toEqual(['lease', 'render', 'transcribe', 'tts', 'upscale']);
   });
 });
