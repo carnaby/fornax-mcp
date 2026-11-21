@@ -7,7 +7,7 @@ from pathlib import Path
 PACK_SRC = Path(__file__).resolve().parent.parent
 SECONDS_PER_CHAR = 0.01
 
-# behavior.json next to it: mode ok | unavailable | load-error; fail_at (the n-th speak raises error).
+# behavior.json next to it: mode ok | unavailable | load-error | load-oom | import-error; fail_at (the n-th speak raises error).
 FAKE_SYNTH = '''import array, json, math, os, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 B = json.load(open(os.path.join(HERE, "behavior.json"), encoding="utf-8"))
@@ -50,6 +50,8 @@ def load(model, voice):
     mode = B.get("mode", "ok")
     if mode == "unavailable":
         raise Unavailable("model.safetensors is missing in env/models/omnivoice: run fornax types setup tts")
+    if mode == "load-oom":
+        raise OutOfMemoryError("CUDA out of memory. Tried to allocate 2.00 GiB")
     if mode == "load-error":
         raise RuntimeError("the weights are broken")
     if mode == "import-error":

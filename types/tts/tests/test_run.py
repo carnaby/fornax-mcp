@@ -38,13 +38,13 @@ class RunCase(unittest.TestCase):
         path.write_bytes(content if isinstance(content, bytes) else content.encode("utf-8"))
         return path
 
-    def run_job(self, params, text_file=None, behavior=None, ffmpeg=None, raw_params=None):
+    def run_job(self, params, text_file=None, behavior=None, ffmpeg=None, raw_params=None, out=None):
         make_pack(self.root, behavior)
         text = raw_params if raw_params is not None else json.dumps(params)
         (self.work / "params.json").write_text(text, encoding="utf-8")
         argv = [sys.executable, str(self.root / "wrap_run.py"), "--params", str(self.work / "params.json"),
                 "--text-file", str(text_file) if text_file else "", "--ffmpeg", ffmpeg or FFMPEG or "ffmpeg",
-                "--out", str(self.out), "--work", str(self.work)]
+                "--out", str(out or self.out), "--work", str(self.work)]
         env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
         r = subprocess.run(argv, env=env, capture_output=True, text=True, encoding="utf-8", timeout=180)
         return r.returncode, r.stdout, r.stderr
@@ -89,6 +89,11 @@ class RejectTest(RunCase):
         self.assertEqual(code, 1)
         self.assertEqual(last_line(err), "tts: the omnivoice model did not load (RuntimeError: the weights are broken)")
 
+    def test_a_model_that_runs_out_of_memory_while_loading_is_exit_1(self):
+        code, _, err = self.run_job({"text": "Ahoj.", "model": "omnivoice"}, behavior={"mode": "load-oom"}, ffmpeg="no-ffmpeg")
+        self.assertEqual(code, 1)
+        self.assertIn("card ran out of memory", last_line(err))
+
     def test_a_missing_text_file_is_exit_1(self):
         code, _, err = self.run_job({}, self.root / "in" / "gone.txt", ffmpeg="no-ffmpeg")
         self.assertEqual(code, 1)
@@ -128,6 +133,7 @@ class SpeakTest(RunCase):
         self.assertAlmostEqual(meta["duration_s"], 45 * SECONDS_PER_CHAR, delta=0.01)
         progress = [json.loads(line) for line in out.splitlines() if line.startswith("{")]
         self.assertEqual(progress[-1]["progress"], 1.0)
+        self.assertIn("paragraph 1/1", [p["message"] for p in progress])
 
     def test_a_markdown_file_is_spoken_chunk_by_chunk_with_pauses(self):
         md = NL.join(["# Ranný prehľad", "", "Prvá veta. Druhá veta.", "", "- jedna", "- dve"])
@@ -156,6 +162,12 @@ class SpeakTest(RunCase):
         self.assertEqual(code, 1)
         self.assertTrue(last_line(err).startswith("tts: outputs.json could not be written ("), err)
         self.assertEqual([p.name for p in self.out.iterdir() if p.name.startswith("speech")], [])
+
+    def test_an_ffmpeg_that_cannot_write_is_exit_1_and_leaves_no_output(self):
+        code, _, err = self.run_job({"text": "Ahoj."}, out=self.root / "missing" / "out")
+        self.assertEqual(code, 1)
+        self.assertTrue(last_line(err).startswith("tts: ffmpeg "), err)
+        self.assertEqual([p for p in self.root.rglob("speech*")], [])
 
     def test_a_failure_while_speaking_leaves_no_output(self):
         sentence = "Toto je jedna dlhšia veta s niekoľkými slovami navyše."

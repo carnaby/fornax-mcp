@@ -295,9 +295,9 @@ def one_line(text, limit=300):
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
-def failure_text(error):
-    """The log's last line when the model failed to load or to speak (exit 1)."""
+def failure_text(error, failed="speaking failed"):
+    """The log's last line when the model failed to load or to speak (exit 1); failed names what went wrong unless it ran out of memory."""
     what = one_line(f"{type(error).__name__}: {error}")
     if "OutOfMemoryError" in type(error).__name__ or "out of memory" in str(error).lower():
         return f"the card ran out of memory ({what}): another program may hold it; the job is tried again later"
-    return f"speaking failed ({what})"
+    return f"{failed} ({what})"

@@ -74,19 +74,20 @@ def main(argv=None):
     except synth.Unavailable as e:
         return fail(ENVIRONMENT, str(e))
     except Exception as e:  # a model that does not load is retried (exit 1)
-        return fail(FAILED, f"the {request.model} model did not load ({lib.one_line(f'{type(e).__name__}: {e}')})")
+        return fail(FAILED, lib.failure_text(e, f"the {request.model} model did not load"))
     say(f"the model is ready after {time.monotonic() - started:.1f} s")
     plan = lib.speech_plan(prepared, engine.per_paragraph)
     try:
         encoder = Encoder(a.ffmpeg, engine.sample_rate, request.format, a.out)
     except ToolError as e:
         return fail(ENVIRONMENT, str(e))
+    unit = "paragraph" if engine.per_paragraph else "chunk"
     try:
         for i, (text, pause) in enumerate(plan, 1):
             if pause:
                 encoder.write(lib.silence(pause, engine.sample_rate))
             encoder.write(engine.speak(text, request.speed))
-            progress(0.98 * i / len(plan), f"chunk {i}/{len(plan)}")
+            progress(0.98 * i / len(plan), f"{unit} {i}/{len(plan)}")
         duration = encoder.seconds
         meta = lib.output_meta(request, prepared, engine.sample_rate, duration, time.monotonic() - started, engine.meta())
         path = encoder.finish()
