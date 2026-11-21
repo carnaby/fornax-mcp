@@ -48,7 +48,8 @@ missing.
 
 A `.md` file is read without its marks: code blocks are left out, link texts are read, and every heading, bullet and
 table row gets a pause of its own; numbered items keep their numbers (they are read aloud) and get a pause when they
-follow a blank line or another item. A blank line starts a paragraph. Numbers and units are read by the model itself
+follow a blank line or another item; an indented line after a list item continues that item. YAML front matter, HTML
+comments and task boxes (`[ ]`, `[x]`) are left out. A blank line starts a paragraph. Numbers and units are read by the model itself
 (OmniVoice once dropped the "minus" of `-3 °C`): write them out when they matter.
 
 ## Voices
@@ -60,8 +61,8 @@ every job clones its voice from the clip, so it sounds the same each time. A new
 
 `speech.mp3`, `speech.opus` or `speech.wav`, and in `outputs.json` its `meta`: `model`, `voice`, `format`, `speed`,
 `duration_s`, `sample_rate` (the model's: 22 050 for Piper, 24 000 for OmniVoice; Opus is always 48 kHz),
-`characters`, `paragraphs`, `chunks`, `seconds`, the model's `model_repo` and `revision`, and for OmniVoice `seed`
-and `peak_vram_mib`.
+`characters`, `paragraphs`, `chunks`, `seconds`, the model's `model_repo` and `revision`, for Piper `piper_voice`, and for
+OmniVoice `seed` and `peak_vram_mib`.
 
 ## Licences
 
@@ -77,4 +78,4 @@ and `peak_vram_mib`.
 | 0 | done | |
 | 1 | the card ran out of memory (another program may hold it), the model failed, ffmpeg failed, the job's files cannot be read, outputs.json cannot be written | retried |
 | 2 | no text or both, a voice of the other model, a file that is not UTF-8, nothing left to speak, over 50 000 characters, params.json does not hold valid parameters | the job fails at once |
-| 3 | a model file, a voice or ffmpeg is missing; no CUDA for `omnivoice`; the pack's Python environment is broken (a library missing) | the worker stops offering the type until `fornax doctor tts` passes |
+| 3 | a model file, a voice or ffmpeg is missing; no CUDA for `omnivoice`; the pack's Python environment is broken (a library missing) | the worker stops offering the type until the worker restarts and `fornax doctor tts` passes |
