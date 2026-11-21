@@ -76,7 +76,7 @@ class CheckTest(unittest.TestCase):
     def test_ready(self):
         code, out, err = self.check()
         self.assertEqual(code, 0, err)
-        self.assertRegex(out.strip(), r"^Python \S+, PyTorch 0\.0-fake \(CUDA 12\.8\), omnivoice \S+, piper-tts \S+; Fake GPU$")
+        self.assertRegex(out.strip(), r"^Python \S+, PyTorch 0\.0-fake \(CUDA 12\.8\), omnivoice \S+, piper-tts \S+, ffmpeg \S+; Fake GPU$")
 
     def test_a_missing_model_file(self):
         (self.pack / "env" / "models" / "omnivoice" / "model.safetensors").unlink()

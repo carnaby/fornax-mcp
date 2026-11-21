@@ -14,11 +14,20 @@ import common
 from common import ENVIRONMENT, say, setup_streams
 
 
-def runs(tool):
+def ffmpeg_version(tool):
+    """The version word of `tool -version` ("9.0.2-..." for "ffmpeg version 9.0.2-..."), or None when it does not run."""
     try:
-        return subprocess.run([tool, "-version"], stdin=subprocess.DEVNULL, capture_output=True, timeout=30).returncode == 0
+        r = subprocess.run([tool, "-version"], stdin=subprocess.DEVNULL, capture_output=True, timeout=30,
+                           text=True, encoding="utf-8", errors="replace")
     except (OSError, subprocess.TimeoutExpired):
-        return False
+        return None
+    if r.returncode != 0:
+        return None
+    first = r.stdout.splitlines()[0].strip() if r.stdout.strip() else ""
+    words = first.split()
+    if first.startswith("ffmpeg version") and len(words) > 2:
+        return words[2]
+    return first or "?"
 
 
 def version(dist):
@@ -39,7 +48,8 @@ def main(argv=None):
     p = argparse.ArgumentParser(prog="check.py")
     p.add_argument("--ffmpeg", required=True)
     a = p.parse_args(argv)
-    if not runs(a.ffmpeg):
+    ffmpeg = ffmpeg_version(a.ffmpeg)
+    if ffmpeg is None:
         fail("ffmpeg does not run: check tools.ffmpeg in worker.yaml")
     problems = common.file_problems(common.OMNIVOICE_DIR, common.OMNIVOICE_FILES) + common.file_problems(common.PIPER_DIR, common.PIPER_FILES)
     if problems:
@@ -56,7 +66,7 @@ def main(argv=None):
         fail(f"PyTorch does not load ({e}): run fornax types setup tts")
     if not torch.cuda.is_available():
         fail("PyTorch sees no CUDA device: install or update the NVIDIA driver")
-    print(f"Python {platform.python_version()}, PyTorch {torch.__version__} (CUDA {torch.version.cuda}), omnivoice {version('omnivoice')}, piper-tts {version('piper-tts')}; {torch.cuda.get_device_name(0)}")
+    print(f"Python {platform.python_version()}, PyTorch {torch.__version__} (CUDA {torch.version.cuda}), omnivoice {version('omnivoice')}, piper-tts {version('piper-tts')}, ffmpeg {ffmpeg}; {torch.cuda.get_device_name(0)}")
     return 0
 
 
