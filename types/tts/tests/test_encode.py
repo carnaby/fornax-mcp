@@ -67,6 +67,24 @@ class EncoderTest(unittest.TestCase):
         enc.abort()  # a second abort is harmless
         self.assertEqual(list(self.out.iterdir()), [])
 
+    def test_a_large_write_to_a_failing_ffmpeg_raises_and_leaves_nothing(self):
+        enc = encode.Encoder(FFMPEG, 24000, "mp3", self.out / "missing-folder")
+        # ffmpeg gives up at once; the writes eventually hit a closed pipe (about 8 MB in all).
+        with self.assertRaisesRegex(encode.EncodeError, r"^ffmpeg (could not encode|stopped taking) the speech \(exit \d+\)"):
+            chunk = sine(0.2, 24000)
+            for _ in range(200):
+                enc.write(chunk)
+            enc.finish()
+        self.assertTrue(enc.closed)
+        self.assertEqual(list(self.out.iterdir()), [])
+
+    def test_a_write_after_abort_is_an_encode_error(self):
+        enc = encode.Encoder(FFMPEG, 24000, "wav", self.out)
+        enc.abort()
+        with self.assertRaisesRegex(encode.EncodeError, "already closed"):
+            enc.write(b"x" * 8)
+        self.assertEqual(list(self.out.iterdir()), [])
+
 
 class ToolTest(unittest.TestCase):
     def test_a_missing_ffmpeg_is_a_tool_error(self):

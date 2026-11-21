@@ -38,7 +38,10 @@ def remove_soon(path, seconds=None):
 
 def kill_tree(pid):
     """Windows: a launcher (scoop's or chocolatey's shim) runs the real ffmpeg as its child; kill both."""
-    subprocess.run(["taskkill", "/T", "/F", "/PID", str(pid)], stdin=subprocess.DEVNULL, capture_output=True)
+    try:
+        subprocess.run(["taskkill", "/T", "/F", "/PID", str(pid)], stdin=subprocess.DEVNULL, capture_output=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        pass  # abort() still kills the launcher and removes the temporary file
 
 
 class Encoder:
@@ -63,12 +66,13 @@ class Encoder:
         return self.written / 4 / self.sample_rate
 
     def write(self, pcm):
+        if self.closed:
+            raise EncodeError("the encoder is already closed")
         try:
             self.p.stdin.write(pcm)
-        except OSError:
-            code = self.p.wait()
-            self._join()
-            raise EncodeError(self._why(f"ffmpeg stopped taking the speech (exit {code})")) from None
+        except (OSError, ValueError):
+            self.abort()  # kills a still-running ffmpeg and removes the temporary file; the stderr text survives
+            raise EncodeError(self._why(f"ffmpeg stopped taking the speech (exit {self.p.returncode})")) from None
         self.written += len(pcm)
 
     def finish(self):
