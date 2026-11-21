@@ -222,3 +222,60 @@ def prepare(raw, markdown):
     if characters > LIMIT_CHARS:
         raise Rejected(f"the text has {characters} characters and one job speaks at most {LIMIT_CHARS}: split the text into several jobs")
     return Prepared([chunks(p) for p in paras], characters)
+
+
+def speech_plan(prepared, per_paragraph):
+    """What the engine speaks, in order, and the pause before each piece: chunk by chunk (0.3 s between chunks,
+    0.7 s between paragraphs), or whole paragraphs for an engine that cuts sentences itself (Piper)."""
+    plan = []
+    for chunk_list in prepared.paragraphs:
+        units = [" ".join(chunk_list)] if per_paragraph else chunk_list
+        for j, unit in enumerate(units):
+            pause = 0.0 if not plan else (PAUSE_PARAGRAPH_S if j == 0 else PAUSE_CHUNK_S)
+            plan.append((unit, pause))
+    return plan
+
+
+def silence(seconds, sample_rate):
+    """`seconds` of float32 PCM silence (a float 0.0 is four zero bytes)."""
+    return bytes(4 * round(seconds * sample_rate))
+
+
+def output_name(fmt):
+    return FORMATS[fmt][0]
+
+
+def encode_args(fmt, sample_rate, dest):
+    """ffmpeg's arguments: float32 mono PCM at `sample_rate` on stdin, `fmt` into `dest` (spec 10 § 4.7)."""
+    return ["-v", "error", "-y", "-f", "f32le", "-ar", str(sample_rate), "-ac", "1", "-i", "-", *FORMATS[fmt][1], str(dest)]
+
+
+def output_meta(request, prepared, sample_rate, duration_s, seconds, engine_meta):
+    """outputs.json's meta of speech.<ext> (spec 10 § 5): scalars only."""
+    meta = {
+        "model": request.model,
+        "voice": request.voice,
+        "format": request.format,
+        "speed": request.speed,
+        "duration_s": round(duration_s, 2),
+        "sample_rate": sample_rate,
+        "characters": prepared.characters,
+        "paragraphs": len(prepared.paragraphs),
+        "chunks": prepared.chunks,
+        "seconds": round(seconds, 1),
+    }
+    meta.update(engine_meta)
+    return meta
+
+
+def one_line(text, limit=300):
+    text = " ".join(str(text).split())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def failure_text(error):
+    """The log's last line when the model failed to load or to speak (exit 1)."""
+    what = one_line(f"{type(error).__name__}: {error}")
+    if "OutOfMemoryError" in type(error).__name__ or "out of memory" in str(error).lower():
+        return f"the card ran out of memory ({what}): another program may hold it; the job is tried again later"
+    return f"speaking failed ({what})"
