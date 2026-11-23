@@ -55,7 +55,8 @@ def venv_python(venv):
 def setup_streams():
     # Windows pipes default to a legacy code page; the worker reads UTF-8.
     for stream in (sys.stdout, sys.stderr):
-        stream.reconfigure(encoding="utf-8", errors="replace")
+        if hasattr(stream, "reconfigure"):  # a stream put in its place (a test's StringIO) is already text
+            stream.reconfigure(encoding="utf-8", errors="replace")
 
 
 def say(message):
@@ -98,15 +99,23 @@ def load_voices(folder=None):
     return json.loads((folder / "voices.json").read_text(encoding="utf-8"))
 
 
-def voice_problems(folder=None):
-    """A sentence when voices.json cannot be read, or for each voice whose clip is missing."""
+def voice_problems(folder=None, names=None):
+    """A sentence when voices.json cannot be read or is not an object of voices, or for each voice (of `names` when
+    given; a name voices.json does not hold is the caller's to report) that lacks a file and a text or whose clip is
+    missing."""
     folder = Path(folder or VOICES_DIR)
     try:
         voices = load_voices(folder)
     except (OSError, ValueError) as e:
         return [f"voices.json in {folder} cannot be read ({e})"]
-    return [
-        f"the voice {name} has no {entry.get('file')} in {folder}"
-        for name, entry in voices.items()
-        if not (folder / str(entry.get("file", ""))).is_file()
-    ]
+    if not isinstance(voices, dict):
+        return [f"voices.json in {folder} does not hold an object of voices"]
+    out = []
+    for name, entry in voices.items():
+        if names is not None and name not in names:
+            continue
+        if not (isinstance(entry, dict) and isinstance(entry.get("file"), str) and isinstance(entry.get("text"), str)):
+            out.append(f"the voice {name} in voices.json needs a file and a text")
+        elif not (folder / entry["file"]).is_file():
+            out.append(f"the voice {name} has no {entry['file']} in {folder}")
+    return out

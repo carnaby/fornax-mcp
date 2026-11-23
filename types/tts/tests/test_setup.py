@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
@@ -56,6 +57,15 @@ class FilesTest(unittest.TestCase):
 
         with self.assertRaisesRegex(setup.SetupError, r"^the download of config\.json does not match its pinned size and sha256: run the setup again$"):
             setup.ensure_files(self.dir / "omnivoice", self.files, "https://example.com/m/", bad_fetch)
+        self.assertEqual(list((self.dir / "omnivoice").rglob("*.part")), [])
+
+    def test_a_download_that_fails_names_its_url(self):
+        def gone(url, dest):
+            Path(dest).write_bytes(b"partial")
+            raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+
+        with self.assertRaisesRegex(setup.SetupError, r"^https://example\.com/m/config\.json cannot be downloaded \(HTTP Error 404: Not Found\): run the setup again$"):
+            setup.ensure_files(self.dir / "omnivoice", self.files, "https://example.com/m/", gone)
         self.assertEqual(list((self.dir / "omnivoice").rglob("*.part")), [])
 
 

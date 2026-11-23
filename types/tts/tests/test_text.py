@@ -36,6 +36,17 @@ class ResolveTest(unittest.TestCase):
         with self.assertRaises(Rejected):
             lib.resolve({"text": "A.", "speed": 3}, None)
 
+    def test_values_of_the_wrong_kind_are_rejected(self):
+        for params, sentence in (({"text": "A.", "speed": "fast"}, r"^speed must be a number, not 'fast'$"),
+                                 ({"text": "A.", "speed": None}, r"^speed must be a number, not None$"),
+                                 ({"text": "A.", "speed": True}, r"^speed must be a number, not True$"),
+                                 ({"text": 5}, r"^text must be a string, not 5$"),
+                                 ({"text": "A.", "model": ["piper"]}, r"^model must be a string, not \['piper'\]$"),
+                                 ({"text": "A.", "voice": {"x": 1}}, r"^voice must be a string, not \{'x': 1\}$"),
+                                 ({"text": "A.", "format": 3}, r"^format must be a string, not 3$")):
+            with self.subTest(params=params), self.assertRaisesRegex(Rejected, sentence):
+                lib.resolve(params, None)
+
 
 class DecodeTest(unittest.TestCase):
     def test_a_bom_is_dropped_and_utf16_refused(self):

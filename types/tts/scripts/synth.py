@@ -1,5 +1,6 @@
 """The tts pack's two engines (spec 10 § 4.4); the only module that imports Piper, PyTorch and OmniVoice, and only
-when an engine is made. Each engine speaks one text at a time and returns float32 little-endian mono PCM."""
+when an engine is made. Each engine speaks one text at a time and yields it as blocks of float32 little-endian mono
+PCM, so that a long text is never held whole in memory."""
 from pathlib import Path
 
 import common
@@ -21,7 +22,8 @@ def require_files(folder, files):
 
 
 class PiperEngine:
-    """Piper on the CPU: whole paragraphs (it cuts sentences itself), speed scales the voice's own length_scale."""
+    """Piper on the CPU: whole paragraphs (it cuts sentences itself and each sentence is a block), speed scales the
+    voice's own length_scale."""
 
     per_paragraph = True
 
@@ -36,7 +38,8 @@ class PiperEngine:
 
     def speak(self, text, speed):
         config = self._config(length_scale=self.length_scale / speed)
-        return b"".join(pcm(chunk.audio_float_array) for chunk in self.voice.synthesize(text, syn_config=config))
+        for chunk in self.voice.synthesize(text, syn_config=config):
+            yield pcm(chunk.audio_float_array)
 
     def meta(self):
         return {"model_repo": common.PIPER_REPO, "revision": common.PIPER_REVISION, "piper_voice": common.PIPER_VOICE}
@@ -44,7 +47,7 @@ class PiperEngine:
 
 def voice_reference(name):
     """The clip and sentence of an OmniVoice voice from voices.json."""
-    problems = common.voice_problems()
+    problems = common.voice_problems(names=[name])
     if problems:
         raise Unavailable("; ".join(problems))
     voices = common.load_voices()
@@ -74,7 +77,7 @@ class OmniVoiceEngine:
 
     def speak(self, text, speed):
         self.torch.manual_seed(common.SEED)
-        return pcm(self.model.generate(text=text, language="sk", voice_clone_prompt=self.prompt, speed=speed)[0])
+        yield pcm(self.model.generate(text=text, language="sk", voice_clone_prompt=self.prompt, speed=speed)[0])
 
     def meta(self):
         return {

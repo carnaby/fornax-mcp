@@ -7,7 +7,8 @@ from pathlib import Path
 PACK_SRC = Path(__file__).resolve().parent.parent
 SECONDS_PER_CHAR = 0.01
 
-# behavior.json next to it: mode ok | unavailable | load-error | load-oom | import-error; fail_at (the n-th speak raises error).
+# behavior.json next to it: mode ok | unavailable | load-error | load-oom | import-error; fail_at (the n-th speak raises
+# error); prepare_bug (tts_lib.prepare raises TypeError); block_outputs (a folder in place of outputs.json).
 FAKE_SYNTH = '''import array, json, math, os, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 B = json.load(open(os.path.join(HERE, "behavior.json"), encoding="utf-8"))
@@ -15,6 +16,15 @@ B = json.load(open(os.path.join(HERE, "behavior.json"), encoding="utf-8"))
 
 class Unavailable(Exception):
     pass
+
+
+if B.get("prepare_bug"):  # a bug in tts_lib: run.py must not report it as invalid params
+    import tts_lib
+
+    def broken_prepare(*args, **kwargs):
+        raise TypeError("unsupported operand type(s) for +: 'int' and 'str'")
+
+    tts_lib.prepare = broken_prepare
 
 
 class OutOfMemoryError(RuntimeError):
@@ -38,7 +48,10 @@ class Engine:
         a = array.array("f", (0.3 * math.sin(2 * math.pi * 440 * i / self.sample_rate) for i in range(n)))
         if sys.byteorder == "big":
             a.byteswap()
-        return a.tobytes()
+        data = a.tobytes()
+        half = n // 2 * 4
+        yield data[:half]  # the real engines hand over a text in blocks too
+        yield data[half:]
 
     def meta(self):
         if B.get("block_outputs"):

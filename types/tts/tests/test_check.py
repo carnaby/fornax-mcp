@@ -5,10 +5,12 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 PACK_SRC = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PACK_SRC / "scripts"))
 
+import check  # noqa: E402
 import common  # noqa: E402  (only for the names of the pinned files)
 
 FFMPEG = shutil.which("ffmpeg")
@@ -99,6 +101,20 @@ class CheckTest(unittest.TestCase):
         code, _, err = self.check(ffmpeg=str(self.root / "no-ffmpeg"))
         self.assertEqual(code, 3)
         self.assertEqual(err.strip(), "tts: ffmpeg does not run: check tools.ffmpeg in worker.yaml")
+
+
+class FfmpegVersionTest(unittest.TestCase):
+    def version_of(self, stdout, returncode=0):
+        done = subprocess.CompletedProcess(["ffmpeg", "-version"], returncode, stdout=stdout, stderr="")
+        with mock.patch.object(check.subprocess, "run", return_value=done):
+            return check.ffmpeg_version("ffmpeg")
+
+    def test_the_version_word_of_the_first_line_that_says_something(self):
+        self.assertEqual(self.version_of("ffmpeg version 9.0.2-full Copyright (c) 2000-2026\nbuilt with gcc\n"), "9.0.2-full")
+        self.assertEqual(self.version_of("\n  \nffmpeg version 9.0.2-full Copyright\n"), "9.0.2-full")
+        self.assertEqual(self.version_of("\nsome wrapper 1.0\n"), "some wrapper 1.0")
+        self.assertEqual(self.version_of(""), "?")
+        self.assertIsNone(self.version_of("ffmpeg version 9", returncode=1))
 
 
 if __name__ == "__main__":

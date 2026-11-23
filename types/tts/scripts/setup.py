@@ -15,6 +15,7 @@ import os
 import shutil
 import subprocess
 import sys
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -92,7 +93,10 @@ def ensure_files(folder, files, base_url, fetch):
             continue
         part = dest.with_name(dest.name + ".part")
         try:
-            fetch(base_url + rel, part)
+            try:
+                fetch(base_url + rel, part)
+            except urllib.error.URLError as e:  # an HTTP status, a name that does not resolve, a refused connection
+                raise SetupError(f"{base_url + rel} cannot be downloaded ({e}): run the setup again") from None
             if part.stat().st_size != size or sha256_file(part) != sha256:
                 raise SetupError(f"the download of {rel} does not match its pinned size and sha256: run the setup again")
             os.replace(part, dest)

@@ -80,7 +80,6 @@ describe('built-in type packs', () => {
     ]);
   });
 
-
   test('tts: contract, tools and commands; text_file is optional', () => {
     const pack = loadPack(shippedPack('tts')!);
     expect(pack.contract).toMatchObject({ name: 'tts', version: 1, max_runtime_s: 3600 });
@@ -110,6 +109,7 @@ describe('built-in type packs', () => {
     expect(expandArgv(pack.impl.setup!, { pack: '/p', tools, platform: 'linux' })).toEqual(['py', '/p/scripts/setup.py']);
     expect(expandArgv(pack.impl.check!, { pack: '/p', tools, platform: 'linux' })).toEqual(['/p/env/bin/python', '/p/scripts/check.py', '--ffmpeg', 'ff']);
   });
+
   test('the prompt for a new type gets every built-in pack as an example', () => {
     expect(shippedExamples().map((e) => e.name)).toEqual(['lease', 'render', 'transcribe', 'tts', 'upscale']);
   });

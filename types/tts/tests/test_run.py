@@ -103,6 +103,19 @@ class RejectTest(RunCase):
         code, _, err = self.run_job({}, raw_params="[1, 2]", ffmpeg="no-ffmpeg")
         self.assertEqual(code, 2)
         self.assertTrue(last_line(err).startswith("tts: params.json does not hold valid parameters ("), err)
+        code, _, err = self.run_job({}, raw_params="{text", ffmpeg="no-ffmpeg")
+        self.assertEqual(code, 2)
+        self.assertTrue(last_line(err).startswith("tts: params.json does not hold valid parameters ("), err)
+
+    def test_a_speed_that_is_not_a_number_is_exit_2(self):
+        code, _, err = self.run_job({"text": "Ahoj.", "speed": "fast"}, ffmpeg="no-ffmpeg")
+        self.assertEqual(code, 2)
+        self.assertEqual(last_line(err), "tts: speed must be a number, not 'fast'")
+
+    def test_a_bug_in_preparing_the_text_is_exit_1_not_invalid_params(self):
+        code, _, err = self.run_job({"text": "Ahoj."}, behavior={"prepare_bug": True}, ffmpeg="no-ffmpeg")
+        self.assertEqual(code, 1)
+        self.assertEqual(last_line(err), "tts: the text could not be prepared (TypeError: unsupported operand type(s) for +: 'int' and 'str')")
 
     def test_a_broken_environment_is_exit_3(self):
         code, _, err = self.run_job({"text": "Ahoj."}, behavior={"mode": "import-error"}, ffmpeg="no-ffmpeg")

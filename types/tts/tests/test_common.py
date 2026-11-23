@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
@@ -60,6 +61,25 @@ class HelpersTest(unittest.TestCase):
         self.assertRegex(common.voice_problems(self.dir)[0], r"voices\.json .* cannot be read")
         (self.dir / "voices.json").write_text(json.dumps({"x": {"file": "x.wav", "text": "t"}}), encoding="utf-8")
         self.assertEqual(common.voice_problems(self.dir), [f"the voice x has no x.wav in {self.dir}"])
+
+    def test_voice_problems_of_one_voice(self):
+        (self.dir / "voices.json").write_text(json.dumps({"x": {"file": "x.wav", "text": "t"}, "y": {"file": "y.wav", "text": "t"}}), encoding="utf-8")
+        (self.dir / "x.wav").write_bytes(b"RIFF")
+        self.assertEqual(common.voice_problems(self.dir, ["x"]), [])
+        self.assertEqual(common.voice_problems(self.dir, ["y"]), [f"the voice y has no y.wav in {self.dir}"])
+        self.assertEqual(common.voice_problems(self.dir), [f"the voice y has no y.wav in {self.dir}"])
+
+    def test_voice_problems_of_a_voices_json_of_the_wrong_shape(self):
+        for content, problems in (([1], [f"voices.json in {self.dir} does not hold an object of voices"]),
+                                  ({"x": ["x.wav"]}, ["the voice x in voices.json needs a file and a text"]),
+                                  ({"x": {"file": 1, "text": "t"}}, ["the voice x in voices.json needs a file and a text"])):
+            (self.dir / "voices.json").write_text(json.dumps(content), encoding="utf-8")
+            with self.subTest(content=content):
+                self.assertEqual(common.voice_problems(self.dir), problems)
+
+    def test_setup_streams_leaves_a_stream_it_cannot_reconfigure(self):
+        with mock.patch.object(sys, "stdout", io.StringIO()), mock.patch.object(sys, "stderr", io.StringIO()):
+            common.setup_streams()
 
     def test_progress_is_one_json_line_clamped_to_0_and_1(self):
         out = io.StringIO()

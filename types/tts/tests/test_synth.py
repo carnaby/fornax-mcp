@@ -110,17 +110,26 @@ class PiperTest(EngineCase):
     def test_piper_speaks_whole_paragraphs_from_its_pinned_voice(self):
         with self.modules():
             engine = synth.load("piper", "lili")
-            pcm = engine.speak("Prvá. Druhá.", 1.0)
+            pcm = b"".join(engine.speak("Prvá. Druhá.", 1.0))
         self.assertEqual(self.log[0], ("load", str(self.dir / "piper" / "sk_SK-lili-medium.onnx")))
         self.assertEqual((engine.sample_rate, engine.per_paragraph), (22050, True))
         self.assertEqual(len(pcm), 2 * 5 * 4)
         self.assertEqual(engine.meta(), {"model_repo": "rhasspy/piper-voices", "revision": common.PIPER_REVISION, "piper_voice": "sk_SK-lili-medium"})
 
+    def test_piper_hands_over_a_paragraph_sentence_by_sentence(self):
+        # A paragraph is never held whole in memory: each of Piper's sentences goes out as it is spoken.
+        with self.modules():
+            engine = synth.load("piper", "lili")
+            blocks = engine.speak("Prvá. Druhá.", 1.0)
+            self.assertNotIn("synthesize", [entry[0] for entry in self.log])
+            sizes = [len(block) for block in blocks]
+        self.assertEqual(sizes, [5 * 4, 5 * 4])
+
     def test_piper_speed_scales_the_voices_length_scale(self):
         with self.modules():
             engine = synth.load("piper", "lili")
-            engine.speak("A.", 2.0)
-            engine.speak("A.", 0.5)
+            list(engine.speak("A.", 2.0))
+            list(engine.speak("A.", 0.5))
         scales = [entry[2] for entry in self.log if entry[0] == "synthesize"]
         self.assertAlmostEqual(scales[0], 0.6)
         self.assertAlmostEqual(scales[1], 2.4)
@@ -135,8 +144,8 @@ class OmniVoiceTest(EngineCase):
     def test_the_voice_is_prepared_once_and_every_chunk_is_seeded(self):
         with self.modules():
             engine = synth.load("omnivoice", "klara")
-            first = engine.speak("Prvý kúsok.", 1.25)
-            engine.speak("Druhý kúsok.", 1.25)
+            first = b"".join(engine.speak("Prvý kúsok.", 1.25))
+            list(engine.speak("Druhý kúsok.", 1.25))
         voices = json.loads((common.VOICES_DIR / "voices.json").read_text(encoding="utf-8"))
         self.assertEqual(self.log[0], ("from_pretrained", str(self.dir / "omnivoice"), "cuda:0", "float16"))
         self.assertEqual(self.log[1], ("prompt", str(common.VOICES_DIR / "klara.wav"), voices["klara"]["text"]))
@@ -161,6 +170,27 @@ class OmniVoiceTest(EngineCase):
             (voices / "klara.wav").write_bytes(b"RIFF")
             with self.assertRaisesRegex(synth.Unavailable, r"there is no voice peter in "):
                 synth.load("omnivoice", "peter")
+
+    def test_another_voices_missing_clip_does_not_block_this_one(self):
+        voices = self.dir / "voices"
+        voices.mkdir()
+        (voices / "voices.json").write_text(json.dumps({"klara": {"file": "klara.wav", "text": "A."}, "peter": {"file": "peter.wav", "text": "B."}}), encoding="utf-8")
+        (voices / "klara.wav").write_bytes(b"RIFF")
+        with mock.patch.object(common, "VOICES_DIR", voices), self.modules():
+            self.assertEqual(synth.load("omnivoice", "klara").prompt, "PROMPT")
+            with self.assertRaisesRegex(synth.Unavailable, r"^the voice peter has no peter\.wav in "):
+                synth.load("omnivoice", "peter")
+
+    def test_a_voices_json_of_the_wrong_shape_is_unavailable(self):
+        voices = self.dir / "voices"
+        voices.mkdir()
+        for content, sentence in (([1], r"^voices\.json in .* does not hold an object of voices$"),
+                                  ({"klara": "klara.wav"}, r"^the voice klara in voices\.json needs a file and a text$"),
+                                  ({"klara": {"file": "klara.wav"}}, r"^the voice klara in voices\.json needs a file and a text$")):
+            (voices / "voices.json").write_text(json.dumps(content), encoding="utf-8")
+            with mock.patch.object(common, "VOICES_DIR", voices), self.modules(), self.subTest(content=content):
+                with self.assertRaisesRegex(synth.Unavailable, sentence):
+                    synth.load("omnivoice", "klara")
 
 
 if __name__ == "__main__":

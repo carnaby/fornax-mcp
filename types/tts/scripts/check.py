@@ -23,7 +23,7 @@ def ffmpeg_version(tool):
         return None
     if r.returncode != 0:
         return None
-    first = r.stdout.splitlines()[0].strip() if r.stdout.strip() else ""
+    first = next((line.strip() for line in r.stdout.splitlines() if line.strip()), "")
     words = first.split()
     if first.startswith("ffmpeg version") and len(words) > 2:
         return words[2]

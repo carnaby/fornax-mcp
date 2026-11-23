@@ -48,7 +48,12 @@ class Prepared:
 
 def resolve(params, text_file):
     """The checked request. `params` is params.json (defaults filled in by the worker, but not relied on);
-    `text_file` is the input's path, or None or "" when it was not given."""
+    `text_file` is the input's path, or None or "" when it was not given. A value of the wrong kind is rejected here,
+    so that whatever else fails later is a fault of the pack, not of the request."""
+    for key in ("text", "model", "voice", "format"):
+        value = params.get(key)
+        if value is not None and not isinstance(value, str):
+            raise Rejected(f"{key} must be a string, not {value!r}")
     text = params.get("text")
     if text == "":
         text = None
@@ -67,7 +72,10 @@ def resolve(params, text_file):
     fmt = params.get("format", "mp3")
     if fmt not in FORMATS:
         raise Rejected(f"unknown format {fmt}: use {', '.join(FORMATS)}")
-    speed = float(params.get("speed", 1))
+    speed = params.get("speed", 1)
+    if isinstance(speed, bool) or not isinstance(speed, (int, float)):
+        raise Rejected(f"speed must be a number, not {speed!r}")
+    speed = float(speed)
     if not 0.5 <= speed <= 2:
         raise Rejected(f"speed {speed} is outside 0.5 to 2")
     return Request(model, voice, fmt, speed, text, text_file)

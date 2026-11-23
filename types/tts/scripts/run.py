@@ -32,9 +32,20 @@ def broken_environment(e):
     return fail(ENVIRONMENT, f"the pack's Python environment is broken ({lib.one_line(f'{type(e).__name__}: {e}')}): run fornax types setup tts")
 
 
+def read_params(params_path):
+    """params.json as an object; anything else is rejected (exit 2)."""
+    data = Path(params_path).read_bytes()
+    try:
+        params = json.loads(data.decode("utf-8"))
+    except ValueError as e:  # not UTF-8 or not JSON
+        raise lib.Rejected(f"params.json does not hold valid parameters ({lib.one_line(f'{type(e).__name__}: {e}')})") from None
+    if not isinstance(params, dict):
+        raise lib.Rejected(f"params.json does not hold valid parameters (an object is expected, not {type(params).__name__})")
+    return params
+
+
 def read_request(params_path, text_file):
-    params = json.loads(Path(params_path).read_text(encoding="utf-8"))
-    request = lib.resolve(params, text_file)
+    request = lib.resolve(read_params(params_path), text_file)
     if request.text_file:
         path = Path(request.text_file)
         return request, lib.prepare(lib.decode_text(path.read_bytes()), markdown=path.suffix.lower() == ".md")
@@ -59,8 +70,8 @@ def main(argv=None):
         return fail(INVALID, str(e))
     except OSError as e:
         return fail(FAILED, f"the job's files cannot be read ({lib.one_line(e)})")
-    except (ValueError, TypeError, AttributeError) as e:  # not JSON, not an object, a speed that is not a number
-        return fail(INVALID, f"params.json does not hold valid parameters ({lib.one_line(f'{type(e).__name__}: {e}')})")
+    except Exception as e:  # a fault of the pack, not of the request: retried like any other failure
+        return fail(FAILED, lib.failure_text(e, "the text could not be prepared"))
     say(f"{request.model}, voice {request.voice}, {request.format}, speed {request.speed}: {prepared.characters} characters in {len(prepared.paragraphs)} paragraphs, {prepared.chunks} chunks")
 
     try:
@@ -86,7 +97,8 @@ def main(argv=None):
         for i, (text, pause) in enumerate(plan, 1):
             if pause:
                 encoder.write(lib.silence(pause, engine.sample_rate))
-            encoder.write(engine.speak(text, request.speed))
+            for block in engine.speak(text, request.speed):
+                encoder.write(block)
             progress(0.98 * i / len(plan), f"{unit} {i}/{len(plan)}")
         duration = encoder.seconds
         meta = lib.output_meta(request, prepared, engine.sample_rate, duration, time.monotonic() - started, engine.meta())
