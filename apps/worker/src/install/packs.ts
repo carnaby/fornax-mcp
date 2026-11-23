@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { cpSync, existsSync, readdirSync, readFileSync, renameSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
-import { checkPack } from '../checks.js';
+import { checkPack, ORIGIN_FILE } from '../checks.js';
 import { lockWorker } from '../instance.js';
 import { loadPack, type Pack } from '../pack.js';
 import type { Paths } from '../paths.js';
@@ -9,8 +9,8 @@ import { removeDir, SKIP_PARTS, swapDir } from './app.js';
 import { InstallError } from './errors.js';
 import { runPackSetup } from './pack-setup.js';
 
-/** Spec 05c 4.4: where an installed pack came from. */
-export const ORIGIN_FILE = '.fornax-pack.json';
+/** Spec 05c 4.4: where an installed pack came from (marker file ORIGIN_FILE, defined in checks.ts). */
+export { ORIGIN_FILE };
 export type PackOrigin = 'shipped' | 'dir';
 
 /**

@@ -2,6 +2,7 @@ import { chmodSync, mkdirSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { describe, expect, test } from 'vitest';
 import { checkPack, findBatchOnly, findTool, isBatchFile, oneLine, packsSignature, preparePacks } from '../src/checks.js';
+import { writeOrigin } from '../src/install/packs.js';
 import { loadPack } from '../src/pack.js';
 import { isAlive, NODE_TOOLS, readPids, useTempDir, waitFor, writeEchoPack } from './helpers.js';
 
@@ -183,6 +184,17 @@ describe('packs', () => {
     const later = new Date(Date.now() + 5000);
     utimesSync(join(dir, 'type.yaml'), later, later);
     expect(packsSignature(types)).not.toBe(one);
+  });
+
+  test("the signature changes when a pack's setup ends, though its type.yaml stays the same", () => {
+    // fornax types install copies the pack in before its setup runs: a worker that checked it meanwhile must check it
+    // again once the setup is done, or the type is never offered.
+    const types = join(tmp(), 'types');
+    const dir = writeEchoPack(types);
+    writeOrigin(dir, 'shipped', true);
+    const pending = packsSignature(types);
+    writeOrigin(dir, 'shipped');
+    expect(packsSignature(types)).not.toBe(pending);
   });
 });
 

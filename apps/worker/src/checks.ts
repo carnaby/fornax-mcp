@@ -1,4 +1,4 @@
-import { accessSync, constants, existsSync, readdirSync, statSync } from 'node:fs';
+import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { delimiter, extname, isAbsolute, join } from 'node:path';
 import { loadPacks, missingTools, type Pack, type PackProblem } from './pack.js';
 import { runProcess } from './process.js';
@@ -119,14 +119,31 @@ export async function preparePacks(dirs: SecretDirs, tools: Record<string, strin
   return { ready, problems };
 }
 
-/** Changes when a pack directory appears or goes, or a type.yaml is rewritten: the running worker then reloads. */
+/** The marker of an installed pack: its origin and whether its setup is still pending (install/packs.ts). */
+export const ORIGIN_FILE = '.fornax-pack.json';
+
+/** The marker's text, '' when it is missing or unreadable. */
+const markerText = (dir: string): string => {
+  try {
+    return readFileSync(join(dir, ORIGIN_FILE), 'utf8').trim();
+  } catch {
+    return '';
+  }
+};
+
+/**
+ * Changes when a pack directory appears or goes, a type.yaml is rewritten, or a pack's marker changes (its setup
+ * ended): the running worker then reloads. fornax types install copies a pack in before its setup runs, so a check
+ * made meanwhile fails; the marker is what tells the worker to check it again.
+ */
 export function packsSignature(typesDir: string): string {
   if (!existsSync(typesDir)) return '';
   return readdirSync(typesDir, { withFileTypes: true })
     .filter((d) => d.isDirectory())
     .map((d) => {
-      const file = join(typesDir, d.name, 'type.yaml');
-      return `${d.name}:${existsSync(file) ? statSync(file).mtimeMs : 0}`;
+      const dir = join(typesDir, d.name);
+      const file = join(dir, 'type.yaml');
+      return `${d.name}:${existsSync(file) ? statSync(file).mtimeMs : 0}:${markerText(dir)}`;
     })
     .sort()
     .join('|');
