@@ -1,6 +1,6 @@
 [package]
 name = "fornax-tray"
-version = "0.13.0"
+version = "0.13.1"
 description = "Starts the Fornax worker and shows and orders its queue from the system tray"
 edition = "2021"
 rust-version = "1.90"
