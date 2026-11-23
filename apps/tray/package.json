@@ -1,6 +1,6 @@
 {
   "name": "@fornax/tray",
-  "version": "0.13.1",
+  "version": "0.14.0",
   "private": true,
   "type": "module",
   "description": "The Fornax tray app (Tauri 2): starts the worker, shows the card and the queue.",
