@@ -40,6 +40,7 @@ class ResolveTest(unittest.TestCase):
         for params, sentence in (({"text": "A.", "speed": "fast"}, r"^speed must be a number, not 'fast'$"),
                                  ({"text": "A.", "speed": None}, r"^speed must be a number, not None$"),
                                  ({"text": "A.", "speed": True}, r"^speed must be a number, not True$"),
+                                 ({"text": "A.", "speed": 10**400}, r"^speed is outside 0\.5 to 2$"),
                                  ({"text": 5}, r"^text must be a string, not 5$"),
                                  ({"text": "A.", "model": ["piper"]}, r"^model must be a string, not \['piper'\]$"),
                                  ({"text": "A.", "voice": {"x": 1}}, r"^voice must be a string, not \{'x': 1\}$"),

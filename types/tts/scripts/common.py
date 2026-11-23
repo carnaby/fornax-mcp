@@ -114,7 +114,7 @@ def voice_problems(folder=None, names=None):
     for name, entry in voices.items():
         if names is not None and name not in names:
             continue
-        if not (isinstance(entry, dict) and isinstance(entry.get("file"), str) and isinstance(entry.get("text"), str)):
+        if not (isinstance(entry, dict) and isinstance(entry.get("file"), str) and entry["file"] and isinstance(entry.get("text"), str)):
             out.append(f"the voice {name} in voices.json needs a file and a text")
         elif not (folder / entry["file"]).is_file():
             out.append(f"the voice {name} has no {entry['file']} in {folder}")

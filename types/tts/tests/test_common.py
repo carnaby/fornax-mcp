@@ -72,7 +72,8 @@ class HelpersTest(unittest.TestCase):
     def test_voice_problems_of_a_voices_json_of_the_wrong_shape(self):
         for content, problems in (([1], [f"voices.json in {self.dir} does not hold an object of voices"]),
                                   ({"x": ["x.wav"]}, ["the voice x in voices.json needs a file and a text"]),
-                                  ({"x": {"file": 1, "text": "t"}}, ["the voice x in voices.json needs a file and a text"])):
+                                  ({"x": {"file": 1, "text": "t"}}, ["the voice x in voices.json needs a file and a text"]),
+                                  ({"x": {"file": "", "text": "t"}}, ["the voice x in voices.json needs a file and a text"])):
             (self.dir / "voices.json").write_text(json.dumps(content), encoding="utf-8")
             with self.subTest(content=content):
                 self.assertEqual(common.voice_problems(self.dir), problems)

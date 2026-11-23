@@ -75,7 +75,10 @@ def resolve(params, text_file):
     speed = params.get("speed", 1)
     if isinstance(speed, bool) or not isinstance(speed, (int, float)):
         raise Rejected(f"speed must be a number, not {speed!r}")
-    speed = float(speed)
+    try:
+        speed = float(speed)
+    except OverflowError:  # an integer too large for a float
+        raise Rejected("speed is outside 0.5 to 2") from None
     if not 0.5 <= speed <= 2:
         raise Rejected(f"speed {speed} is outside 0.5 to 2")
     return Request(model, voice, fmt, speed, text, text_file)

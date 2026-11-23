@@ -96,7 +96,11 @@ def ensure_files(folder, files, base_url, fetch):
             try:
                 fetch(base_url + rel, part)
             except urllib.error.URLError as e:  # an HTTP status, a name that does not resolve, a refused connection
+                if isinstance(e, urllib.error.HTTPError):
+                    e.close()  # it holds the server's response
                 raise SetupError(f"{base_url + rel} cannot be downloaded ({e}): run the setup again") from None
+            except (OSError, http.client.HTTPException) as e:  # a timeout or a dropped connection halfway
+                raise SetupError(f"the download of {base_url + rel} broke off ({type(e).__name__}: {e}): run the setup again") from None
             if part.stat().st_size != size or sha256_file(part) != sha256:
                 raise SetupError(f"the download of {rel} does not match its pinned size and sha256: run the setup again")
             os.replace(part, dest)

@@ -37,7 +37,7 @@ def read_params(params_path):
     data = Path(params_path).read_bytes()
     try:
         params = json.loads(data.decode("utf-8"))
-    except ValueError as e:  # not UTF-8 or not JSON
+    except (ValueError, RecursionError) as e:  # not UTF-8, not JSON, or nested deeper than json reads
         raise lib.Rejected(f"params.json does not hold valid parameters ({lib.one_line(f'{type(e).__name__}: {e}')})") from None
     if not isinstance(params, dict):
         raise lib.Rejected(f"params.json does not hold valid parameters (an object is expected, not {type(params).__name__})")

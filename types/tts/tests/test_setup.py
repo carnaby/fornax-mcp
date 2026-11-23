@@ -62,11 +62,23 @@ class FilesTest(unittest.TestCase):
     def test_a_download_that_fails_names_its_url(self):
         def gone(url, dest):
             Path(dest).write_bytes(b"partial")
-            raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+            raise urllib.error.HTTPError(url, 404, "Not Found", {}, io.BytesIO())
 
         with self.assertRaisesRegex(setup.SetupError, r"^https://example\.com/m/config\.json cannot be downloaded \(HTTP Error 404: Not Found\): run the setup again$"):
             setup.ensure_files(self.dir / "omnivoice", self.files, "https://example.com/m/", gone)
         self.assertEqual(list((self.dir / "omnivoice").rglob("*.part")), [])
+
+    def test_a_download_that_breaks_off_names_its_url(self):
+        for error, what in ((TimeoutError("timed out"), r"TimeoutError: timed out"),
+                            (http.client.IncompleteRead(b"abc", 10), r"IncompleteRead: .*")):
+            def broken(url, dest, error=error):
+                Path(dest).write_bytes(b"partial")
+                raise error
+
+            with self.subTest(error=type(error).__name__), self.assertRaisesRegex(
+                    setup.SetupError, r"^the download of https://example\.com/m/config\.json broke off \(" + what + r"\): run the setup again$"):
+                setup.ensure_files(self.dir / "omnivoice", self.files, "https://example.com/m/", broken)
+            self.assertEqual(list((self.dir / "omnivoice").rglob("*.part")), [])
 
 
 class BootstrapTest(unittest.TestCase):

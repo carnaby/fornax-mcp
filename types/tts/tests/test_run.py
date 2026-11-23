@@ -106,6 +106,9 @@ class RejectTest(RunCase):
         code, _, err = self.run_job({}, raw_params="{text", ffmpeg="no-ffmpeg")
         self.assertEqual(code, 2)
         self.assertTrue(last_line(err).startswith("tts: params.json does not hold valid parameters ("), err)
+        code, _, err = self.run_job({}, raw_params="[" * 100_000, ffmpeg="no-ffmpeg")  # nested too deep for json
+        self.assertEqual(code, 2)
+        self.assertTrue(last_line(err).startswith("tts: params.json does not hold valid parameters ("), err)
 
     def test_a_speed_that_is_not_a_number_is_exit_2(self):
         code, _, err = self.run_job({"text": "Ahoj.", "speed": "fast"}, ffmpeg="no-ffmpeg")
