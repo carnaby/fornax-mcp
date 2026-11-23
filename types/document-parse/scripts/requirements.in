@@ -1,0 +1,6 @@
+# Direct dependencies: Docling with RapidOCR, transformers for PaddleOCR-VL, PyTorch with CUDA 12.8 (RTX 50xx).
+# The lock is requirements.txt; how to make it again is in its header.
+torch==2.8.0+cu128
+torchvision==0.23.0+cu128
+docling[rapidocr]==2.151.1
+transformers==5.24.0
