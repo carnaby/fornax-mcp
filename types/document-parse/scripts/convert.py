@@ -82,12 +82,13 @@ def image_frames(path):
 
 
 def image_pages(path):
-    """Each frame of an image as an RGB image, one at a time."""
-    from PIL import ImageSequence
+    """Each frame of an image as an RGB image, one at a time, turned the way its EXIF orientation says (a phone stores
+    an upright photo as landscape pixels plus an orientation tag)."""
+    from PIL import ImageOps, ImageSequence
 
     with _open_image(path) as image:
         for frame in ImageSequence.Iterator(image):
-            yield frame.convert("RGB")
+            yield ImageOps.exif_transpose(frame).convert("RGB")
 
 
 class TextConverter:
