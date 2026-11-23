@@ -97,5 +97,93 @@ class TextTest(unittest.TestCase):
         self.assertTrue(lib.failure_text(oom, "x").startswith("the card ran out of memory (OutOfMemoryError: CUDA out of memory."))
 
 
+class FillInTest(unittest.TestCase):
+    def test_words_are_lowercase_word_characters(self):
+        self.assertEqual(lib.words("Daňový ÚRAD, č. 222/2004!"), ["daňový", "úrad", "č", "222", "2004"])
+
+    def test_token_limit_follows_the_area_within_bounds(self):
+        self.assertEqual(lib.token_limit(10, 10), 16)
+        self.assertEqual(lib.token_limit(1200, 200), 333)  # 1200 * 200 / 240 / 3
+        self.assertEqual(lib.token_limit(4000, 4000), 1024)
+
+    def test_junk(self):
+        bs = chr(92)
+        for text in ("Q", "山", "", "  ", "☑" + bs + "(" + bs + "Leftrightarrow" + bs + ")☑", "12 34"):
+            with self.subTest(text=text):
+                self.assertTrue(lib.is_junk(text))
+        for text in ("NASA", "Открыть", "kde je najblizsia pekaren ?", "K7Q2048315500ZXB"):
+            with self.subTest(text=text):
+                self.assertFalse(lib.is_junk(text))
+
+    def test_reading_order_is_top_to_bottom_then_left_to_right_and_drops_tables(self):
+        clusters = [("text", (300, 100, 400, 110)), ("table", (0, 50, 100, 60)), ("text", (10, 103, 50, 112)),
+                    ("section_header", (10, 10, 200, 30)), ("formula", (0, 0, 5, 5)), ("picture", (0, 200, 50, 250))]
+        self.assertEqual(lib.reading_order(clusters), [
+            ("section_header", (10, 10, 200, 30)), ("text", (10, 103, 50, 112)), ("text", (300, 100, 400, 110)), ("picture", (0, 200, 50, 250)),
+        ])
+
+    def test_crop_box_scales_pads_clips_and_skips_slivers(self):
+        self.assertEqual(lib.crop_box((10, 20, 110, 70), 2.0, 1000, 1000), (16, 36, 224, 144))
+        self.assertEqual(lib.crop_box((0, 0, 600, 50), 2.0, 1000, 90), (0, 0, 1000, 90))
+        # 1 px wide: 2 px at scale 2, plus 4 px of padding on each side = 10 px, kept.
+        self.assertEqual(lib.crop_box((10, 10, 11, 60), 2.0, 1000, 1000), (16, 16, 26, 124))
+
+    def test_a_crop_narrower_than_8_px_is_skipped(self):
+        # 1 px wide at the right edge: clipped to the image, 4 px of padding on one side only.
+        self.assertIsNone(lib.crop_box((499, 10, 500, 60), 2.0, 1000, 1000))
+
+    def test_fill_in_adds_missing_regions_once_and_skips_junk(self):
+        page = "Новая заметка\nМастерская\nЗдесь можно записать свои мысли."
+        regions = [("text", "Открыть"), ("picture", "Q"), ("text", "Новая заметка"), ("text", "kde je najblizsia pekaren ?"),
+                   ("text", "kde je najblizsia pekaren ?"), ("picture", "山"), ("section_header", "Вчера")]
+        self.assertEqual(lib.fill_in(page, regions), [("text", "Открыть"), ("text", "kde je najblizsia pekaren ?"), ("section_header", "Вчера")])
+
+    def test_fill_in_keeps_a_region_that_is_mostly_on_the_page(self):
+        page = "Daňový úrad Nitra pobočka Levice"
+        # Three of four words are on the page: found 0.75, not added.
+        self.assertEqual(lib.fill_in(page, [("text", "Daňový úrad Nitra Bratislava")]), [])
+        # One of three: added.
+        self.assertEqual(lib.fill_in(page, [("text", "Finančná správa Levice")]), [("text", "Finančná správa Levice")])
+
+
+class MarkdownTest(unittest.TestCase):
+    def test_paragraphs(self):
+        self.assertEqual(lib.paragraphs("a\nb\n\n  \nc\n"), ["a\nb", "c"])
+        self.assertEqual(lib.paragraphs("  \n"), [])
+
+    def test_page_markdown_puts_added_regions_after_a_marker(self):
+        self.assertEqual(lib.page_markdown("Text strany.\n", []), "Text strany.")
+        self.assertEqual(lib.page_markdown("Text strany.", [("text", "Открыть"), ("section_header", "Вчера")]),
+                         "Text strany.\n\n<!-- added from layout -->\n\nОткрыть\n\n## Вчера")
+        self.assertEqual(lib.page_markdown("", [("title", "NASA")]), "<!-- added from layout -->\n\n## NASA")
+        self.assertEqual(lib.page_markdown("  ", []), "")
+
+    def test_join_pages(self):
+        self.assertEqual(lib.join_pages(["Jedna."]), "Jedna.\n")
+        self.assertEqual(lib.join_pages(["Jedna.", "", "Tri."]), "<!-- page 1 -->\n\nJedna.\n\n<!-- page 2 -->\n\n<!-- page 3 -->\n\nTri.\n")
+        self.assertEqual(lib.join_pages(["", " "]), "<!-- no text found -->\n")
+        self.assertEqual(lib.join_pages([]), "<!-- no text found -->\n")
+
+
+class OutputTest(unittest.TestCase):
+    def test_meta_holds_only_scalars(self):
+        meta = lib.output_meta("ocr", "image", 1, 0, "Text\n", 2, 12.345, 2400, "2.151.1")
+        self.assertEqual(meta, {"path": "ocr", "kind": "image", "pages": 1, "tables": 0, "characters": 5, "added_regions": 2,
+                                "seconds": 12.3, "peak_vram_mib": 2400, "docling": "2.151.1",
+                                "ocr_model_repo": "PaddlePaddle/PaddleOCR-VL-1.6", "ocr_revision": "132c45f52c0a26ed5a6b2f6bd8e3985794cc27dd"})
+        text = lib.output_meta("text", "docx", 0, 3, "| a |\n", None, 0.04, 0, "2.151.1")
+        self.assertNotIn("ocr_model_repo", text)
+        self.assertNotIn("added_regions", text)
+        for value in list(meta.values()) + list(text.values()):
+            self.assertIsInstance(value, (str, int, float))
+
+    def test_no_text_counts_zero_characters(self):
+        self.assertEqual(lib.output_meta("ocr", "image", 1, 0, lib.NO_TEXT + "\n", 0, 1.0, 1, "x")["characters"], 0)
+
+    def test_outputs_json(self):
+        meta = {"path": "text"}
+        self.assertEqual(lib.outputs_json(meta), {"document.md": {"meta": meta}, "document.json": {"meta": {"format": "DoclingDocument"}}})
+
+
 if __name__ == "__main__":
     unittest.main()

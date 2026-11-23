@@ -93,3 +93,110 @@ def page_problem(path, pages):
         return None
     scanned = "scanned " if path == "ocr" else ""
     return f"the document has {pages} pages and one job reads at most {limit} {scanned}pages: split the document into several jobs"
+
+
+# --- The OCR path: fill-in from the layout (spec § 4.4) and the outputs (spec § 4.5, § 5).
+
+FULL_PAGE_TOKENS = 4096
+REGION_PENALTY = 1.05
+CROP_SCALE = 2.0
+CROP_PAD = 4
+CROP_MIN = 8
+FILL_FOUND = 0.5
+FILL_LABELS = ("text", "section_header", "title", "list_item", "caption", "page_header", "page_footer", "picture")
+HEADING_LABELS = ("section_header", "title")
+NO_TEXT = "<!-- no text found -->"
+ADDED = "<!-- added from layout -->"
+OCR_MODEL_REPO = "PaddlePaddle/PaddleOCR-VL-1.6"
+OCR_REVISION = "132c45f52c0a26ed5a6b2f6bd8e3985794cc27dd"
+BACKSLASH = chr(92)
+LATEX_MARKS = (BACKSLASH + "(", BACKSLASH + "[", BACKSLASH + "frac", BACKSLASH + "Left", BACKSLASH + "right")
+
+
+def words(text):
+    return re.findall(r"\w+", text.lower())
+
+
+def token_limit(width, height):
+    """At most about one character per 12 x 20 px of a crop at scale 2: a QR code or an icon cannot loop for long."""
+    return max(16, min(1024, int(width * height / (12 * 20) / 3)))
+
+
+def is_junk(text):
+    """A region's text that is not worth adding: under 3 letters (an icon read as "Q") or LaTeX (an arrow icon)."""
+    return sum(1 for ch in text if ch.isalpha()) < 3 or any(mark in text for mark in LATEX_MARKS)
+
+
+def reading_order(clusters):
+    """The layout regions worth reading, top to bottom (in 8-point bands) and left to right."""
+    kept = [(label, bbox) for label, bbox in clusters if label in FILL_LABELS]
+    return sorted(kept, key=lambda c: (int(c[1][1] // 8), c[1][0]))
+
+
+def crop_box(bbox, scale, width, height):
+    """The pixel box of a region (page coordinates, top-left origin) in the page image at `scale`, padded and clipped;
+    None when it is narrower or lower than CROP_MIN pixels."""
+    left, top, right, bottom = bbox
+    box = (max(0, round(left * scale - CROP_PAD)), max(0, round(top * scale - CROP_PAD)),
+           min(width, round(right * scale + CROP_PAD)), min(height, round(bottom * scale + CROP_PAD)))
+    if box[2] - box[0] < CROP_MIN or box[3] - box[1] < CROP_MIN:
+        return None
+    return box
+
+
+def fill_in(page_text, regions):
+    """The regions (label, text) whose words the page's text mostly misses, each added once, junk left out."""
+    have = Counter(words(page_text))
+    added = []
+    for label, text in regions:
+        text = text.strip()
+        if is_junk(text):
+            continue
+        found = words(text)
+        if not found:
+            continue
+        if sum((Counter(found) & have).values()) / len(found) < FILL_FOUND:
+            added.append((label, text))
+            have.update(found)
+    return added
+
+
+def paragraphs(text):
+    return [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
+
+
+def page_markdown(text, added):
+    """A page of the OCR path: the model's text, then the added regions under a marker (their place is not known)."""
+    parts = [text.strip()] if text.strip() else []
+    if added:
+        parts.append(ADDED)
+        parts += [("## " + t) if label in HEADING_LABELS else t for label, t in added]
+    return "\n\n".join(parts)
+
+
+def join_pages(pages):
+    """document.md: one page as it is, several under <!-- page N --> markers, nothing at all as NO_TEXT."""
+    if not any(p.strip() for p in pages):
+        return NO_TEXT + "\n"
+    if len(pages) == 1:
+        return pages[0].strip() + "\n"
+    blocks = []
+    for i, page in enumerate(pages, 1):
+        blocks.append(f"<!-- page {i} -->" + ("\n\n" + page.strip() if page.strip() else ""))
+    return "\n\n".join(blocks) + "\n"
+
+
+def output_meta(path, kind, pages, tables, markdown, added, seconds, peak_vram_mib, docling):
+    """The meta of document.md in outputs.json: scalars only (spec § 5)."""
+    meta = {"path": path, "kind": kind, "pages": pages, "tables": tables,
+            "characters": 0 if markdown.strip() == NO_TEXT else len(markdown)}
+    if path == "ocr":
+        meta["added_regions"] = added
+    meta.update({"seconds": round(seconds, 1), "peak_vram_mib": peak_vram_mib, "docling": docling})
+    if path == "ocr":
+        meta.update({"ocr_model_repo": OCR_MODEL_REPO, "ocr_revision": OCR_REVISION})
+    return meta
+
+
+def outputs_json(meta):
+    return {"document.md": {"meta": meta}, "document.json": {"meta": {"format": "DoclingDocument"}}}

@@ -51,6 +51,12 @@ class PinsTest(unittest.TestCase):
         self.assertEqual(common.library_env()["HF_HUB_OFFLINE"], "1")
 
 
+    def test_parse_lib_names_the_pinned_ocr_model(self):
+        import parse_lib
+        self.assertEqual(parse_lib.OCR_MODEL_REPO, common.PADDLE_REPO)
+        self.assertEqual(parse_lib.OCR_REVISION, common.PADDLE_REVISION)
+
+
 class HelpersTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
