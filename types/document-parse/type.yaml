@@ -18,7 +18,7 @@ params:
       description: >-
         auto reads a PDF's text layer and uses OCR only where there is none; always reads every PDF page as an image
         (for PDFs whose text layer is garbled).
-max_runtime: 1h
+max_runtime: 3h
 tools: [python]
 setup: ["{tool.python}", "{pack}/scripts/setup.py"]
 check: ["{python}", "{pack}/scripts/check.py"]

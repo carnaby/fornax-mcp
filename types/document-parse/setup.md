@@ -41,7 +41,8 @@ fewer than 10 (a page number or a short stamp counts as no text). A PDF with onl
 path, where RapidOCR reads those pages; send `ocr: always` to read the whole PDF with PaddleOCR-VL instead (also for a
 scan whose every page carries a longer stamp, such as the name of the scanning app).
 
-Limits: 200 MB per file, 1000 pages on the text path, 200 pages on the OCR path (split larger documents).
+Limits: 200 MB per file, 1000 pages on the text path, 200 pages on the OCR path (split larger documents), 3 hours
+per job (a dense scanned page takes about 20 s).
 
 ## Output
 

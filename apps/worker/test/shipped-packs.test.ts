@@ -112,7 +112,7 @@ describe('built-in type packs', () => {
 
   test('document-parse: contract, tools and commands', () => {
     const pack = loadPack(shippedPack('document-parse')!);
-    expect(pack.contract).toMatchObject({ name: 'document-parse', version: 1, max_runtime_s: 3600 });
+    expect(pack.contract).toMatchObject({ name: 'document-parse', version: 1, max_runtime_s: 10800 });
     expect(pack.contract).not.toHaveProperty('default_priority');
     expect(Object.keys(pack.contract.inputs)).toEqual(['document']);
     expect(pack.contract.inputs.document).toMatchObject({
