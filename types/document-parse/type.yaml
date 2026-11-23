@@ -1,0 +1,26 @@
+name: document-parse
+version: 1
+description: >-
+  Turn a document into Markdown and Docling JSON: PDF, DOCX, XLSX, PPTX, HTML, CSV, Markdown, or an image (scan,
+  photo, screenshot). Text-layer PDFs and Office files are read exactly, with tables; images and PDFs without a text
+  layer go through OCR on the GPU (PaddleOCR-VL, about 3 GB). The outputs are document.md and document.json.
+inputs:
+  document:
+    extensions: [.pdf, .docx, .xlsx, .pptx, .html, .htm, .csv, .md, .png, .jpg, .jpeg, .webp, .tif, .tiff, .bmp]
+    max_mb: 200
+params:
+  type: object
+  additionalProperties: false
+  properties:
+    ocr:
+      enum: [auto, always]
+      default: auto
+      description: >-
+        auto reads a PDF's text layer and uses OCR only where there is none; always reads every PDF page as an image
+        (for PDFs whose text layer is garbled).
+max_runtime: 1h
+tools: [python]
+setup: ["{tool.python}", "{pack}/scripts/setup.py"]
+check: ["{python}", "{pack}/scripts/check.py"]
+run: ["{python}", "{pack}/scripts/run.py", "--params", "{params_json}", "--document", "{input.document}",
+      "--out", "{out}", "--work", "{work}"]

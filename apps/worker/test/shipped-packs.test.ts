@@ -110,7 +110,31 @@ describe('built-in type packs', () => {
     expect(expandArgv(pack.impl.check!, { pack: '/p', tools, platform: 'linux' })).toEqual(['/p/env/bin/python', '/p/scripts/check.py', '--ffmpeg', 'ff']);
   });
 
+  test('document-parse: contract, tools and commands', () => {
+    const pack = loadPack(shippedPack('document-parse')!);
+    expect(pack.contract).toMatchObject({ name: 'document-parse', version: 1, max_runtime_s: 3600 });
+    expect(pack.contract).not.toHaveProperty('default_priority');
+    expect(Object.keys(pack.contract.inputs)).toEqual(['document']);
+    expect(pack.contract.inputs.document).toMatchObject({
+      extensions: ['.pdf', '.docx', '.xlsx', '.pptx', '.html', '.htm', '.csv', '.md', '.png', '.jpg', '.jpeg', '.webp', '.tif', '.tiff', '.bmp'],
+      max_mb: 200,
+    });
+    const props = pack.contract.params.properties;
+    expect(Object.keys(props)).toEqual(['ocr']);
+    expect(props.ocr).toMatchObject({ enum: ['auto', 'always'], default: 'auto' });
+    expect(pack.contract.description.length).toBeLessThanOrEqual(500);
+    expect(pack.impl.tools).toEqual(['python']);
+    const tools = { python: 'py' };
+    const withDoc = { ...job, inputs: { document: '/w/in/document.pdf' } };
+    expect(expandArgv(pack.impl.run, { pack: '/p', tools, job: withDoc, platform: 'linux' })).toEqual([
+      '/p/env/bin/python', '/p/scripts/run.py', '--params', '/w/work/params.json', '--document', '/w/in/document.pdf',
+      '--out', '/w/out', '--work', '/w/work',
+    ]);
+    expect(expandArgv(pack.impl.setup!, { pack: '/p', tools, platform: 'linux' })).toEqual(['py', '/p/scripts/setup.py']);
+    expect(expandArgv(pack.impl.check!, { pack: '/p', tools, platform: 'linux' })).toEqual(['/p/env/bin/python', '/p/scripts/check.py']);
+  });
+
   test('the prompt for a new type gets every built-in pack as an example', () => {
-    expect(shippedExamples().map((e) => e.name)).toEqual(['lease', 'render', 'transcribe', 'tts', 'upscale']);
+    expect(shippedExamples().map((e) => e.name)).toEqual(['document-parse', 'lease', 'render', 'transcribe', 'tts', 'upscale']);
   });
 });
