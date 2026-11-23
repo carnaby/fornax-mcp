@@ -7,6 +7,7 @@ from collections import Counter
 
 LIMIT_PAGES = {"text": 1000, "ocr": 200}
 SCAN_CHARS_PER_PAGE = 50
+EMPTY_PAGE_CHARS = 10  # fewer characters than this: a page without text (a page number, a short stamp)
 KINDS = {
     ".pdf": "pdf", ".docx": "docx", ".xlsx": "xlsx", ".pptx": "pptx", ".html": "html", ".htm": "html", ".csv": "csv",
     ".md": "md", ".png": "image", ".jpg": "image", ".jpeg": "image", ".webp": "image", ".tif": "image",
@@ -82,7 +83,7 @@ def choose_path(kind, ocr, chars_per_page):
     if not pages:
         return "text"
     average = sum(chars_per_page) / pages
-    empty = sum(1 for n in chars_per_page if n == 0)
+    empty = sum(1 for n in chars_per_page if n < EMPTY_PAGE_CHARS)
     return "ocr" if average < SCAN_CHARS_PER_PAGE and empty * 2 >= pages else "text"
 
 

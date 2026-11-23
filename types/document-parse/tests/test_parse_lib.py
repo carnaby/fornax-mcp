@@ -70,6 +70,12 @@ class PathTest(unittest.TestCase):
         self.assertEqual(lib.choose_path("pdf", "auto", [0, 3, 0, 3]), "ocr")
         self.assertEqual(lib.choose_path("pdf", "auto", [0, 0, 0]), "ocr")
 
+    def test_a_page_number_on_every_page_of_a_scan_is_still_a_scan(self):
+        # A page with fewer than 10 characters (a page number, a short stamp) counts as a page without text.
+        self.assertEqual(lib.choose_path("pdf", "auto", [3] * 10), "ocr")
+        self.assertEqual(lib.choose_path("pdf", "auto", [9, 2, 5]), "ocr")
+        self.assertEqual(lib.choose_path("pdf", "auto", [10, 12, 11]), "text")
+
     def test_a_mixed_pdf_stays_on_the_text_path(self):
         # Mostly text with a scanned appendix: average over 50 -> text path (RapidOCR reads the scanned pages).
         self.assertEqual(lib.choose_path("pdf", "auto", [2000, 2000, 0, 0]), "text")
