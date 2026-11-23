@@ -80,6 +80,16 @@ class FilesTest(unittest.TestCase):
                 setup.ensure_files(self.dir / "omnivoice", self.files, "https://example.com/m/", broken)
             self.assertEqual(list((self.dir / "omnivoice").rglob("*.part")), [])
 
+    def test_a_local_error_while_downloading_is_not_a_download_that_broke_off(self):
+        def full(url, dest):
+            Path(dest).write_bytes(b"partial")
+            raise OSError(28, "No space left on device")
+
+        with self.assertRaisesRegex(OSError, r"No space left on device") as raised:
+            setup.ensure_files(self.dir / "omnivoice", self.files, "https://example.com/m/", full)
+        self.assertNotIsInstance(raised.exception, setup.SetupError)
+        self.assertEqual(list((self.dir / "omnivoice").rglob("*.part")), [])
+
 
 class BootstrapTest(unittest.TestCase):
     def setUp(self):
