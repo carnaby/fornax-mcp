@@ -1,6 +1,7 @@
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
@@ -17,11 +18,18 @@ class ParamsTest(unittest.TestCase):
         for data, sentence in ((b"{text", r"^params\.json does not hold valid parameters \(JSONDecodeError: "),
                                (b"[1, 2]", r"^params\.json does not hold valid parameters \(an object is expected, not list\)$"),
                                (bytes([0xFF, 0xFE, 0x7B, 0x7D]), r"^params\.json does not hold valid parameters \(UnicodeDecodeError: "),
-                               (b"[" * 100_000, r"^params\.json does not hold valid parameters \(RecursionError: "),
+                               # How deep json reads depends on the stack (Python 3.14 guards C recursion by stack size).
+                               (b"[" * 100_000, r"^params\.json does not hold valid parameters \((RecursionError|JSONDecodeError): "),
                                (b'{"ocr": "never"}', r"^ocr must be auto or always, not 'never'$"),
                                (b'{"ocr": 1}', r"^ocr must be auto or always, not 1$")):
             with self.subTest(data=data[:20]), self.assertRaisesRegex(Rejected, sentence):
                 lib.read_params(data)
+
+    def test_json_nested_deeper_than_the_stack_is_rejected(self):
+        deep = RecursionError("maximum recursion depth exceeded")
+        with mock.patch.object(lib.json, "loads", side_effect=deep):
+            with self.assertRaisesRegex(Rejected, r"^params\.json does not hold valid parameters \(RecursionError: "):
+                lib.read_params(b"[[[")
 
 
 class KindTest(unittest.TestCase):
