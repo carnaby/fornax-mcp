@@ -36,6 +36,15 @@ def failure_text(error, failed):
     return f"{failed} ({what})"
 
 
+def conversion_problem(status, messages):
+    """None when Docling converted every page; otherwise a sentence (Docling drops a failed page and reports
+    partial_success without raising, which must not pass as a whole document)."""
+    if status == "success":
+        return None
+    problem = f"Docling read only part of the document ({status})"
+    return f"{problem}: {'; '.join(messages)}" if messages else problem
+
+
 def read_params(data):
     """The checked `ocr` value of params.json (the worker fills in the default, but it is not relied on)."""
     try:

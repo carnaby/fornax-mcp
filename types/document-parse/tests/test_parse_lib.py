@@ -102,6 +102,14 @@ class TextTest(unittest.TestCase):
         oom = type("OutOfMemoryError", (RuntimeError,), {})("CUDA out of memory. Tried to allocate 2.00 GiB")
         self.assertTrue(lib.failure_text(oom, "x").startswith("the card ran out of memory (OutOfMemoryError: CUDA out of memory."))
 
+    def test_a_conversion_that_lost_pages_is_a_failure(self):
+        # Docling drops a page that failed (e.g. TableFormer out of memory) and reports partial_success without raising.
+        self.assertIsNone(lib.conversion_problem("success", []))
+        problem = lib.conversion_problem("partial_success", ["Page 17: CUDA out of memory.", "Page 18: boom"])
+        self.assertEqual(problem, "Docling read only part of the document (partial_success): Page 17: CUDA out of memory.; Page 18: boom")
+        self.assertTrue(lib.failure_text(RuntimeError(problem), "x").startswith("the card ran out of memory"))
+        self.assertEqual(lib.conversion_problem("failure", []), "Docling read only part of the document (failure)")
+
 
 class FillInTest(unittest.TestCase):
     def test_words_are_lowercase_word_characters(self):

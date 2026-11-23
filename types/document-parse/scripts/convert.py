@@ -106,7 +106,11 @@ class TextConverter:
         self.converter = DocumentConverter(format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=options)})
 
     def convert(self, path):
-        doc = self.converter.convert(str(path)).document
+        result = self.converter.convert(str(path))
+        problem = lib.conversion_problem(result.status.value, [e.error_message for e in result.errors])
+        if problem:
+            raise RuntimeError(problem)
+        doc = result.document
         return doc.export_to_markdown(), doc.export_to_dict(), len(doc.pages), len(doc.tables)
 
 
