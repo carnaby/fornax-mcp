@@ -86,7 +86,7 @@ describe('get_output', () => {
   });
 
   test('text and JSON up to 60 kB come back as text; larger ones and other files as a link', async () => {
-    const job = await jobWith([['result.json', '{"words": 3}'], ['big.txt', 'x'.repeat(60_001)], ['clip.mp4', 'MP4'], ['log.txt', 'all good', 'log']]);
+    const job = await jobWith([['result.json', '{"words": 3}'], ['document.md', '# Nadpis'], ['big.txt', 'x'.repeat(60_001)], ['clip.mp4', 'MP4'], ['log.txt', 'all good', 'log']]);
     await job.complete();
     const client = await mcp.connect('/mcp', bearerHeader(job.alice));
     const get = (name: string) => callTool(client, 'get_output', { job_id: job.id, name });
@@ -94,6 +94,8 @@ describe('get_output', () => {
     const json = await get('result.json');
     expect(json.blocks.map((b) => b.type)).toEqual(['text', 'text']);
     expect(json.blocks[1]!.text).toBe('{"words": 3}');
+    const markdown = await get('document.md');
+    expect(markdown.blocks[1]).toEqual({ type: 'text', text: '# Nadpis' });
     const log = await get('log.txt');
     expect(log.blocks[1]).toEqual({ type: 'text', text: 'all good' });
 
