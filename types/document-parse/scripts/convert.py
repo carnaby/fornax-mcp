@@ -75,20 +75,40 @@ def _open_image(path):
         raise lib.Rejected(f"the document is not a readable image ({lib.one_line(e)})") from None
 
 
+def rgb(image):
+    """An image as RGB with its transparent parts white: convert("RGB") alone turns them black, and black text on a
+    transparent background would read as no text."""
+    from PIL import Image
+
+    if image.mode in ("RGBA", "LA", "PA") or (image.mode in ("1", "L", "P", "RGB") and "transparency" in image.info):
+        rgba = image.convert("RGBA")
+        white = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+        return Image.alpha_composite(white, rgba).convert("RGB")
+    return image.convert("RGB")
+
+
 def image_frames(path):
-    """The number of pages of an image (a multi-page TIFF has several)."""
+    """The number of pages of an image (a multi-page TIFF has several). Every frame is read once here, so a cut-off or
+    broken file is refused (exit 2) before any model loads."""
+    from PIL import Image, ImageSequence
+
     with _open_image(path) as image:
+        try:
+            for frame in ImageSequence.Iterator(image):
+                frame.load()
+        except (Image.DecompressionBombError, OSError, SyntaxError, EOFError, ValueError) as e:
+            raise lib.Rejected(f"the document is not a readable image ({lib.one_line(e)})") from None
         return getattr(image, "n_frames", 1)
 
 
 def image_pages(path):
-    """Each frame of an image as an RGB image, one at a time, turned the way its EXIF orientation says (a phone stores
-    an upright photo as landscape pixels plus an orientation tag)."""
+    """Each frame of an image as an RGB image (transparency on white), one at a time, turned the way its EXIF
+    orientation says (a phone stores an upright photo as landscape pixels plus an orientation tag)."""
     from PIL import ImageOps, ImageSequence
 
     with _open_image(path) as image:
         for frame in ImageSequence.Iterator(image):
-            yield ImageOps.exif_transpose(frame).convert("RGB")
+            yield rgb(ImageOps.exif_transpose(frame))
 
 
 class TextConverter:
@@ -148,7 +168,7 @@ class Layout:
         for label, bbox in lib.reading_order(clusters):
             box = lib.crop_box(bbox, lib.CROP_SCALE, big.width, big.height)
             if box:
-                out.append((label, big.crop(box).convert("RGB")))
+                out.append((label, rgb(big.crop(box))))
         return out
 
 
