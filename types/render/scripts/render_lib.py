@@ -96,3 +96,16 @@ def first_file_strip(strip_types):
 def environment_line(version_string, kind, names):
     """The check's line for list_job_types (types/README.md): Blender's version, the Cycles device and the GPUs."""
     return f"fornax-environment: Blender {version_string}, Cycles on {kind} ({', '.join(names)})"
+
+
+def gpu_settings(scene):
+    """Cycles settings that keep the work on the card: the denoiser on the GPU (it runs on the CPU otherwise, and
+    the CPU of a small PC becomes the bottleneck) and persistent data (the scene is not rebuilt for every frame).
+    Returns what was set, for the log."""
+    done = []
+    if hasattr(scene.cycles, "denoising_use_gpu"):
+        scene.cycles.denoising_use_gpu = True
+        done.append("denoising on the GPU")
+    scene.render.use_persistent_data = True
+    done.append("persistent data")
+    return done

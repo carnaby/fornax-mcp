@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import bpy  # noqa: E402
 from blender_gpu import enable_gpu  # noqa: E402
-from render_lib import FILE_FORMATS, InvalidParams, first_file_strip, first_refused_node, frame_name, frames, outputs_entry, preview_name, preview_size, progress_line, script_args  # noqa: E402
+from render_lib import FILE_FORMATS, InvalidParams, first_file_strip, first_refused_node, frame_name, frames, gpu_settings, outputs_entry, preview_name, preview_size, progress_line, script_args  # noqa: E402
 
 
 def leave(code, message):
@@ -178,7 +178,6 @@ def main():
     kind, names = enable_gpu()
     if kind is None:
         leave(3, "Cycles finds no GPU (OptiX, CUDA, HIP, oneAPI or Metal); check the driver, then fornax doctor render")
-    print(f"render: Cycles on {kind}: {', '.join(names)}", file=sys.stderr, flush=True)
 
     muted = mute_file_outputs()
     print(f"render: muted {muted} File Output node(s)", file=sys.stderr, flush=True)
@@ -195,6 +194,8 @@ def main():
     scene.render.use_multiview = False
     scene.render.engine = "CYCLES"
     scene.cycles.device = "GPU"
+    on_card = gpu_settings(scene)
+    print(f"render: Cycles on {kind} ({', '.join(names)}); {'; '.join(on_card)}", file=sys.stderr, flush=True)
     samples = params.get("samples", 128)
     scene.cycles.samples = samples
     fmt = params.get("format", "png")
