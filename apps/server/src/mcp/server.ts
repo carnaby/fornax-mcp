@@ -13,6 +13,7 @@ import type { Identity } from '../domain/tokens.js';
 import { workerOnline } from '../domain/worker-state.js';
 import type { RouteDeps } from '../http/deps.js';
 import { resultUrl } from '../http/links.js';
+import { OUTPUTS_PAGE, outputsSummary, pageOutputs } from './job-outputs.js';
 import { outputBlocks } from './output.js';
 import { createUploadDescription, SERVER_INSTRUCTIONS, TOOL_DESCRIPTIONS as D, TOOL_TITLES as T } from './text.js';
 import type { Block, ToolResult } from './types.js';
@@ -123,16 +124,20 @@ export function buildMcpServer(ctx: McpContext): McpServer {
           .number().int().min(0).max(MAX_MCP_JOB_WAIT_S).optional()
           .describe('With change: wait up to this many seconds for the job to change; 0 or none answers at once.'),
         change: z.string().max(64).optional().describe('The change value of your previous get_job answer.'),
+        outputs_offset: z.number().int().min(0).max(100_000).optional().describe('The first output to list (outputs_next_offset of the previous answer); 0 when left out.'),
+        outputs_limit: z.number().int().min(1).max(200).optional().describe(`How many outputs to list; ${OUTPUTS_PAGE} when left out.`),
       }),
     },
-    ({ job_id, wait_seconds, change }, sdk) =>
-      runJson(ctx, (me) => {
+    ({ job_id, wait_seconds, change, outputs_offset, outputs_limit }, sdk) =>
+      runJson(ctx, async (me) => {
         const read = () => {
           const row = getOwnJob(db, me.tokenId, job_id);
           return { ...jobDetail(db, deps.config, row, deps.clock()), result_url: resultUrl(deps, row) };
         };
-        // The request's signal ends the wait when the client cancels or the connection closes.
-        return waitForJobChange(read, change, (wait_seconds ?? 0) * 1000, sdk.mcpReq.signal);
+        // The request's signal ends the wait when the client cancels or the connection closes. The change is the job's
+        // own (computed before paging), so every page of the same job waits the same way.
+        const view = await waitForJobChange(read, change, (wait_seconds ?? 0) * 1000, sdk.mcpReq.signal);
+        return pageOutputs(view, outputs_offset ?? 0, outputs_limit ?? OUTPUTS_PAGE);
       }),
   );
 
@@ -162,7 +167,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
         limit: z.number().int().min(1).max(200).default(20),
       }),
     },
-    (a) => runJson(ctx, (me) => ({ jobs: listJobs(db, me.tokenId, a).map((r) => jobView(db, r)) })),
+    (a) => runJson(ctx, (me) => ({ jobs: listJobs(db, me.tokenId, a).map((r) => ({ ...outputsSummary(jobView(db, r)), result_url: resultUrl(deps, r) })) })),
   );
 
   server.registerTool('cancel_job', { title: T.cancel_job, description: D.cancel_job, annotations: CANCELS, inputSchema: z.object({ job_id: jobId }) }, ({ job_id }) =>
