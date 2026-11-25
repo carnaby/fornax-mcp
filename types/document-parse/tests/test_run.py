@@ -160,6 +160,18 @@ class TextPathTest(RunCase):
         self.assertEqual(self.markdown(), "# Zmluva\n\nText.\n")
         self.assertEqual(self.meta()["characters"], len("# Zmluva\n\nText.\n"))
 
+    def test_a_presentation_of_pictures_only(self):
+        code, _, err = self.run_job(self.doc("a.pptx", DOCX), behavior={"markdown": "<!-- image -->\n\n<!-- image -->", "tables": 0})
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.markdown(), "<!-- image -->\n\n<!-- image -->\n\n<!-- no text found -->\n")
+        self.assertEqual(self.meta()["characters"], 0)
+
+    def test_a_docx_with_a_password_is_refused_before_docling(self):
+        ole2 = bytes([0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1]) + b"made up"
+        code, _, err = self.run_job(self.doc("a.docx", ole2))
+        self.assertEqual((code, last_line(err)), (2, "document-parse: the file is protected by a password or is an old Office format: send it without a password, saved as .docx, .xlsx or .pptx"))
+        self.assertEqual(self.outputs(), [])
+
     def test_a_document_without_text_on_the_text_path(self):
         code, _, err = self.run_job(self.doc("a.docx", DOCX), behavior={"markdown": "", "tables": 0})
         self.assertEqual(code, 0, err)

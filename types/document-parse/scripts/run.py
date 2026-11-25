@@ -95,7 +95,7 @@ def write_outputs(out, files):
             part.write_text(text, encoding="utf-8", newline="\n")
         for part, dest, _text in parts:
             os.replace(part, dest)
-    except OSError:
+    except BaseException:  # any failure, Ctrl+C included: no half set of outputs
         for part, dest, _text in parts:
             for path in (part, dest):
                 try:
@@ -148,8 +148,7 @@ def main(argv=None):
         return broken_environment(e)
     except Exception as e:  # out of memory, a model or Docling failing: retried
         return fail(FAILED, lib.failure_text(e, "converting the document failed"))
-    # Docling's Markdown ends without a newline: every document.md ends with exactly one.
-    markdown = (markdown.rstrip() if markdown.strip() else lib.NO_TEXT) + "\n"
+    markdown = lib.finish_markdown(markdown)
     meta = lib.output_meta(path, kind, pages, tables, markdown, added, time.monotonic() - started, vram, docling_version())
     try:
         write_outputs(a.out, {

@@ -17,6 +17,9 @@ OCR_MODES = ("auto", "always")
 PDF_MAGIC = b"%PDF-"
 ZIP_MAGIC = bytes([0x50, 0x4B, 0x03, 0x04])
 OFFICE = ("docx", "xlsx", "pptx")
+OLE2_MAGIC = bytes([0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1])
+PROTECTED_OFFICE = ("the file is protected by a password or is an old Office format: send it without a password, saved as "
+                    ".docx, .xlsx or .pptx")
 
 
 class Rejected(Exception):
@@ -75,6 +78,8 @@ def content_problem(kind, head):
         return "the document is empty"
     if kind == "pdf" and PDF_MAGIC not in head[:1024]:
         return "the document is not a readable PDF file"
+    if kind in OFFICE and head.startswith(OLE2_MAGIC):
+        return PROTECTED_OFFICE  # Office encrypts into an OLE2 file; a renamed .doc/.xls/.ppt looks the same
     if kind in OFFICE and not head.startswith(ZIP_MAGIC):
         return f"the document is not a readable {kind.upper()} file"
     return None
@@ -117,6 +122,7 @@ FILL_LABELS = ("text", "section_header", "title", "list_item", "caption", "page_
 HEADING_LABELS = ("section_header", "title")
 KEPT_LABELS = ("list_item", "caption", "page_header", "page_footer")
 NO_TEXT = "<!-- no text found -->"
+IMAGE_MARK = "<!-- image -->"
 ADDED = "<!-- added from layout -->"
 OCR_MODEL_REPO = "PaddlePaddle/PaddleOCR-VL-1.6"
 OCR_REVISION = "132c45f52c0a26ed5a6b2f6bd8e3985794cc27dd"
@@ -215,10 +221,24 @@ def join_pages(pages):
     return "\n\n".join(blocks) + "\n"
 
 
+def has_text(markdown):
+    """Whether Markdown holds any text besides Docling's image placeholders and the no-text marker."""
+    return bool(markdown.replace(IMAGE_MARK, "").replace(NO_TEXT, "").strip())
+
+
+def finish_markdown(markdown):
+    """document.md as written: it ends with exactly one newline; without any text it ends with NO_TEXT, after the image
+    placeholders (they stay: the reader sees there were pictures)."""
+    text = markdown.rstrip()
+    if has_text(text) or text.endswith(NO_TEXT):
+        return text + "\n"
+    return (text + "\n\n" + NO_TEXT if text else NO_TEXT) + "\n"
+
+
 def output_meta(path, kind, pages, tables, markdown, added, seconds, peak_vram_mib, docling):
     """The meta of document.md in outputs.json: scalars only (spec § 5)."""
     meta = {"path": path, "kind": kind, "pages": pages, "tables": tables,
-            "characters": 0 if markdown.strip() == NO_TEXT else len(markdown)}
+            "characters": len(markdown) if has_text(markdown) else 0}
     if path == "ocr":
         meta["added_regions"] = added
     meta.update({"seconds": round(seconds, 1), "peak_vram_mib": peak_vram_mib, "docling": docling})

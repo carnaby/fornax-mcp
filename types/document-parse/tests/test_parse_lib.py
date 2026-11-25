@@ -40,6 +40,15 @@ class KindTest(unittest.TestCase):
         self.assertEqual(lib.kind_of("scan.JPEG"), "image")
         self.assertEqual(lib.kind_of("page.htm"), "html")
 
+    def test_an_encrypted_or_old_office_file_gets_the_password_sentence(self):
+        ole2 = bytes([0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1]) + b"rest"
+        sentence = "the file is protected by a password or is an old Office format: send it without a password, saved as .docx, .xlsx or .pptx"
+        for kind in ("docx", "xlsx", "pptx"):
+            with self.subTest(kind=kind):
+                self.assertEqual(lib.content_problem(kind, ole2), sentence)
+        self.assertEqual(lib.content_problem("pdf", ole2), "the document is not a readable PDF file")
+        self.assertEqual(lib.content_problem("docx", b"<html>"), "the document is not a readable DOCX file")
+
     def test_another_extension_is_refused(self):
         with self.assertRaisesRegex(Rejected, r"^documents of type \.doc are not supported: send \.bmp, \.csv, "):
             lib.kind_of("old.doc")
@@ -200,6 +209,20 @@ class MarkdownTest(unittest.TestCase):
         self.assertEqual(lib.join_pages(["Jedna.", "", "Tri."]), "<!-- page 1 -->\n\nJedna.\n\n<!-- page 2 -->\n\n<!-- page 3 -->\n\nTri.\n")
         self.assertEqual(lib.join_pages(["", " "]), "<!-- no text found -->\n")
         self.assertEqual(lib.join_pages([]), "<!-- no text found -->\n")
+
+
+    def test_finish_markdown(self):
+        self.assertEqual(lib.finish_markdown("# A\n\nText."), "# A\n\nText.\n")
+        self.assertEqual(lib.finish_markdown(""), lib.NO_TEXT + "\n")
+        self.assertEqual(lib.finish_markdown("  \n"), lib.NO_TEXT + "\n")
+        self.assertEqual(lib.finish_markdown(lib.NO_TEXT + "\n"), lib.NO_TEXT + "\n")
+        self.assertEqual(lib.finish_markdown("Text <!-- image -->"), "Text <!-- image -->\n")
+
+    def test_pictures_only_say_no_text_and_keep_the_placeholders(self):
+        md = lib.finish_markdown("<!-- image -->\n\n<!-- image -->\n")
+        self.assertEqual(md, "<!-- image -->\n\n<!-- image -->\n\n" + lib.NO_TEXT + "\n")
+        self.assertFalse(lib.has_text(md))
+        self.assertEqual(lib.output_meta("text", "pptx", 2, 0, md, None, 1.0, 0, "x")["characters"], 0)
 
 
 class OutputTest(unittest.TestCase):
