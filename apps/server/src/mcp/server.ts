@@ -14,7 +14,7 @@ import { workerOnline } from '../domain/worker-state.js';
 import type { RouteDeps } from '../http/deps.js';
 import { resultUrl } from '../http/links.js';
 import { outputBlocks } from './output.js';
-import { SERVER_INSTRUCTIONS, TOOL_DESCRIPTIONS as D, TOOL_TITLES as T } from './text.js';
+import { createUploadDescription, SERVER_INSTRUCTIONS, TOOL_DESCRIPTIONS as D, TOOL_TITLES as T } from './text.js';
 import type { Block, ToolResult } from './types.js';
 
 export const MCP_SERVER_VERSION = FORNAX_VERSION;
@@ -71,7 +71,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
     'create_upload',
     {
       title: T.create_upload,
-      description: D.create_upload,
+      description: createUploadDescription(deps.config.retention.orphanUploadMs),
       annotations: CREATES,
       inputSchema: z.object({
         name: z.string().min(1).max(500).describe('The file name with its extension, e.g. "scene.blend"; the job type decides which extensions an input accepts.'),

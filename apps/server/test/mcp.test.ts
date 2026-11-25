@@ -37,6 +37,7 @@ describe('the MCP endpoint', () => {
     expect(tools.find((x) => x.name === 'queue_status')!.description).toContain('worker.waiting');
     expect(tools.find((x) => x.name === 'queue_status')!.description).toContain('ahead');
     expect(tools.find((x) => x.name === 'queue_status')!.description).toContain('ahead is null');
+    expect(tools.find((x) => x.name === 'create_upload')!.description).toContain('A file that no job uses is deleted after 24 hours.');
     const ins = client.getInstructions() ?? '';
     expect(ins).toContain('environment');
     expect(tools.find((x) => x.name === 'list_job_types')!.description).toContain('environment');

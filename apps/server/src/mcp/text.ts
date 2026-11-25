@@ -30,6 +30,12 @@ export const TOOL_DESCRIPTIONS = {
     "The whole queue: how many jobs wait (queued), wait as idle until the worker's operator starts them (idle) and run, whether the worker is online, whether the worker's operator paused the queue (paused: the running job finishes, no other starts), and the running job (current): its type, label, who submitted it (agent, else the token's name in owner), progress and start time. ahead lists the waiting jobs in queue order (at most 20) with who submitted them, so you know whom to ask; with job_id, only the jobs before that job of yours, and ahead is null when that job has no place in the queue (it runs, has finished, is idle or its type is not offered). worker.waiting explains why nothing runs while jobs wait (e.g. other programs hold the GPU); its message says it in one sentence.",
 } as const;
 
+/** Spec 13 § 3: create_upload says how long the server keeps an upload no job uses (FORNAX_ORPHAN_UPLOAD_HOURS). */
+export function createUploadDescription(orphanUploadMs: number): string {
+  const hours = Math.round(orphanUploadMs / 3_600_000);
+  return `${TOOL_DESCRIPTIONS.create_upload} A file that no job uses is deleted after ${hours} ${hours === 1 ? 'hour' : 'hours'}.`;
+}
+
 /** Short names clients show for the tools. */
 export const TOOL_TITLES = {
   list_job_types: 'List job types',
