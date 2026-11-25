@@ -120,7 +120,6 @@ ADDED = "<!-- added from layout -->"
 OCR_MODEL_REPO = "PaddlePaddle/PaddleOCR-VL-1.6"
 OCR_REVISION = "132c45f52c0a26ed5a6b2f6bd8e3985794cc27dd"
 BACKSLASH = chr(92)
-LATEX_MARKS = (BACKSLASH + "(", BACKSLASH + "[", BACKSLASH + "frac", BACKSLASH + "Left", BACKSLASH + "right")
 
 
 def words(text):
@@ -132,9 +131,22 @@ def token_limit(width, height):
     return max(16, min(1024, int(width * height / (12 * 20) / 3)))
 
 
+def has_latex(text):
+    """Whether the text holds a LaTeX command (a backslash before a letter) or a LaTeX math opener; a backslash before
+    anything else (a Windows path, a lone backslash) is text."""
+    i = text.find(BACKSLASH)
+    while i >= 0:
+        after = text[i + 1:i + 2]
+        if (after.isascii() and after.isalpha()) or after in ("(", "["):
+            return True
+        i = text.find(BACKSLASH, i + 1)
+    return False
+
+
 def is_junk(text):
-    """A region's text that is not worth adding: under 3 letters (an icon read as "Q") or LaTeX (an arrow icon)."""
-    return sum(1 for ch in text if ch.isalpha()) < 3 or any(mark in text for mark in LATEX_MARKS)
+    """A region's text that is not worth adding: under 3 letters or digits (an icon read as "Q") or LaTeX (an arrow
+    icon read as a LaTeX arrow)."""
+    return sum(1 for ch in text if ch.isalnum()) < 3 or has_latex(text)
 
 
 def reading_order(clusters):

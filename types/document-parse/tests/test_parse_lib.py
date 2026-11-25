@@ -130,12 +130,19 @@ class FillInTest(unittest.TestCase):
 
     def test_junk(self):
         bs = chr(92)
-        for text in ("Q", "山", "", "  ", "☑" + bs + "(" + bs + "Leftrightarrow" + bs + ")☑", "12 34"):
+        junk = ("Q", "山", "", "  ", "12", "☑" + bs + "(" + bs + "Leftrightarrow" + bs + ")☑", "$" + bs + "Rightarrow$",
+                "$" + bs + "checkmark$", "$" + bs + "times$", "$" + bs + "leftarrow$ next", bs + "[x" + bs + "]")
+        for text in junk:
             with self.subTest(text=text):
                 self.assertTrue(lib.is_junk(text))
-        for text in ("NASA", "Открыть", "kde je najblizsia pekaren ?", "K7Q2048315500ZXB"):
+        kept = ("NASA", "Открыть", "kde je najblizsia pekaren ?", "K7Q2048315500ZXB", "12 34", "0905 123 456", "12.03.2026",
+                "14:30", "C:" + bs + " 10", "ab " + bs + " 2")
+        for text in kept:
             with self.subTest(text=text):
                 self.assertFalse(lib.is_junk(text))
+
+    def test_fill_in_adds_a_phone_number_the_page_misses(self):
+        self.assertEqual(lib.fill_in("Kontakt", [("text", "0905 123 456")]), [("text", "0905 123 456")])
 
     def test_reading_order_is_top_to_bottom_then_left_to_right_and_drops_tables(self):
         clusters = [("text", (300, 100, 400, 110)), ("table", (0, 50, 100, 60)), ("text", (10, 103, 50, 112)),
