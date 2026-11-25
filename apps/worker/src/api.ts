@@ -126,8 +126,10 @@ export class WorkerApi {
     await this.send('GET', '/ping', { signal });
   }
 
-  async announce(types: JobTypeContract[]): Promise<string[]> {
-    const res = await this.request('PUT', '/types', { json: { types } });
+  /** Spec 12 § 3.1: `environments` only when there is one (a server before 0.14.1 refuses the field). */
+  async announce(types: JobTypeContract[], environments?: Record<string, string>): Promise<string[]> {
+    const json = environments && Object.keys(environments).length ? { types, environments } : { types };
+    const res = await this.request('PUT', '/types', { json });
     return ((await res.json()) as { offered: string[] }).offered;
   }
 

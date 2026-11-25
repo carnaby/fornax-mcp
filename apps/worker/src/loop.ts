@@ -51,6 +51,10 @@ export type LoopOptions = {
 export async function runWorker(o: LoopOptions): Promise<number> {
   const backoff = o.backoffMs ?? BACKOFF;
   let offered = new Map<string, Pack>();
+  /** Spec 12: the environment line of each ready type, from its last check. */
+  let environments: Record<string, string> = {};
+  /** The fallback for a server before 0.14.1 was reported (once per process). */
+  let saidOldServer = false;
   let signature = '';
   const gate = o.gpu ? cardGate({ ...o.gpu, report: (w) => o.api.status(w, o.signal), out: o.out, signal: o.signal }) : null;
   /** The types after their last check; null before the first one. */
@@ -96,15 +100,29 @@ export async function runWorker(o: LoopOptions): Promise<number> {
   };
 
   const announce = async () => {
-    const names = await retrying(() => o.api.announce([...offered.values()].map((p) => p.contract)));
+    const types = [...offered.values()].map((p) => p.contract);
+    const lines = Object.fromEntries(Object.entries(environments).filter(([name]) => offered.has(name)));
+    const names = await retrying(async () => {
+      if (!Object.keys(lines).length) return o.api.announce(types);
+      try {
+        return await o.api.announce(types, lines);
+      } catch (e) {
+        // Spec 12 § 3.3: a server before 0.14.1 refuses the field (strict body): offer the types without it.
+        if (!(e instanceof ApiError) || e.status !== 400) throw e;
+        if (!saidOldServer) o.out('the server does not know type environments (it is older than this worker): offering the types without them; update the server');
+        saidOldServer = true;
+        return o.api.announce(types);
+      }
+    });
     o.out(names.length ? `offering: ${names.join(', ')}` : 'offering no job types; fornax doctor shows why');
   };
 
   const refresh = async () => {
     signature = packsSignature(o.paths.typesDir);
-    const { ready, problems } = await preparePacks(o.paths, o.tools, { timeoutMs: o.checkTimeoutMs, signal: o.signal });
+    const { ready, problems, environments: found } = await preparePacks(o.paths, o.tools, { timeoutMs: o.checkTimeoutMs, signal: o.signal });
     // Shutdown during the checks leaves some unchecked: never announce that reduced set (types are not withdrawn on stop).
     if (o.signal.aborted) return;
+    environments = found;
     for (const p of problems) o.out(`not offered: type pack ${p.name}: ${p.reason}`);
     offered = new Map(ready.map((p) => [p.contract.name, p]));
     checked = byName([...ready.map((p): TypeState => ({ name: p.contract.name, state: 'offered' })), ...problems.map(unavailable)]);

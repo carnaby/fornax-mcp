@@ -124,6 +124,47 @@ describe('runWorker', () => {
     expect(lines.at(-1)).toMatch(/does not accept this worker token/);
   });
 
+  test('the environment of a passing check reaches the clients (spec 12)', async () => {
+    const s = await startTestServer();
+    servers.push(s);
+    const paths = testPaths(tmp());
+    writeEchoPack(paths.typesDir, { check: ['{tool.node}', '-e', 'console.log("fornax-environment: Node fake 1.0")'] });
+    const api = new WorkerApi({ server: s.url, token: s.issueToken('pc', 'worker') });
+    expect(await runWorker({ api, paths, tools: NODE_TOOLS, out: () => undefined, signal: new AbortController().signal, once: true, claimWaitS: 0 })).toBe(0);
+    const res = await fetch(`${s.url}/api/types`, { headers: { authorization: `Bearer ${s.issueToken('alice')}` } });
+    const { types } = (await res.json()) as { types: { name: string; environment: string | null }[] };
+    expect(types).toEqual([expect.objectContaining({ name: 'echo', environment: 'Node fake 1.0' })]);
+  });
+
+  test('an older server that refuses environments still gets the types; the worker says so once (spec 12 § 3.3)', async () => {
+    const paths = testPaths(tmp());
+    writeEchoPack(paths.typesDir, { check: ['{tool.node}', '-e', 'console.log("fornax-environment: Node fake 1.0")'] });
+    const sent: (Record<string, string> | null)[] = [];
+    const old = {
+      announce: async (types: { name: string }[], environments?: Record<string, string>) => {
+        sent.push(environments ?? null);
+        if (environments) throw new ApiError(400, 'bad_request', 'invalid body: environments: unrecognized key');
+        return types.map((t) => t.name);
+      },
+      claim: async () => null,
+    } as unknown as LoopApi;
+    const lines: string[] = [];
+    const code = await runWorker({ api: old, paths, tools: NODE_TOOLS, out: (l) => lines.push(l), signal: new AbortController().signal, once: true, claimWaitS: 0 });
+    expect(code).toBe(0);
+    expect(sent).toEqual([{ echo: 'Node fake 1.0' }, null]);
+    expect(lines).toContain('offering: echo');
+    expect(lines.filter((l) => l.startsWith('the server does not know type environments'))).toHaveLength(1);
+  });
+
+  test('a pack without an environment line is announced in the old shape', async () => {
+    const paths = testPaths(tmp());
+    writeEchoPack(paths.typesDir);
+    const sent: unknown[] = [];
+    const api = { announce: async (types: { name: string }[], environments?: unknown) => (sent.push(environments), types.map((t) => t.name)), claim: async () => null } as unknown as LoopApi;
+    expect(await runWorker({ api, paths, tools: NODE_TOOLS, out: () => undefined, signal: new AbortController().signal, once: true, claimWaitS: 0 })).toBe(0);
+    expect(sent).toEqual([undefined]);
+  });
+
   test('stopping during the checks does not announce the reduced set', async () => {
     const { paths, out, say } = await setup();
     writeEchoPack(paths.typesDir, { name: 'stuck', check: ['{tool.node}', '-e', 'setInterval(() => 0, 1000)'] });
