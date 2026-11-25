@@ -10,6 +10,12 @@ import sys
 
 from common import DIARIZE_ENV, ENVIRONMENT, SCRIPTS, child_env, fail, setup_streams, venv_python
 
+# The worker stops a check after 120 s; together these stay under it. Speaker recognition loads PyTorch and pyannote:
+# with a cold bytecode cache (the first check after an update) that took 27 s on a fast PC, warm 7 s.
+FFMPEG_TIMEOUT_S = 10
+WHISPER_TIMEOUT_S = 30
+DIARIZE_TIMEOUT_S = 75
+
 
 def main():
     setup_streams()
@@ -17,12 +23,12 @@ def main():
     p.add_argument("--ffmpeg", required=True)
     args = p.parse_args()
     try:
-        ok = subprocess.run([args.ffmpeg, "-version"], capture_output=True, timeout=30).returncode == 0
+        ok = subprocess.run([args.ffmpeg, "-version"], capture_output=True, timeout=FFMPEG_TIMEOUT_S).returncode == 0
     except (OSError, subprocess.TimeoutExpired):
         ok = False
     if not ok:
         fail(ENVIRONMENT, "ffmpeg does not run: check tools.ffmpeg in worker.yaml")
-    r = subprocess.run([sys.executable, str(SCRIPTS / "whisper.py"), "--check"], capture_output=True, timeout=90, env=child_env())
+    r = subprocess.run([sys.executable, str(SCRIPTS / "whisper.py"), "--check"], capture_output=True, timeout=WHISPER_TIMEOUT_S, env=child_env())
     if r.returncode != 0:
         sys.stderr.write(r.stderr.decode("utf-8", "replace")[-2000:])
         fail(ENVIRONMENT, "faster-whisper does not load: run the setup again (see setup.md)")
@@ -40,7 +46,7 @@ def speakers():
         print("speaker recognition: not installed (see setup.md)")
         return None
     try:
-        d = subprocess.run([str(python), str(SCRIPTS / "diarize.py"), "--check"], capture_output=True, timeout=25)
+        d = subprocess.run([str(python), str(SCRIPTS / "diarize.py"), "--check"], capture_output=True, timeout=DIARIZE_TIMEOUT_S)
         info = json.loads(d.stdout) if d.returncode == 0 else None
     except (OSError, ValueError, subprocess.TimeoutExpired):
         info = None

@@ -22,5 +22,13 @@ class EnvironmentLineTest(unittest.TestCase):
                                  "fornax-environment: faster-whisper 1.2.0, CTranslate2 4.6.0; speaker recognition off")
 
 
+class TimeoutsTest(unittest.TestCase):
+    def test_the_steps_fit_the_workers_check_limit_and_speakers_get_the_most(self):
+        # The worker stops a check after 120 s. With a cold bytecode cache (the first check after an update, spec 12
+        # § 5.8) loading pyannote took 27 s on a fast PC: 25 s reported working speaker recognition as off.
+        self.assertLess(check.FFMPEG_TIMEOUT_S + check.WHISPER_TIMEOUT_S + check.DIARIZE_TIMEOUT_S, 120)
+        self.assertGreaterEqual(check.DIARIZE_TIMEOUT_S, 60)
+
+
 if __name__ == "__main__":
     unittest.main()
