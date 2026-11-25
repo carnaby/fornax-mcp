@@ -29,17 +29,21 @@ describe('built-in type packs', () => {
 
   test("render: Blender never runs the scene's scripts and is told which file the input is", () => {
     const pack = loadPack(shippedPack('render')!);
-    expect(pack.contract).toMatchObject({ name: 'render', version: 1, max_runtime_s: 6 * 3600 });
+    expect(pack.contract).toMatchObject({ name: 'render', version: 2, max_runtime_s: 6 * 3600 });
     expect(pack.contract.params.required).toEqual(['frame_start']);
-    expect(pack.impl.tools).toEqual(['blender']);
+    expect(pack.impl.tools).toEqual(['blender', 'ffmpeg']);
     expect(pack.impl.setup).toBeUndefined();
-    expect(expandArgv(pack.impl.run, { pack: '/p', tools: { blender: 'b' }, job, platform: 'linux' })).toEqual([
+    expect(expandArgv(pack.impl.run, { pack: '/p', tools: { blender: 'b', ffmpeg: 'f' }, job, platform: 'linux' })).toEqual([
       'b', '-b', '--factory-startup', '--disable-autoexec', '--python-exit-code', '1',
-      '--python', '/p/scripts/render.py', '--', '--params', '/w/work/params.json', '--scene', '/w/in/scene.blend', '--out', '/w/out',
+      '--python', '/p/scripts/render.py', '--', '--params', '/w/work/params.json', '--scene', '/w/in/scene.blend', '--out', '/w/out', '--ffmpeg', 'f',
     ]);
-    expect(expandArgv(pack.impl.check!, { pack: '/p', tools: { blender: 'b' }, platform: 'linux' })).toEqual([
-      'b', '-b', '--factory-startup', '--python-exit-code', '1', '--python', '/p/scripts/check.py',
+    expect(expandArgv(pack.impl.check!, { pack: '/p', tools: { blender: 'b', ffmpeg: 'f' }, platform: 'linux' })).toEqual([
+      'b', '-b', '--factory-startup', '--python-exit-code', '1', '--python', '/p/scripts/check.py', '--', '--ffmpeg', 'f',
     ]);
+    const props = pack.contract.params.properties;
+    expect(props.video).toMatchObject({ type: 'boolean', default: false });
+    expect(props.fps).toMatchObject({ type: 'integer', minimum: 1, maximum: 120, default: 24 });
+    expect(props.crf).toMatchObject({ type: 'integer', minimum: 0, maximum: 51, default: 18 });
   });
 
   test("lease: no tools, no inputs; it runs on the worker's own Node", () => {

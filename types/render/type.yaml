@@ -1,8 +1,8 @@
 name: render
-version: 1
+version: 2
 description: >-
   Render one frame or a frame range of a .blend scene with Blender Cycles on the GPU. Every frame is an output with a
-  JPEG preview; the scene's own scripts never run.
+  JPEG preview; with video, also video.mp4 (H.264). The scene's own scripts never run.
 inputs:
   scene: { extensions: [.blend], max_mb: 2048 }
 params:
@@ -14,8 +14,13 @@ params:
     frame_end: { type: integer, minimum: 0, maximum: 1048574, description: The last frame (frame_start when left out). }
     samples: { type: integer, minimum: 1, maximum: 4096, default: 128, description: Cycles samples per pixel. }
     format: { enum: [png, jpg], default: png, description: The image format of the frames. }
+    video: { type: boolean, default: false, description: "After the frames, also make video.mp4 (H.264); a transparent background becomes black." }
+    fps: { type: integer, minimum: 1, maximum: 120, default: 24, description: Frames per second of video.mp4. }
+    crf: { type: integer, minimum: 0, maximum: 51, default: 18, description: "H.264 quality of video.mp4: lower is better and larger." }
 max_runtime: 6h
-tools: [blender]
-check: ["{tool.blender}", "-b", "--factory-startup", "--python-exit-code", "1", "--python", "{pack}/scripts/check.py"]
+tools: [blender, ffmpeg]
+check: ["{tool.blender}", "-b", "--factory-startup", "--python-exit-code", "1", "--python", "{pack}/scripts/check.py",
+        "--", "--ffmpeg", "{tool.ffmpeg}"]
 run: ["{tool.blender}", "-b", "--factory-startup", "--disable-autoexec", "--python-exit-code", "1",
-      "--python", "{pack}/scripts/render.py", "--", "--params", "{params_json}", "--scene", "{input.scene}", "--out", "{out}"]
+      "--python", "{pack}/scripts/render.py", "--", "--params", "{params_json}", "--scene", "{input.scene}", "--out", "{out}",
+      "--ffmpeg", "{tool.ffmpeg}"]

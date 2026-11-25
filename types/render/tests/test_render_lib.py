@@ -1,6 +1,7 @@
 import contextlib
 import io
 import json
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -8,13 +9,13 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-from render_lib import MAX_FRAMES, InvalidParams, environment_line, first_file_strip, first_refused_node, frame_name, frames, gpu_settings, outputs_entry, preview_name, preview_size, progress_line, refused_node, script_args  # noqa: E402
+from render_lib import MAX_FRAMES, InvalidParams, check_args, encoding_line, environment_line, ffmpeg_version, first_file_strip, first_refused_node, frame_name, frames, gpu_settings, has_libx264, outputs_entry, preview_name, preview_size, progress_line, refused_node, script_args, video_args, video_entry  # noqa: E402
 
 
 class ScriptArgs(unittest.TestCase):
     def test_reads_the_arguments_after_the_double_dash(self):
-        a = script_args(["blender", "-b", "scene.blend", "--python", "render.py", "--", "--params", "p.json", "--scene", "s.blend", "--out", "o"])
-        self.assertEqual((a.params, a.scene, a.out), ("p.json", "s.blend", "o"))
+        a = script_args(["blender", "-b", "--python", "render.py", "--", "--params", "p.json", "--scene", "s.blend", "--out", "o", "--ffmpeg", "f"])
+        self.assertEqual((a.params, a.scene, a.out, a.ffmpeg), ("p.json", "s.blend", "o", "f"))
 
     def test_refuses_missing_arguments(self):
         with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
@@ -120,6 +121,53 @@ class GpuSettings(unittest.TestCase):
         self.assertEqual(gpu_settings(scene), ["persistent data"])
         self.assertFalse(hasattr(scene.cycles, "denoising_use_gpu"))
         self.assertTrue(scene.render.use_persistent_data)
+
+
+class Video(unittest.TestCase):
+    def test_a_video_needs_at_least_two_frames(self):
+        with self.assertRaisesRegex(InvalidParams, "a video needs at least 2 frames: set frame_end"):
+            frames({"frame_start": 1, "video": True})
+        self.assertEqual(frames({"frame_start": 1, "frame_end": 2, "video": True}), [1, 2])
+
+    def test_with_video_at_most_499_frames(self):
+        # 499 frames + 499 previews + video.mp4 = 999 files; the worker takes at most 1000.
+        self.assertEqual(len(frames({"frame_start": 1, "frame_end": 499, "video": True})), 499)
+        with self.assertRaisesRegex(InvalidParams, "with video, at most 499 frames per job"):
+            frames({"frame_start": 1, "frame_end": 500, "video": True})
+        self.assertEqual(len(frames({"frame_start": 1, "frame_end": 500})), 500)
+
+    def test_video_args(self):
+        out = os.path.join("o", "out")
+        self.assertEqual(video_args("ffmpeg", out, 7, "png", 30, 20), [
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+            "-framerate", "30", "-start_number", "7", "-i", os.path.join(out, "frame_%04d.png"),
+            "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2,scale=out_color_matrix=bt709:out_range=tv,format=yuv420p,"
+                   "setparams=color_primaries=bt709:color_trc=iec61966-2-1:colorspace=bt709:range=tv",
+            "-c:v", "libx264", "-crf", "20", "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart", os.path.join(out, "video.mp4"),
+        ])
+
+    def test_video_entry_has_even_sizes_and_no_preview(self):
+        self.assertEqual(video_entry(24, 48, 18, 1081, 2339), {"meta": {"fps": 24, "frames": 48, "crf": 18, "width": 1082, "height": 2340}})
+
+    def test_encoding_line(self):
+        self.assertEqual(json.loads(encoding_line()), {"progress": 1.0, "message": "encoding the video"})
+
+
+class FfmpegCheck(unittest.TestCase):
+    def test_check_args(self):
+        self.assertEqual(check_args(["blender", "-b", "--python", "check.py", "--", "--ffmpeg", "f"]).ffmpeg, "f")
+
+    def test_version_and_libx264(self):
+        self.assertEqual(ffmpeg_version("ffmpeg version 9.0.2-example Copyright (c) 2000-2026\nbuilt with gcc"), "9.0.2-example")
+        self.assertIsNone(ffmpeg_version("not ffmpeg"))
+        encoders = "Encoders:\n V..... = Video\n ------\n V....D libx264              libx264 H.264 / AVC\n V....D libx265  x265"
+        self.assertTrue(has_libx264(encoders))
+        self.assertFalse(has_libx264("Encoders:\n V....D libx265  x265\n V....D libx264rgb  x"))
+
+    def test_environment_line_with_ffmpeg(self):
+        self.assertEqual(environment_line("5.2.2 LTS", "OPTIX", ["Fake GPU"], "9.0.2"),
+                         "fornax-environment: Blender 5.2.2 LTS, Cycles on OPTIX (Fake GPU); ffmpeg 9.0.2")
 
 
 if __name__ == "__main__":

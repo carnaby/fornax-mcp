@@ -1,19 +1,20 @@
 """Render a frame range of the input .blend with Cycles on the GPU (spec 6.5). Runs inside Blender:
   blender -b --factory-startup --disable-autoexec --python-exit-code 1 --python render.py --
-          --params <params.json> --scene <scene> --out <dir>
+          --params <params.json> --scene <scene> --out <dir> --ffmpeg <ffmpeg>
 Writes <out>/frame_NNNN.<png|jpg>, a JPEG preview of each in <out>/previews/, and <out>/outputs.json; prints one
-progress line per frame. Exit codes: 0 done; 1 failed (an exception); 2 the scene or the params are invalid;
-3 Cycles finds no GPU.
+progress line per frame. With video, ffmpeg then makes <out>/video.mp4 from the frames. Exit codes: 0 done; 1 failed
+(an exception, or ffmpeg failed); 2 the scene or the params are invalid; 3 Cycles finds no GPU.
 """
 import json
 import os
+import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import bpy  # noqa: E402
 from blender_gpu import enable_gpu  # noqa: E402
-from render_lib import FILE_FORMATS, InvalidParams, first_file_strip, first_refused_node, frame_name, frames, gpu_settings, outputs_entry, preview_name, preview_size, progress_line, script_args  # noqa: E402
+from render_lib import EXTENSIONS, FILE_FORMATS, InvalidParams, encoding_line, first_file_strip, first_refused_node, frame_name, frames, gpu_settings, outputs_entry, preview_name, preview_size, progress_line, script_args, video_args, video_entry  # noqa: E402
 
 
 def leave(code, message):
@@ -219,6 +220,18 @@ def main():
         width, height = save_preview(os.path.join(out, name), os.path.join(out, preview_name(frame)))
         entries[name] = outputs_entry(width, height, frame, samples, preview_name(frame))
         print(progress_line(done, len(todo), frame), flush=True)
+    if params.get("video", False):
+        # Spec 14 § 5.2: the frames stay outputs; ffmpeg adds video.mp4.
+        print(encoding_line(), flush=True)
+        fps, crf = params.get("fps", 24), params.get("crf", 18)
+        r = subprocess.run(video_args(args.ffmpeg, out, todo[0], EXTENSIONS[fmt], fps, crf),
+                           capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if r.returncode != 0:
+            lines = [line for line in r.stderr.splitlines() if line.strip()]
+            for line in lines[-20:]:
+                print(f"ffmpeg: {line}", file=sys.stderr, flush=True)
+            leave(1, f"encoding the video failed ({lines[-1] if lines else f'ffmpeg exit {r.returncode}'})")
+        entries["video.mp4"] = video_entry(fps, len(todo), crf, width, height)
     with open(os.path.join(out, "outputs.json"), "w", encoding="utf-8") as f:
         json.dump(entries, f)
 

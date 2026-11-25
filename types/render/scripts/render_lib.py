@@ -2,6 +2,7 @@
 and which nodes and sequencer strips make a scene invalid."""
 import argparse
 import json
+import os
 
 PREVIEW_MAX_PX = 1024
 # The worker accepts at most 1000 output files per job and every frame writes two (the frame and its preview):
@@ -28,6 +29,7 @@ def script_args(argv):
     p.add_argument("--params", required=True)
     p.add_argument("--scene", required=True)
     p.add_argument("--out", required=True)
+    p.add_argument("--ffmpeg", required=True)
     return p.parse_args(rest)
 
 
@@ -38,6 +40,12 @@ def frames(params):
         raise InvalidParams("frame_end must not be smaller than frame_start")
     if end - start + 1 > MAX_FRAMES:
         raise InvalidParams(f"at most {MAX_FRAMES} frames per job; split a longer range into several jobs")
+    if params.get("video", False):
+        if end == start:
+            raise InvalidParams("a video needs at least 2 frames: set frame_end")
+        if end - start + 1 > MAX_FRAMES - 1:
+            # video.mp4 is one more file: 499 frames and their previews plus the video are 999 of the worker's 1000.
+            raise InvalidParams(f"with video, at most {MAX_FRAMES - 1} frames per job; split a longer range into several jobs")
     return list(range(start, end + 1))
 
 
@@ -93,9 +101,10 @@ def first_file_strip(strip_types):
     return None
 
 
-def environment_line(version_string, kind, names):
-    """The check's line for list_job_types (types/README.md): Blender's version, the Cycles device and the GPUs."""
-    return f"fornax-environment: Blender {version_string}, Cycles on {kind} ({', '.join(names)})"
+def environment_line(version_string, kind, names, ffmpeg=None):
+    """The check's line for list_job_types (types/README.md): Blender's version, the Cycles device, the GPUs and ffmpeg."""
+    line = f"fornax-environment: Blender {version_string}, Cycles on {kind} ({', '.join(names)})"
+    return f"{line}; ffmpeg {ffmpeg}" if ffmpeg else line
 
 
 def gpu_settings(scene):
@@ -109,3 +118,46 @@ def gpu_settings(scene):
     scene.render.use_persistent_data = True
     done.append("persistent data")
     return done
+
+
+def check_args(argv):
+    """check.py's arguments after Blender's "--"."""
+    rest = argv[argv.index("--") + 1:] if "--" in argv else []
+    p = argparse.ArgumentParser(prog="check.py")
+    p.add_argument("--ffmpeg", required=True)
+    return p.parse_args(rest)
+
+
+def video_args(ffmpeg, out_dir, frame_start, ext, fps, crf):
+    """ffmpeg's command for video.mp4 from the frames (spec 14 § 5.2): H.264 in yuv420p, which every phone plays; the
+    sizes padded to even numbers (yuv420p needs them); BT.709 colour, converted and tagged. The tags are set on the
+    frames (setparams): ffmpeg's output options -color_primaries and -color_trc left them unknown in the stream."""
+    return [
+        ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+        "-framerate", str(fps), "-start_number", str(frame_start), "-i", os.path.join(out_dir, f"frame_%04d.{ext}"),
+        "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2,scale=out_color_matrix=bt709:out_range=tv,format=yuv420p,"
+               "setparams=color_primaries=bt709:color_trc=iec61966-2-1:colorspace=bt709:range=tv",
+        "-c:v", "libx264", "-crf", str(crf), "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart", os.path.join(out_dir, "video.mp4"),
+    ]
+
+
+def video_entry(fps, frames_count, crf, width, height):
+    """outputs.json entry of video.mp4: no preview; the size as encoded (padded to even numbers)."""
+    return {"meta": {"fps": fps, "frames": frames_count, "crf": crf, "width": width + width % 2, "height": height + height % 2}}
+
+
+def encoding_line():
+    return json.dumps({"progress": 1.0, "message": "encoding the video"})
+
+
+def ffmpeg_version(text):
+    """"9.0.2" from the first line of `ffmpeg -version`; None when it is not ffmpeg's."""
+    first = text.splitlines()[0] if text else ""
+    parts = first.split()
+    return parts[2] if len(parts) >= 3 and parts[0] == "ffmpeg" and parts[1] == "version" else None
+
+
+def has_libx264(text):
+    """Whether `ffmpeg -encoders` lists the libx264 encoder."""
+    return any(len(line.split()) >= 2 and line.split()[1] == "libx264" for line in text.splitlines())

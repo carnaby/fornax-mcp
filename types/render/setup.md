@@ -9,16 +9,19 @@ preview of each (at most 1024 px), which `get_output` and the result page show.
   Intel: oneAPI; Apple: Metal).
 - Its path in `worker.yaml`. On Windows give `blender.exe` itself, not `blender-launcher.exe`: the launcher starts
   Blender and ends at once, so the worker could neither follow nor stop the render.
+- ffmpeg with the libx264 encoder, for `video` (the same `tools.ffmpeg` as tts); `fornax doctor render` says when it
+  is missing.
 
       tools:
         blender: C:\Program Files\Blender Foundation\Blender 4.5\blender.exe     # Linux: /usr/bin/blender
+        ffmpeg: C:\ffmpeg\bin\ffmpeg.exe                                          # Linux: /usr/bin/ffmpeg
 
 ## Install
 
     fornax types install render
     fornax doctor render
 
-There is no setup step: the pack only checks Blender's version and the GPU.
+There is no setup step: the pack only checks Blender's version, the GPU and ffmpeg.
 
 ## Safety
 
@@ -37,6 +40,8 @@ switched off, so a scene cannot read files of this PC, write outside the job's o
 ## Parameters
 
 `frame_start` (required), `frame_end` (default `frame_start`), `samples` (default 128), `format` (`png` or `jpg`).
+`video` (default `false`: also `video.mp4`, H.264), `fps` (default 24), `crf` (default 18). With video, at most 499
+frames and at least 2.
 At most 500 frames per job; split a long animation into several jobs with the same `group`.
 
 ## Smoke test
