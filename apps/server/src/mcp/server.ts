@@ -12,7 +12,7 @@ import { requeueJob, setJobPriority } from '../domain/priority.js';
 import type { Identity } from '../domain/tokens.js';
 import { workerOnline } from '../domain/worker-state.js';
 import type { RouteDeps } from '../http/deps.js';
-import { resultUrl } from '../http/links.js';
+import { archiveUrl, resultUrl } from '../http/links.js';
 import { OUTPUTS_PAGE, outputsSummary, pageOutputs } from './job-outputs.js';
 import { outputBlocks } from './output.js';
 import { createUploadDescription, SERVER_INSTRUCTIONS, TOOL_DESCRIPTIONS as D, TOOL_TITLES as T } from './text.js';
@@ -132,7 +132,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
       runJson(ctx, async (me) => {
         const read = () => {
           const row = getOwnJob(db, me.tokenId, job_id);
-          return { ...jobDetail(db, deps.config, row, deps.clock()), result_url: resultUrl(deps, row) };
+          return { ...jobDetail(db, deps.config, row, deps.clock()), result_url: resultUrl(deps, row), archive_url: archiveUrl(deps, row) };
         };
         // The request's signal ends the wait when the client cancels or the connection closes. The change is the job's
         // own (computed before paging), so every page of the same job waits the same way.

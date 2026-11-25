@@ -29,6 +29,13 @@ export function downloadableFile(db: Db, job: JobRow, name: string): FileRow | n
   return allowed.has(name) ? jobFile(db, job.id, name) : null;
 }
 
+/** Spec 14 § 4.2: the outputs in manifest order, then the log; null where a row is missing. No previews. */
+export function archiveFiles(db: Db, job: JobRow): Array<FileRow | null> {
+  const m = job.manifest;
+  if (!m) return [];
+  return [...m.outputs.map((o) => o.name), ...(m.log ? [m.log] : [])].map((name) => jobFile(db, job.id, name));
+}
+
 /**
  * Bytes this upload may still use: the job limit minus the other produced files (a same-named file is replaced).
  * Server previews (names under .fornax/) do not count.

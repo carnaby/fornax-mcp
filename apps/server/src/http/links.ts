@@ -54,3 +54,22 @@ export function fileOfDownloadLink(deps: RouteDeps, jobId: string, name: string,
   const file = downloadableFile(deps.db, job, name);
   return file && payload === `${job.id}:${file.id}` ? file : null;
 }
+
+/** Spec 14 § 4.1: a 24-hour link to a ZIP of all outputs and the log; null while the job has no outputs. */
+export function archivePath(deps: RouteDeps, job: JobRow): string | null {
+  if (!job.manifest || job.manifest.outputs.length === 0) return null;
+  const expiresAt = new Date(deps.clock().getTime() + DOWNLOAD_LINK_TTL_MS);
+  return `/api/jobs/${job.id}/archive.zip?sig=${sign(deps.config.secret, 'archive', job.id, expiresAt)}`;
+}
+
+export function archiveUrl(deps: RouteDeps, job: JobRow): string | null {
+  const path = archivePath(deps, job);
+  return path === null ? null : `${deps.config.publicUrl}${path}`;
+}
+
+/** The job an archive link opens: the signature must name exactly this job, and its owner must be active. */
+export function jobOfArchiveLink(deps: RouteDeps, jobId: string, sig: string): JobRow | null {
+  if (verify(deps.config.secret, 'archive', sig, deps.clock()) !== jobId) return null;
+  const job = deps.db.select().from(jobs).where(eq(jobs.id, jobId)).get();
+  return job && ownerActive(deps.db, job.ownerTokenId) ? job : null;
+}

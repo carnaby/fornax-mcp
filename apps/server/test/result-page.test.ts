@@ -82,8 +82,9 @@ describe('the result page', () => {
     expect(body).toContain('width: 2048');
     expect(body).toContain('<pre>all good</pre>');
     const hrefs = [...body.matchAll(/href="([^"]+)"/g)].map((m) => m[1]!.replaceAll('&amp;', '&'));
-    // frame.png (download + the preview's link), talk.wav, clip.mp4, result.json, the log
-    expect(hrefs.length).toBe(6);
+    // the archive (spec 14 § 4.1), frame.png (download + the preview's link), talk.wav, clip.mp4, result.json, the log
+    expect(hrefs.length).toBe(7);
+    expect(hrefs[0]).toMatch(/\/archive\.zip\?sig=/);
     for (const href of hrefs) expect((await t.app.inject({ method: 'GET', url: href })).statusCode, href).toBe(200);
   });
 

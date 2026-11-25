@@ -7,7 +7,7 @@ import { dateTimeText } from '../../domain/time-text.js';
 import { byText, labelOf, ownerName } from '../../domain/who.js';
 import { INLINE_IMAGE_BYTES, INLINE_IMAGE_MIMES, INLINE_TEXT_BYTES, isTextMime } from '../../files/mime.js';
 import type { RouteDeps } from '../deps.js';
-import { downloadPath, jobOfResultLink } from '../links.js';
+import { archivePath, downloadPath, jobOfResultLink } from '../links.js';
 import { type Html, html, page, pageHeaders } from './html.js';
 
 export const RESULT_CSP = "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'none'";
@@ -73,6 +73,7 @@ async function resultPage(deps: RouteDeps, job: JobRow): Promise<string> {
   const view = jobView(deps.db, job);
   const active = job.state === 'queued' || job.state === 'running';
   const outputs = await Promise.all((job.manifest?.outputs ?? []).map((o) => outputSection(deps, job, o)));
+  const archive = archivePath(deps, job);
   const logFile = job.manifest?.log ? downloadableFile(deps.db, job, job.manifest.log) : null;
   const log = logFile ? await deps.store.tail(logFile.id, LOG_TAIL_BYTES).catch(() => null) : null;
   const percent = job.progress === null ? null : Math.round(job.progress * 100);
@@ -97,7 +98,7 @@ ${job.state === 'queued' && view.priority === 'idle' ? html`<p>This job is idle:
 ${job.state === 'running' ? html`<p><progress max="100" value="${percent ?? 0}"></progress></p><p>${percent === null ? '' : `${percent} % `}${job.progressMessage ?? ''}</p>` : null}
 ${job.error ? html`<p class="error">${job.error}</p>` : null}
 ${active ? html`<p class="muted">This page refreshes every ${REFRESH_S} seconds.</p>` : null}
-${noOutputs ? null : html`<h2>Outputs</h2>${outputs}`}
+${noOutputs ? null : html`<h2>Outputs</h2>${archive ? html`<p><a href="${archive}">Download all (.zip)</a></p>` : null}${outputs}`}
 ${job.type === 'lease' && job.state === 'succeeded' && noOutputs ? html`<p>This job only held the card for a program on the worker's PC; it has no outputs.</p>` : null}
 ${log && logFile
   ? log.text === ''
