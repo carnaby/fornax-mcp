@@ -200,11 +200,12 @@ describe('fornax CLI', () => {
 
     s.approve('pc');
     writeFileSync(ctx.paths.configFile, `server: ${s.url}\ntools:\n  node: ${JSON.stringify(process.execPath)}\n`);
-    writeEchoPack(ctx.paths.typesDir);
+    writeEchoPack(ctx.paths.typesDir, { check: ['{tool.node}', '-e', 'console.log("fornax-environment: Node fake 1.0")'] });
     const healthy = await run('doctor');
     expect(healthy.text).toMatch(/ok\s+server .*token active/);
     expect(healthy.text).toMatch(/ok\s+tool node/);
     expect(healthy.text).toMatch(/ok\s+type echo v1/);
+    expect(healthy.text).toMatch(/^\s+environment: Node fake 1\.0$/m);
     expect(healthy.code).toBe(0);
 
     const served = await run('worker', '--once');

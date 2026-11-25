@@ -1,7 +1,7 @@
 import { chmodSync, mkdirSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { describe, expect, test } from 'vitest';
-import { checkPack, findBatchOnly, findTool, isBatchFile, oneLine, packsSignature, preparePacks } from '../src/checks.js';
+import { checkPack, environmentOf, findBatchOnly, findTool, isBatchFile, oneLine, packsSignature, preparePacks, runCheck } from '../src/checks.js';
 import { writeOrigin } from '../src/install/packs.js';
 import { loadPack } from '../src/pack.js';
 import { isAlive, NODE_TOOLS, readPids, useTempDir, waitFor, writeEchoPack } from './helpers.js';
@@ -142,7 +142,7 @@ describe('check isolation', () => {
     writeEchoPack(types, { name: 'b' });
     const stop = new AbortController();
     stop.abort();
-    expect(await preparePacks(dirsFor(types), NODE_TOOLS, { signal: stop.signal })).toEqual({ ready: [], problems: [] });
+    expect(await preparePacks(dirsFor(types), NODE_TOOLS, { signal: stop.signal })).toEqual({ ready: [], problems: [], environments: {} });
   });
 });
 
@@ -162,6 +162,38 @@ describe('checkPack', () => {
     const started = Date.now();
     expect(await checkPack(stuck, NODE_TOOLS, dirsFor(tmp()), { timeoutMs: 500, killGraceMs: 200 })).toBe('check did not finish within 0.5 s');
     expect(Date.now() - started).toBeLessThan(5000);
+  });
+});
+
+describe('environment (spec 12 § 2)', () => {
+  test('the last fornax-environment line of stdout counts, as one short line', () => {
+    const out = ['Blender 5.2.2 LTS', 'fornax-environment: first', 'fornax-environment:  Blender 5.2.2 LTS, Cycles on OPTIX (Fake GPU) ', 'Blender quit', ''].join('\n');
+    expect(environmentOf(out)).toBe('Blender 5.2.2 LTS, Cycles on OPTIX (Fake GPU)');
+    expect(environmentOf('no line here\n')).toBeNull();
+    expect(environmentOf('fornax-environment:   \n')).toBeNull();
+    expect(environmentOf('say fornax-environment: not at the start\n')).toBeNull();
+    expect(environmentOf(`fornax-environment: ${'x'.repeat(300)}\n`)).toHaveLength(200);
+    expect(environmentOf('  fornax-environment: tab\there\r\n')).toBe('tab here');
+  });
+
+  test('runCheck takes it from the stdout of a passing check only', async () => {
+    const types = join(tmp(), 'types');
+    const pack = (name: string, js: string) => loadPack(writeEchoPack(types, { name, check: ['{tool.node}', '-e', js] }));
+    expect(await runCheck(pack('ok', 'console.log("fornax-environment: Node fake 1.0")'), NODE_TOOLS, dirsFor(tmp()))).toEqual({ problem: null, environment: 'Node fake 1.0' });
+    expect(await runCheck(pack('stderr', 'console.error("fornax-environment: on stderr")'), NODE_TOOLS, dirsFor(tmp()))).toEqual({ problem: null, environment: null });
+    const sick = await runCheck(pack('sick', 'console.log("fornax-environment: x"); process.exitCode = 3'), NODE_TOOLS, dirsFor(tmp()));
+    expect(sick).toEqual({ problem: expect.stringMatching(/^check failed \(exit code 3\)/), environment: null });
+    expect(await runCheck(pack('quiet', 'process.exit(0)'), NODE_TOOLS, dirsFor(tmp()))).toEqual({ problem: null, environment: null });
+  });
+
+  test('preparePacks gives the environments of the ready packs', async () => {
+    const types = join(tmp(), 'types');
+    writeEchoPack(types, { check: ['{tool.node}', '-e', 'console.log("fornax-environment: Node fake 1.0")'] });
+    writeEchoPack(types, { name: 'plain' });
+    writeEchoPack(types, { name: 'sick', check: ['{tool.node}', '-e', 'console.log("fornax-environment: x"); process.exit(1)'] });
+    const r = await preparePacks(dirsFor(types), NODE_TOOLS);
+    expect(r.ready.map((p) => p.contract.name)).toEqual(['echo', 'plain']);
+    expect(r.environments).toEqual({ echo: 'Node fake 1.0' });
   });
 });
 

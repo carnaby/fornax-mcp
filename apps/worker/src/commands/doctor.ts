@@ -1,6 +1,6 @@
 import { existsSync, statSync } from 'node:fs';
 import { ApiError, NetworkError } from '../api.js';
-import { checkPack, findTool } from '../checks.js';
+import { findTool, runCheck } from '../checks.js';
 import { ClientApi } from '../client-api.js';
 import { ConfigError, readClientToken, readToken, readWorkerConfig, serverWarning, type WorkerConfig } from '../config.js';
 import { doctorGpuLines, readGpu } from '../gpu.js';
@@ -108,8 +108,9 @@ export async function doctor(ctx: Ctx, only?: string): Promise<number> {
   if (only !== undefined && !selected.length && !errors.some(mine)) line(false, `type ${only} is not installed in ${ctx.paths.typesDir}`);
   if (only === undefined && !packs.length && !errors.length) line(false, `no type packs in ${ctx.paths.typesDir}; see fornax types install and fornax types add`);
   for (const p of selected) {
-    const problem = await checkPack(p, tools, ctx.paths, { signal: ctx.signal, timeoutMs: ctx.loopOptions?.checkTimeoutMs });
+    const { problem, environment } = await runCheck(p, tools, ctx.paths, { signal: ctx.signal, timeoutMs: ctx.loopOptions?.checkTimeoutMs });
     line(problem === null, `type ${p.contract.name} v${p.contract.version}${problem ? `: ${problem}` : ''}`);
+    if (environment !== null) ctx.out(`      environment: ${environment}`);
   }
   // Spec 08 § 5: a secret a pack's setup asks for and nobody stored (the pack decides whether it needs it).
   const stored = storedSecretNames(ctx.paths.secretsDir);

@@ -79,16 +79,36 @@ export function findBatchOnly(cmd: string, env: NodeJS.ProcessEnv = process.env,
 
 export type CheckOptions = { timeoutMs?: number; killGraceMs?: number; signal?: AbortSignal };
 
-/** Why this pack cannot be offered now, or null when it is ready: its tools exist and its check exits 0 in time. */
-export async function checkPack(pack: Pack, tools: Record<string, string>, dirs: SecretDirs, opts: CheckOptions = {}): Promise<string | null> {
-  const missing = missingTools(pack, tools);
-  if (missing.length) return `tools missing in worker.yaml: ${missing.join(', ')}`;
-  for (const name of pack.impl.tools) {
-    if (isBatchFile(tools[name]!) || findBatchOnly(tools[name]!)) return `tool ${name}: ${tools[name]} is a batch file; point worker.yaml at the real executable`;
-    if (!findTool(tools[name]!)) return `tool ${name}: ${tools[name]} was not found`;
+/** Spec 12 § 2.1: a check's stdout line that says what the type runs with; the last one counts. */
+export const ENVIRONMENT_PREFIX = 'fornax-environment:';
+/** The stdout of a check kept for the environment line: the end of it is enough. */
+const KEEP_STDOUT = 65_536;
+
+/** The text of the last `fornax-environment:` line, one console-safe line of at most 200 characters; null without one. */
+export function environmentOf(stdout: string): string | null {
+  let found: string | null = null;
+  for (const raw of stdout.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (line.startsWith(ENVIRONMENT_PREFIX)) found = line.slice(ENVIRONMENT_PREFIX.length);
   }
-  if (!pack.impl.check) return null;
+  const text = found === null ? '' : oneLine(found, 200);
+  return text || null;
+}
+
+export type CheckResult = { problem: string | null; environment: string | null };
+
+/** Why this pack cannot be offered now (null when ready: its tools exist and its check exits 0 in time), and its environment line. */
+export async function runCheck(pack: Pack, tools: Record<string, string>, dirs: SecretDirs, opts: CheckOptions = {}): Promise<CheckResult> {
+  const not = (problem: string): CheckResult => ({ problem, environment: null });
+  const missing = missingTools(pack, tools);
+  if (missing.length) return not(`tools missing in worker.yaml: ${missing.join(', ')}`);
+  for (const name of pack.impl.tools) {
+    if (isBatchFile(tools[name]!) || findBatchOnly(tools[name]!)) return not(`tool ${name}: ${tools[name]} is a batch file; point worker.yaml at the real executable`);
+    if (!findTool(tools[name]!)) return not(`tool ${name}: ${tools[name]} was not found`);
+  }
+  if (!pack.impl.check) return { problem: null, environment: null };
   const timeoutMs = opts.timeoutMs ?? CHECK_TIMEOUT_MS;
+  let stdout = '';
   const r = await runProcess({
     argv: expandArgv(pack.impl.check, { pack: pack.dir, tools }),
     cwd: pack.dir,
@@ -96,27 +116,42 @@ export async function checkPack(pack: Pack, tools: Record<string, string>, dirs:
     timeoutMs,
     killGraceMs: opts.killGraceMs,
     signal: opts.signal,
+    onOutput: (text, stream) => {
+      if (stream === 'stdout') stdout = (stdout + text).slice(-KEEP_STDOUT);
+    },
   });
   const tail = oneLine(r.log.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).at(-1) ?? '');
-  if (r.spawnError) return `check could not start: ${r.spawnError}`;
-  if (r.canceled) return 'check was interrupted';
-  if (r.timedOut) return `check did not finish within ${timeoutMs / 1000} s`;
-  if (r.code !== 0) return `check failed (exit code ${r.code ?? r.signal})${tail ? `: ${tail}` : ''}`;
-  return null;
+  if (r.spawnError) return not(`check could not start: ${r.spawnError}`);
+  if (r.canceled) return not('check was interrupted');
+  if (r.timedOut) return not(`check did not finish within ${timeoutMs / 1000} s`);
+  if (r.code !== 0) return not(`check failed (exit code ${r.code ?? r.signal})${tail ? `: ${tail}` : ''}`);
+  return { problem: null, environment: environmentOf(stdout) };
 }
 
-/** Load every pack and run its check; the ready ones can be announced, the others say why not (per type). */
-export async function preparePacks(dirs: SecretDirs, tools: Record<string, string>, opts: CheckOptions = {}): Promise<{ ready: Pack[]; problems: PackProblem[] }> {
+/** Why this pack cannot be offered now, or null when it is ready. */
+export async function checkPack(pack: Pack, tools: Record<string, string>, dirs: SecretDirs, opts: CheckOptions = {}): Promise<string | null> {
+  return (await runCheck(pack, tools, dirs, opts)).problem;
+}
+
+/** Load every pack and run its check; the ready ones can be announced (with their environment lines), the others say why not. */
+export async function preparePacks(
+  dirs: SecretDirs, tools: Record<string, string>, opts: CheckOptions = {},
+): Promise<{ ready: Pack[]; problems: PackProblem[]; environments: Record<string, string> }> {
   const { packs, failed } = loadPacks(dirs.typesDir);
   const ready: Pack[] = [];
+  const environments: Record<string, string> = {};
   const problems: PackProblem[] = failed.map((f) => ({ name: f.name, reason: oneLine(f.reason) }));
   for (const pack of packs) {
     if (opts.signal?.aborted) break;
-    const problem = await checkPack(pack, tools, dirs, opts);
-    if (problem) problems.push({ name: pack.contract.name, reason: problem });
-    else ready.push(pack);
+    const { problem, environment } = await runCheck(pack, tools, dirs, opts);
+    if (problem) {
+      problems.push({ name: pack.contract.name, reason: problem });
+      continue;
+    }
+    ready.push(pack);
+    if (environment !== null) environments[pack.contract.name] = environment;
   }
-  return { ready, problems };
+  return { ready, problems, environments };
 }
 
 /** The marker of an installed pack: its origin and whether its setup is still pending (install/packs.ts). */
