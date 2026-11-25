@@ -71,6 +71,13 @@
       "when": 1795619336949,
       "tag": "0009_short_blue_marvel",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1795634119838,
+      "tag": "0010_majestic_adam_warlock",
+      "breakpoints": true
     }
   ]
 }

@@ -1,4 +1,6 @@
+import { eq } from 'drizzle-orm';
 import { describe, expect, test } from 'vitest';
+import { files, jobInputs } from '../src/db/schema.js';
 import { claimJob } from '../src/domain/queue.js';
 import { renderContract, transcribeContract } from './fixtures.js';
 import { announce, issueToken, uploadFile, useTestApp } from './helpers.js';
@@ -25,10 +27,15 @@ describe('submit', () => {
     });
   });
 
-  test('a file is input of one job only', async () => {
+  test('one file can be the input of several jobs (spec 14 § 2.2)', async () => {
     const { alice, scene } = await setup();
-    await submit(alice, { type: 'render', params: { frame_start: 1 }, inputs: { scene } });
-    expect((await submit(alice, { type: 'render', params: { frame_start: 2 }, inputs: { scene } })).statusCode).toBe(409);
+    const a = await submit(alice, { type: 'render', params: { frame_start: 1 }, inputs: { scene } });
+    const b = await submit(alice, { type: 'render', params: { frame_start: 2 }, inputs: { scene } });
+    expect([a.statusCode, b.statusCode]).toEqual([201, 201]);
+    expect(b.json().inputs).toEqual({ scene });
+    const rows = t.db.select().from(jobInputs).all().map((r) => [r.jobId, r.fileId]).sort();
+    expect(rows).toEqual([[a.json().id, scene], [b.json().id, scene]].sort());
+    expect(t.db.select().from(files).where(eq(files.id, scene)).get()?.jobId).toBeNull();
   });
 
   test('unknown or withdrawn types, bad params, missing or wrong inputs are 422', async () => {

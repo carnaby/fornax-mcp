@@ -9,7 +9,7 @@ const mcp = useMcp(() => t.app);
 test("create_upload states the server's own lifetime of an unused upload (spec 13 § 3)", async () => {
   const client = await mcp.connect('/mcp', bearerHeader(issueToken(t.db, 'alice')));
   const { tools } = await client.listTools();
-  expect(tools.find((x) => x.name === 'create_upload')!.description).toContain('A file that no job uses is deleted after 6 hours.');
+  expect(tools.find((x) => x.name === 'create_upload')!.description).toContain('a file no job uses is deleted after 6 hours.');
 });
 
 test('one hour is singular', () => {

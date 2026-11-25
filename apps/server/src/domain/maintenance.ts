@@ -2,7 +2,7 @@ import { readdir, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { and, count, eq, inArray, isNull, lt, notInArray, or, sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
-import { files, invites, jobs, jobTypes, tokens, uploads, webhookDeliveries } from '../db/schema.js';
+import { files, invites, jobInputs, jobs, jobTypes, tokens, uploads, webhookDeliveries } from '../db/schema.js';
 import type { RouteDeps } from '../http/deps.js';
 import { deleteFiles } from './files.js';
 import { finishJob } from './finish.js';
@@ -62,21 +62,7 @@ export async function runMaintenance(deps: RouteDeps) {
 
   const leases = expireLeases(db, now);
 
-  // The rows go first, in one guarded statement: a file bound to a job meanwhile is no longer matched and keeps its disk file.
-  const orphanRows = db
-    .delete(files)
-    .where(and(eq(files.kind, 'input'), isNull(files.jobId), lt(files.createdAt, ago(now, r.orphanUploadMs))))
-    .returning({ id: files.id })
-    .all();
   let diskErrors = 0;
-  for (const row of orphanRows) {
-    try {
-      await deps.store.remove(row.id);
-    } catch {
-      // The row is gone; the disk sweep removes the file in a later pass.
-      diskErrors++;
-    }
-  }
   db.delete(uploads).where(lt(uploads.expiresAt, now)).run();
   db.delete(invites).where(lt(invites.expiresAt, now)).run();
 
@@ -105,8 +91,29 @@ export async function runMaintenance(deps: RouteDeps) {
     .map((x) => x.id);
   if (old.length) {
     diskErrors += (await deleteFiles(deps, db.select().from(files).where(inArray(files.jobId, old)).all())).failed;
+    db.delete(jobInputs).where(inArray(jobInputs.jobId, old)).run();
     db.delete(webhookDeliveries).where(inArray(webhookDeliveries.jobId, old)).run();
     db.delete(jobs).where(inArray(jobs.id, old)).run();
+  }
+
+  // Spec 14 § 2.3: an input no job holds goes once it is older than the orphan period (never used, or its last job is
+  // gone). One guarded statement: a file a job takes meanwhile is no longer matched and keeps its disk file.
+  const orphanRows = db
+    .delete(files)
+    .where(and(
+      eq(files.kind, 'input'),
+      lt(files.createdAt, ago(now, r.orphanUploadMs)),
+      sql`not exists (select 1 from ${jobInputs} where ${jobInputs.fileId} = ${files.id})`,
+    ))
+    .returning({ id: files.id })
+    .all();
+  for (const row of orphanRows) {
+    try {
+      await deps.store.remove(row.id);
+    } catch {
+      // The row is gone; the disk sweep removes the file in a later pass.
+      diskErrors++;
+    }
   }
 
   const pendingTokens = db

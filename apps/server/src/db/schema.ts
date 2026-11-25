@@ -1,5 +1,5 @@
 import type { JobTypeContract, TokenRole, WorkerWaiting } from '@fornax/protocol';
-import { index, integer, real, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { index, integer, primaryKey, real, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 
 const ts = (name: string) => integer(name, { mode: 'timestamp_ms' });
 
@@ -46,6 +46,7 @@ export const files = sqliteTable(
     id: text('id').primaryKey(),
     ownerTokenId: text('owner_token_id').notNull(),
     kind: text('kind').$type<FileKind>().notNull(),
+    /** The job a produced file (output, preview, log) belongs to; null for inputs (job_inputs holds those, spec 14). */
     jobId: text('job_id'),
     name: text('name').notNull(),
     size: integer('size').notNull(),
@@ -55,6 +56,13 @@ export const files = sqliteTable(
     createdAt: ts('created_at').notNull(),
   },
   (t) => [index('files_job').on(t.jobId), index('files_owner').on(t.ownerTokenId)],
+);
+
+/** Spec 14 § 2.1: which jobs hold which input files; one input file may serve several jobs of its owner. */
+export const jobInputs = sqliteTable(
+  'job_inputs',
+  { jobId: text('job_id').notNull(), fileId: text('file_id').notNull() },
+  (t) => [primaryKey({ columns: [t.jobId, t.fileId] }), index('job_inputs_file').on(t.fileId)],
 );
 
 /** One-time upload links. The file id is assigned when the link is made, so the client knows it before uploading. */

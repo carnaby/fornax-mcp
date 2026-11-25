@@ -5,7 +5,7 @@ import { and, count, desc, eq, inArray, lt, ne, or } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import type { Config } from '../config.js';
 import type { Db } from '../db/client.js';
-import { files, type JobState, jobs, jobTypes } from '../db/schema.js';
+import { files, jobInputs, type JobState, jobs, jobTypes } from '../db/schema.js';
 import { conflict, notFound, tooMany, unprocessable } from './errors.js';
 import { finishJob } from './finish.js';
 import { getOfferedType, isOffered } from './job-types.js';
@@ -64,7 +64,6 @@ export function submitJob(db: Db, config: Config, owner: string, input: SubmitIn
       }
       const file = tx.select().from(files).where(and(eq(files.id, id), eq(files.ownerTokenId, owner), eq(files.kind, 'input'))).get();
       if (!file) throw notFound(`file ${id} not found`);
-      if (file.jobId) throw conflict(`file ${id} is already the input of another job; upload it again`);
       if (!spec.extensions.includes(extname(file.name).toLowerCase())) throw unprocessable(`input ${name} must be one of ${spec.extensions.join(', ')}`);
       if (file.size > spec.max_mb * 1024 * 1024) throw unprocessable(`input ${name} is larger than ${spec.max_mb} MB`);
       inputs[name] = id;
@@ -80,7 +79,7 @@ export function submitJob(db: Db, config: Config, owner: string, input: SubmitIn
     };
     tx.insert(jobs).values(row).run();
     const ids = Object.values(inputs);
-    if (ids.length) tx.update(files).set({ jobId: row.id }).where(inArray(files.id, ids)).run();
+    if (ids.length) tx.insert(jobInputs).values(ids.map((fileId) => ({ jobId: row.id, fileId }))).run();
     // Spec 06 2.1.2: a new job's place follows its priority; the answer carries it.
     placeJob(db, row.id, 'priority');
     jobSignal.wake();

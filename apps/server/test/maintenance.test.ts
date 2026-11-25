@@ -2,7 +2,7 @@ import { existsSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { generateToken } from '@fornax/protocol';
 import { describe, expect, test } from 'vitest';
-import { files, jobs, tokens } from '../src/db/schema.js';
+import { files, jobInputs, jobs, tokens } from '../src/db/schema.js';
 import { runMaintenance, TYPE_UNAVAILABLE } from '../src/domain/maintenance.js';
 import { claimJob } from '../src/domain/queue.js';
 import { createInvite, resolveToken } from '../src/domain/tokens.js';
@@ -41,6 +41,27 @@ describe('maintenance', () => {
     t.clock.advance(14 * DAY + 1);
     expect((await runMaintenance(deps())).finished).toBe(1);
     expect(t.db.select().from(jobs).all()).toEqual([]);
+    expect(t.db.select().from(files).all()).toEqual([]);
+    expect(existsSync(join(t.config.filesDir, file))).toBe(false);
+  });
+
+  test('a file stays while any job holds it (spec 14 § 2.3)', async () => {
+    announce(t.db, [renderContract], t.clock.now);
+    const alice = issueToken(t.db, 'alice');
+    const file = await uploadFile(t.app, alice, 'a.blend', 'A');
+    const first = await submit(alice, file);
+    await t.app.inject({ method: 'POST', url: `/api/jobs/${first}/cancel`, headers: { authorization: `Bearer ${alice}` } });
+    t.clock.advance(13 * DAY);
+    const second = await submit(alice, file);
+    await t.app.inject({ method: 'POST', url: `/api/jobs/${second}/cancel`, headers: { authorization: `Bearer ${alice}` } });
+    t.clock.advance(DAY + 1);
+    // The first job is past its retention; the second still holds the file.
+    expect(await runMaintenance(deps())).toMatchObject({ finished: 1, orphans: 0 });
+    expect(t.db.select().from(jobInputs).all()).toEqual([{ jobId: second, fileId: file }]);
+    expect(existsSync(join(t.config.filesDir, file))).toBe(true);
+    t.clock.advance(13 * DAY);
+    // The second job goes, and with nothing holding it the file (older than 24 h) goes in the same pass.
+    expect(await runMaintenance(deps())).toMatchObject({ finished: 1, orphans: 1 });
     expect(t.db.select().from(files).all()).toEqual([]);
     expect(existsSync(join(t.config.filesDir, file))).toBe(false);
   });
