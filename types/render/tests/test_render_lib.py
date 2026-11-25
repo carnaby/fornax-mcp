@@ -141,11 +141,19 @@ class Video(unittest.TestCase):
         self.assertEqual(video_args("ffmpeg", out, 7, "png", 30, 20), [
             "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
             "-framerate", "30", "-start_number", "7", "-i", os.path.join(out, "frame_%04d.png"),
-            "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2,scale=out_color_matrix=bt709:out_range=tv,format=yuv420p,"
+            "-vf", "premultiply=inplace=1,pad=ceil(iw/2)*2:ceil(ih/2)*2,scale=out_color_matrix=bt709:out_range=tv,format=yuv420p,"
                    "setparams=color_primaries=bt709:color_trc=iec61966-2-1:colorspace=bt709:range=tv",
             "-c:v", "libx264", "-crf", "20", "-pix_fmt", "yuv420p",
             "-movflags", "+faststart", os.path.join(out, "video.mp4"),
         ])
+
+    def test_png_frames_are_premultiplied_and_jpg_frames_have_no_alpha(self):
+        # Blender writes PNG with straight alpha: without premultiplying, a 25 % white edge would come out full white.
+        jpg = video_args("ffmpeg", "o", 1, "jpg", 24, 18)
+        self.assertIn(os.path.join("o", "frame_%04d.jpg"), jpg)
+        self.assertTrue(jpg[jpg.index("-vf") + 1].startswith("pad="))
+        png = video_args("ffmpeg", "o", 1, "png", 24, 18)
+        self.assertTrue(png[png.index("-vf") + 1].startswith("premultiply=inplace=1,pad="))
 
     def test_video_entry_has_even_sizes_and_no_preview(self):
         self.assertEqual(video_entry(24, 48, 18, 1081, 2339), {"meta": {"fps": 24, "frames": 48, "crf": 18, "width": 1082, "height": 2340}})

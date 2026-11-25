@@ -131,11 +131,14 @@ def check_args(argv):
 def video_args(ffmpeg, out_dir, frame_start, ext, fps, crf):
     """ffmpeg's command for video.mp4 from the frames (spec 14 § 5.2): H.264 in yuv420p, which every phone plays; the
     sizes padded to even numbers (yuv420p needs them); BT.709 colour, converted and tagged. The tags are set on the
-    frames (setparams): ffmpeg's output options -color_primaries and -color_trc left them unknown in the stream."""
+    frames (setparams): ffmpeg's output options -color_primaries and -color_trc left them unknown in the stream. PNG
+    frames carry straight alpha: they are premultiplied first, so a transparent background and its soft edges become
+    black instead of their colour at full strength."""
+    premultiply = "premultiply=inplace=1," if ext == "png" else ""
     return [
         ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
         "-framerate", str(fps), "-start_number", str(frame_start), "-i", os.path.join(out_dir, f"frame_%04d.{ext}"),
-        "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2,scale=out_color_matrix=bt709:out_range=tv,format=yuv420p,"
+        "-vf", f"{premultiply}pad=ceil(iw/2)*2:ceil(ih/2)*2,scale=out_color_matrix=bt709:out_range=tv,format=yuv420p,"
                "setparams=color_primaries=bt709:color_trc=iec61966-2-1:colorspace=bt709:range=tv",
         "-c:v", "libx264", "-crf", str(crf), "-pix_fmt", "yuv420p",
         "-movflags", "+faststart", os.path.join(out_dir, "video.mp4"),
