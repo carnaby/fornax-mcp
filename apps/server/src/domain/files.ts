@@ -1,9 +1,11 @@
 import { randomBytes } from 'node:crypto';
+import { extname } from 'node:path';
 import type { Readable } from 'node:stream';
 import { and, count, eq, gt, isNull } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import type { Db } from '../db/client.js';
 import { type FileKind, files, uploads } from '../db/schema.js';
+import { blendFileVersion } from '../files/blend.js';
 import { mimeOf } from '../files/mime.js';
 import type { RouteDeps } from '../http/deps.js';
 import { sign } from '../http/signing.js';
@@ -29,8 +31,10 @@ export async function saveFile(
   // Inputs carry a client's file name; output names are already checked by cleanOutputName and may contain "/".
   const name = input.kind === 'input' ? cleanFileName(input.name) : input.name;
   const { size, sha256 } = await deps.store.write(id, input.source, input.maxBytes);
+  // Spec 14 § 3.1: the Blender version of an uploaded .blend, for the warning at submit_job; an unreadable header is no error.
+  const blender = input.kind === 'input' && extname(name).toLowerCase() === '.blend' ? await blendFileVersion(deps.store.pathOf(id)) : null;
   const row: FileRow = {
-    id, ownerTokenId: input.owner, kind: input.kind, jobId: input.jobId ?? null, name, size, sha256, mime: mimeOf(name), meta: null, createdAt: deps.clock(),
+    id, ownerTokenId: input.owner, kind: input.kind, jobId: input.jobId ?? null, name, size, sha256, mime: mimeOf(name), meta: blender ? { blender } : null, createdAt: deps.clock(),
   };
   deps.db.insert(files).values(row).run();
   return row;

@@ -107,7 +107,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
           deps.clock(),
         );
         const d = jobDetail(db, deps.config, row, deps.clock());
-        const warning = submitWarning(row);
+        const warning = submitWarning(db, row);
         return { job_id: row.id, state: row.state, priority: d.priority, position: d.position, worker: d.worker, note: d.note, ...(warning ? { warning } : {}) };
       }),
   );

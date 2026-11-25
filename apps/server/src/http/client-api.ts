@@ -60,7 +60,7 @@ export const clientRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps) => 
   app.post('/jobs', async (req, reply) => {
     const body = parse(submitSchema, req.body);
     const row = submitJob(deps.db, deps.config, req.identity!.tokenId, body, deps.clock());
-    const warning = submitWarning(row);
+    const warning = submitWarning(deps.db, row);
     return reply.code(201).send({ ...jobDetail(deps.db, deps.config, row, deps.clock()), ...(warning ? { warning } : {}) });
   });
 

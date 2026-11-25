@@ -175,7 +175,33 @@ export function jobView(db: Db, row: JobRow) {
 export const IDLE_NOTE = 'this job is idle: it waits until the operator starts it or its owner changes its priority';
 /** Spec 07 § 4.1: the answer to a submit that made an idle job. */
 export const IDLE_WARNING = 'this job waits until the operator starts it; pass priority normal to run it automatically';
-export const submitWarning = (row: JobRow): string | null => (row.priority === IDLE ? IDLE_WARNING : null);
+
+/** "Blender 5.2.2 LTS, Cycles on …" → 5, 2 and " LTS"-like rest up to the first comma (spec 14 § 3.2). */
+const BLENDER_ENV = /^Blender (\d+)\.(\d+)([^,]*)/;
+
+/** Spec 14 § 3.2: an input saved by a newer Blender than the type's environment names. */
+function blendWarnings(db: Db, row: JobRow): string[] {
+  const env = db.select({ environment: jobTypes.environment }).from(jobTypes).where(eq(jobTypes.name, row.type)).get()?.environment;
+  const m = env ? BLENDER_ENV.exec(env) : null;
+  if (!m) return [];
+  const worker = [Number(m[1]), Number(m[2])] as const;
+  const warnings: string[] = [];
+  for (const [name, id] of Object.entries(row.inputs)) {
+    const saved = db.select({ meta: files.meta }).from(files).where(eq(files.id, id)).get()?.meta?.blender;
+    if (typeof saved !== 'string') continue;
+    const [major, minor] = saved.split('.').map(Number) as [number, number];
+    if (major > worker[0] || (major === worker[0] && minor > worker[1])) {
+      warnings.push(`${name} was saved by Blender ${saved}; the worker runs Blender ${m[1]}.${m[2]}${m[3]}, which may lose data: save it with Blender ${m[1]}.${m[2]} or older.`);
+    }
+  }
+  return warnings;
+}
+
+/** Spec 07 § 4.1 and spec 14 § 3.2: what a submit answers as warning (idle first, then the inputs), joined with "; ". */
+export function submitWarning(db: Db, row: JobRow): string | null {
+  const all = [...(row.priority === IDLE ? [IDLE_WARNING] : []), ...blendWarnings(db, row)];
+  return all.length ? all.join('; ') : null;
+}
 
 const AGAIN = 'asking again changes nothing';
 
