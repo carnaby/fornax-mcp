@@ -3,6 +3,7 @@ streams, log and progress lines, the environment the libraries get, and the chec
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 PACK = Path(__file__).resolve().parent.parent
@@ -82,6 +83,15 @@ def progress(fraction, message):
     """One progress line for the worker."""
     sys.stdout.write(json.dumps({"progress": round(min(max(fraction, 0.0), 1.0), 4), "message": message}) + "\n")
     sys.stdout.flush()
+
+
+def tick(stop, interval, message, clock=time.monotonic, send=None):
+    """Until `stop` is set: every `interval` seconds one progress line, message(seconds since the start, rounded), at
+    the fraction the conversion started with (spec 13 § 4: the number is not made up, only the message changes)."""
+    send = send or progress
+    start = clock()
+    while not stop.wait(interval):
+        send(0.05, message(round(clock() - start)))
 
 
 def library_env():

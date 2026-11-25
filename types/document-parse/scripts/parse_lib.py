@@ -249,3 +249,10 @@ def output_meta(path, kind, pages, tables, markdown, added, seconds, peak_vram_m
 
 def outputs_json(meta):
     return {"document.md": {"meta": meta}, "document.json": {"meta": {"format": "DoclingDocument"}}}
+
+
+def converting(pages, seconds):
+    """The text path's progress message while Docling converts (spec 13 § 4): the page count when it is known."""
+    if not pages:
+        return f"converting, {seconds} s"
+    return f"converting {pages} {'page' if pages == 1 else 'pages'}, {seconds} s"

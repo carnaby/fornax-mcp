@@ -110,6 +110,12 @@ class PathTest(unittest.TestCase):
 
 
 class TextTest(unittest.TestCase):
+    def test_converting(self):
+        self.assertEqual(lib.converting(50, 40), "converting 50 pages, 40 s")
+        self.assertEqual(lib.converting(1, 3), "converting 1 page, 3 s")
+        self.assertEqual(lib.converting(None, 7), "converting, 7 s")
+        self.assertEqual(lib.converting(0, 7), "converting, 7 s")
+
     def test_one_line(self):
         self.assertEqual(lib.one_line("a\n  b\tc"), "a b c")
         self.assertEqual(len(lib.one_line("x" * 400)), 300)

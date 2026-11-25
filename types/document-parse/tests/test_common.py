@@ -2,6 +2,7 @@ import io
 import json
 import sys
 import tempfile
+import threading
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -96,6 +97,29 @@ class HelpersTest(unittest.TestCase):
     def test_setup_streams_leaves_a_stream_it_cannot_reconfigure(self):
         with mock.patch.object(sys, "stdout", io.StringIO()), mock.patch.object(sys, "stderr", io.StringIO()):
             common.setup_streams()
+
+
+class TickTest(unittest.TestCase):
+    def test_tick_sends_until_stopped(self):
+        stop = threading.Event()
+        sent = []
+        times = iter([100.0, 105.2, 110.9, 116.0])
+
+        def send(fraction, message):
+            sent.append((fraction, message))
+            if len(sent) == 3:
+                stop.set()
+
+        common.tick(stop, 0.001, lambda s: f"t {s}", clock=lambda: next(times), send=send)
+        # Rounded, not cut: a wait that wakes a hair early must not say 0 s at the first tick.
+        self.assertEqual(sent, [(0.05, "t 5"), (0.05, "t 11"), (0.05, "t 16")])
+
+    def test_a_stopped_tick_sends_nothing(self):
+        stop = threading.Event()
+        stop.set()
+        sent = []
+        common.tick(stop, 0.001, lambda s: f"t {s}", send=lambda f, m: sent.append(m))
+        self.assertEqual(sent, [])
 
 
 if __name__ == "__main__":

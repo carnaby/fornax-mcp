@@ -6,12 +6,15 @@ import argparse
 import importlib.metadata
 import json
 import os
+import threading
 import time
 from pathlib import Path
 
 import common
 import parse_lib as lib
 from common import ENVIRONMENT, FAILED, INVALID, OK, progress, say, setup_streams
+
+TICK_S = 5  # seconds between the text path's "converting …" lines
 
 
 def fail(code, message):
@@ -58,10 +61,19 @@ def choose(convert, document, kind, ocr):
     return path, pages
 
 
-def text_path(convert, document):
+def text_path(convert, document, pages):
     converter = convert.TextConverter()
     progress(0.05, "converting")
-    markdown, document_dict, pages, tables = converter.convert(document)
+    stop = threading.Event()
+    # known: the page count before the conversion (None for e.g. a DOCX), bound now, as the conversion's own count
+    # replaces `pages` below.
+    ticker = threading.Thread(target=common.tick, args=(stop, TICK_S, lambda s, known=pages: lib.converting(known, s)), daemon=True)
+    ticker.start()
+    try:
+        markdown, document_dict, pages, tables = converter.convert(document)
+    finally:
+        stop.set()
+        ticker.join()
     return markdown, document_dict, pages, tables, None, convert.peak_vram_mib()
 
 
@@ -137,7 +149,7 @@ def main(argv=None):
     say(f"{kind}" + (f", {pages} pages" if pages is not None else "") + f": the {path} path")
     try:
         if path == "text":
-            markdown, document, pages, tables, added, vram = text_path(convert, a.document)
+            markdown, document, pages, tables, added, vram = text_path(convert, a.document, pages)
         else:
             markdown, document, pages, tables, added, vram = ocr_path(convert, a.document, kind, pages)
     except lib.Rejected as e:

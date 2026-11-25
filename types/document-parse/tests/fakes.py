@@ -11,8 +11,9 @@ PACK_SRC = Path(__file__).resolve().parent.parent
 #   pdf_chars (text layer per page, default [1500, 1500]); pdf_error "password"; image_frames (default 1);
 #   image_error (Pillow's message); markdown, tables, text_pages (the text path); convert_error (Docling raises);
 #   full (the page text of the OCR path: a string, or a list per page); regions ([[label, text], ...] per page);
-#   fail_at_page (the full read of that page runs out of memory); block_outputs (a folder made where an output goes).
-FAKE_CONVERT = '''import json, os
+#   fail_at_page (the full read of that page runs out of memory); block_outputs (a folder made where an output goes);
+#   convert_seconds (the text path's conversion takes this long), tick_s (run.TICK_S for the test).
+FAKE_CONVERT = '''import json, os, sys, time
 import common
 import parse_lib as lib
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -71,8 +72,11 @@ class TextConverter:
     def __init__(self):
         check_mode()
         log({"call": "TextConverter"})
+        if "tick_s" in B:
+            sys.modules["run"].TICK_S = B["tick_s"]
 
     def convert(self, path):
+        time.sleep(B.get("convert_seconds", 0))
         if B.get("convert_error"):
             raise RuntimeError(B["convert_error"])
         markdown = B.get("markdown", "# Zmluva" + NL + NL + "| a | b |" + NL + "|---|---|" + NL + "| 1 | 2 |" + NL)
