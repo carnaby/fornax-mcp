@@ -141,6 +141,14 @@ class FillInTest(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertFalse(lib.is_junk(text))
 
+    def test_an_added_region_keeps_its_label_unless_it_is_a_picture(self):
+        for label in ("list_item", "caption", "page_header", "page_footer"):
+            with self.subTest(label=label):
+                self.assertEqual(lib.added_label(label), label)
+        for label in ("text", "picture"):
+            with self.subTest(label=label):
+                self.assertEqual(lib.added_label(label), "text")
+
     def test_fill_in_adds_a_phone_number_the_page_misses(self):
         self.assertEqual(lib.fill_in("Kontakt", [("text", "0905 123 456")]), [("text", "0905 123 456")])
 

@@ -174,7 +174,8 @@ class Layout:
 
 def build_document(pages):
     """The DoclingDocument of the OCR path (spec § 4.5): a text item per paragraph, the added regions after them
-    (headings as headings); provenance is the whole page (the full-page text has no coordinates)."""
+    (headings as headings, list items, captions, page headers and footers with their own label); provenance is the
+    whole page (the full-page text has no coordinates)."""
     from docling_core.types.doc import BoundingBox, CoordOrigin, DocItemLabel, DoclingDocument, ProvenanceItem, Size
 
     doc = DoclingDocument(name="document")
@@ -185,8 +186,11 @@ def build_document(pages):
             doc.add_text(label=DocItemLabel.TEXT, text=text, prov=ProvenanceItem(page_no=no, bbox=whole, charspan=(0, len(text))))
         for label, text in page["added"]:
             prov = ProvenanceItem(page_no=no, bbox=whole, charspan=(0, len(text)))
+            kept = lib.added_label(label)
             if label in lib.HEADING_LABELS:
                 doc.add_heading(text=text, level=1, prov=prov)
+            elif kept == "list_item":
+                doc.add_list_item(text=text, parent=doc.add_list_group(), prov=prov)
             else:
-                doc.add_text(label=DocItemLabel.TEXT, text=text, prov=prov)
+                doc.add_text(label=DocItemLabel(kept), text=text, prov=prov)
     return doc.export_to_dict()

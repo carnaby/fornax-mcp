@@ -115,6 +115,7 @@ CROP_MIN = 8
 FILL_FOUND = 0.5
 FILL_LABELS = ("text", "section_header", "title", "list_item", "caption", "page_header", "page_footer", "picture")
 HEADING_LABELS = ("section_header", "title")
+KEPT_LABELS = ("list_item", "caption", "page_header", "page_footer")
 NO_TEXT = "<!-- no text found -->"
 ADDED = "<!-- added from layout -->"
 OCR_MODEL_REPO = "PaddlePaddle/PaddleOCR-VL-1.6"
@@ -129,6 +130,12 @@ def words(text):
 def token_limit(width, height):
     """At most about one character per 12 x 20 px of a crop at scale 2: a QR code or an icon cannot loop for long."""
     return max(16, min(1024, int(width * height / (12 * 20) / 3)))
+
+
+def added_label(label):
+    """The document.json label of an added region that is not a heading: its own where Docling has one for text, else
+    text (the text read in a picture is text, not the picture's caption)."""
+    return label if label in KEPT_LABELS else "text"
 
 
 def has_latex(text):
