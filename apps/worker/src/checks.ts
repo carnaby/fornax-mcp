@@ -3,7 +3,7 @@ import { delimiter, extname, isAbsolute, join } from 'node:path';
 import { loadPacks, missingTools, type Pack, type PackProblem } from './pack.js';
 import { runProcess } from './process.js';
 import { expandArgv } from './template.js';
-import { type SecretDirs, toolEnv } from './tool-env.js';
+import { packEnv, type SecretDirs, toolEnv } from './tool-env.js';
 
 /** A type's check may take this long (loading a model, asking the GPU) before it counts as failed. */
 export const CHECK_TIMEOUT_MS = 120_000;
@@ -112,7 +112,7 @@ export async function runCheck(pack: Pack, tools: Record<string, string>, dirs: 
   const r = await runProcess({
     argv: expandArgv(pack.impl.check, { pack: pack.dir, tools }),
     cwd: pack.dir,
-    env: toolEnv(dirs),
+    env: toolEnv(dirs, packEnv(pack.dir)),
     timeoutMs,
     killGraceMs: opts.killGraceMs,
     signal: opts.signal,

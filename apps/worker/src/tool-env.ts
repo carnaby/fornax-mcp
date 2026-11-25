@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { loadPacks, type Pack } from './pack.js';
 import type { Paths } from './paths.js';
 import { childEnv } from './process.js';
@@ -24,14 +25,24 @@ export function toolEnv(dirs: SecretDirs, extra: Record<string, string> = {}): R
 }
 
 /**
- * Spec 08 § 4.2: a pack's setup environment (the tool environment plus the stored secrets the pack declares) and the
- * values given, to mask in its output. A damaged secret file throws readSecret's ConfigError.
+ * Spec 12 § 5.8: every setup, check and job of a pack keeps Python's bytecode caches in the pack's env/pycache, so
+ * scripts/ stays as shipped. Not -B: that would also stop caching the libraries (uv does not compile them) and does
+ * not reach the Python processes a script starts. Blender's and Node's tools ignore it.
  */
-export function setupEnv(dirs: SecretDirs, pack: Pack): { env: Record<string, string>; values: string[] } {
+export function packEnv(packDir: string): Record<string, string> {
+  return { PYTHONPYCACHEPREFIX: join(packDir, 'env', 'pycache') };
+}
+
+/**
+ * Spec 08 § 4.2: a pack's setup environment (the tool environment, the pack's Python cache folder and the stored
+ * secrets the pack declares) and the secret values given, to mask in its output. A damaged secret file throws
+ * readSecret's ConfigError.
+ */
+export function setupEnv(dirs: SecretDirs, pack: Pack, dir: string = pack.dir): { env: Record<string, string>; values: string[] } {
   const extra: Record<string, string> = {};
   for (const name of pack.impl.secrets) {
     const value = readSecret(dirs.secretsDir, name);
     if (value !== null) extra[name] = value;
   }
-  return { env: childEnv(process.env, hiddenNames(dirs, pack.impl.secrets), extra), values: Object.values(extra) };
+  return { env: childEnv(process.env, hiddenNames(dirs, pack.impl.secrets), { ...packEnv(dir), ...extra }), values: Object.values(extra) };
 }

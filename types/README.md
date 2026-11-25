@@ -101,7 +101,8 @@ Rules, checked when the pack loads:
 - No shell. The working directory is `{work}`.
 - The environment is the worker's, without any `FORNAX_*` variable (the worker token never reaches a tool) and without
   any variable named like a secret (a stored one, or one an installed pack asks for, in any letter case), plus
-  `FORNAX_JOB_ID`, `FORNAX_OUT` and `FORNAX_WORK`.
+  `FORNAX_JOB_ID`, `FORNAX_OUT` and `FORNAX_WORK`. Setup, check and run all get `PYTHONPYCACHEPREFIX=<pack>/env/pycache`:
+  Python keeps its bytecode caches there (also of the processes a script starts), never in `scripts/`.
 - A stdout line `{"progress": 0.4, "message": "frame 3/10"}` is progress (0 to 1, the message optional). Every other
   stdout line and all of stderr go to the job log; the last 1 MiB is kept and uploaded as `log.txt`.
 - Every file in `{out}`, recursively, is an output; its path relative to `{out}`, with `/`, is its name. Names are

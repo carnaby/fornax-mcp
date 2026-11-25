@@ -186,6 +186,11 @@ describe('environment (spec 12 § 2)', () => {
     expect(await runCheck(pack('quiet', 'process.exit(0)'), NODE_TOOLS, dirsFor(tmp()))).toEqual({ problem: null, environment: null });
   });
 
+  test("a check gets its pack's Python cache folder (spec 12 § 5.8)", async () => {
+    const dir = writeEchoPack(join(tmp(), 'types'), { name: 'py', check: ['{tool.node}', '-e', 'console.log("fornax-environment: " + process.env.PYTHONPYCACHEPREFIX)'] });
+    expect((await runCheck(loadPack(dir), NODE_TOOLS, dirsFor(tmp()))).environment).toBe(join(dir, 'env', 'pycache'));
+  });
+
   test('preparePacks gives the environments of the ready packs', async () => {
     const types = join(tmp(), 'types');
     writeEchoPack(types, { check: ['{tool.node}', '-e', 'console.log("fornax-environment: Node fake 1.0")'] });

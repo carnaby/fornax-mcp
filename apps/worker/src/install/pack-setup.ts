@@ -21,7 +21,7 @@ export async function runPackSetup(o: {
   if (!o.pack.impl.setup) return null;
   let prepared: { env: Record<string, string>; values: string[] };
   try {
-    prepared = setupEnv(o.dirs, o.pack);
+    prepared = setupEnv(o.dirs, o.pack, o.dir);
   } catch (e) {
     // Spec 08: a damaged secret file stops the setup; the message names the file, never its content.
     if (e instanceof ConfigError) return e.message;

@@ -50,6 +50,9 @@ switch (params.mode) {
   case 'env':
     writeFileSync(join(out, 'env.json'), JSON.stringify(Object.keys(process.env).filter((k) => /^(fornax_|example_token$)/i.test(k)).sort()));
     break;
+  case 'pycache':
+    writeFileSync(join(out, 'pycache.txt'), process.env.PYTHONPYCACHEPREFIX ?? '');
+    break;
   case 'interrupted':
     // Ended by the same Ctrl+C as the worker: Windows STATUS_CONTROL_C_EXIT, elsewhere SIGINT.
     writeFileSync(params.pid_file, JSON.stringify({ parent: process.pid, child: process.pid }));

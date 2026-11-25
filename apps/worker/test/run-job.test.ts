@@ -197,6 +197,13 @@ describe('runJob', () => {
     expect(JSON.parse(f.uploads.get('env.json')!)).toEqual(['FORNAX_JOB_ID', 'FORNAX_OUT', 'FORNAX_WORK']);
   });
 
+  test("the tool gets its pack's Python cache folder (spec 12 § 5.8)", async () => {
+    const { pack, deps } = setup();
+    const f = fakeApi();
+    await runJob(fakeClaim({ params: { mode: 'pycache' } }), pack, deps(f.api));
+    expect(f.uploads.get('pycache.txt')).toBe(join(pack.dir, 'env', 'pycache'));
+  });
+
   test('the tool never gets an inherited variable named like a stored secret (spec 08 § 4.2)', async () => {
     const { paths, pack, deps } = setup();
     writeSecret(paths.secretsDir, 'EXAMPLE_TOKEN', 'hf_test_value_123');

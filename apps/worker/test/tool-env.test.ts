@@ -2,7 +2,8 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import { writeSecret } from '../src/secrets.js';
-import { hiddenNames, toolEnv } from '../src/tool-env.js';
+import { loadPack } from '../src/pack.js';
+import { hiddenNames, packEnv, setupEnv, toolEnv } from '../src/tool-env.js';
 import { useTempDir, writeEchoPack } from './helpers.js';
 
 const tmp = useTempDir();
@@ -30,4 +31,14 @@ test('a secret stored after the worker started counts at the next process', () =
   } finally {
     delete process.env.EXAMPLE_TOKEN;
   }
+});
+
+test('every process of a pack gets its Python cache folder; it is no secret (spec 12 § 5.8)', () => {
+  const dirs = dirsIn(tmp());
+  const dir = writeEchoPack(dirs.typesDir, { name: 'wants', setup: ['{tool.node}', '-e', '0'], secrets: ['OTHER_TOKEN'] });
+  writeSecret(dirs.secretsDir, 'OTHER_TOKEN', 'hf_test_value_123');
+  expect(packEnv(dir)).toEqual({ PYTHONPYCACHEPREFIX: join(dir, 'env', 'pycache') });
+  const prepared = setupEnv(dirs, loadPack(dir), dir);
+  expect(prepared.env.PYTHONPYCACHEPREFIX).toBe(join(dir, 'env', 'pycache'));
+  expect(prepared.values).toEqual(['hf_test_value_123']);
 });

@@ -9,7 +9,7 @@ import { missingTools, type Pack } from './pack.js';
 import { jobDirs, type Paths } from './paths.js';
 import { KILL_GRACE_MS, logTail, runProcess } from './process.js';
 import { expandArgv, TemplateError } from './template.js';
-import { toolEnv } from './tool-env.js';
+import { packEnv, toolEnv } from './tool-env.js';
 
 /** Short, so a cancel stops a running job within seconds (the heartbeat's answer is how the worker hears of it). */
 export const HEARTBEAT_MS = 5000;
@@ -325,7 +325,7 @@ export async function runJob(job: ClaimedJob, pack: Pack, deps: JobDeps): Promis
     const r = await runProcess({
       argv,
       cwd: dirs.work,
-      env: toolEnv(deps.paths, { FORNAX_JOB_ID: job.id, FORNAX_OUT: dirs.out, FORNAX_WORK: dirs.work }),
+      env: toolEnv(deps.paths, { ...packEnv(pack.dir), FORNAX_JOB_ID: job.id, FORNAX_OUT: dirs.out, FORNAX_WORK: dirs.work }),
       timeoutMs: pack.contract.max_runtime_s * 1000,
       signal,
       killGraceMs: deps.killGraceMs ?? KILL_GRACE_MS,

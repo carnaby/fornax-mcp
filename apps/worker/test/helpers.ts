@@ -142,7 +142,7 @@ export function writeEchoPack(typesDir: string, opts: { name?: string; maxRuntim
       type: 'object',
       additionalProperties: false,
       properties: {
-        mode: { enum: ['ok', 'slow', 'exit', 'hang', 'env', 'json-dir', 'interrupted'], default: 'ok' },
+        mode: { enum: ['ok', 'slow', 'exit', 'hang', 'env', 'json-dir', 'interrupted', 'pycache'], default: 'ok' },
         code: { type: 'integer', minimum: 0, maximum: 255, default: 0 },
         ms: { type: 'integer', minimum: 0, maximum: 60_000, default: 0 },
         pid_file: { type: 'string', maxLength: 1000 },
