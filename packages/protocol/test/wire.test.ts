@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { completeBody, LEASE_MS, outputsJson, releaseBody, statusBody } from '../src/wire.js';
+import { announceBody, completeBody, LEASE_MS, outputsJson, releaseBody, statusBody } from '../src/wire.js';
 
 test('outputs.json: meta and preview per output, nothing else', () => {
   const ok = { 'a.png': { meta: { width: 2, hdr: true, note: null }, preview: 'p/a.jpg' } };
@@ -50,4 +50,19 @@ describe('spec 07 wire shapes', () => {
     expect(requeueBody.parse({})).toEqual({ idle: false });
     expect(requeueBody.parse({ idle: true })).toEqual({ idle: true });
   });
+});
+
+test('an announcement may carry one environment line per type (spec 12 § 3.1)', () => {
+  expect(announceBody.parse({ types: [] })).toEqual({ types: [] });
+  const line = 'Blender 5.2.2 LTS, Cycles on OPTIX (Fake GPU)';
+  expect(announceBody.parse({ types: [], environments: { render: line } }).environments).toEqual({ render: line });
+  const ok = (environments: unknown) => announceBody.safeParse({ types: [], environments }).success;
+  expect(ok({ render: 'x'.repeat(400) })).toBe(true);
+  expect(ok({ render: '' })).toBe(false);
+  expect(ok({ render: 'x'.repeat(401) })).toBe(false);
+  expect(ok({ render: `two${String.fromCharCode(10)}lines` })).toBe(false);
+  expect(ok({ render: `bell${String.fromCharCode(0x85)}` })).toBe(false);
+  expect(ok({ render: `del${String.fromCharCode(0x7f)}` })).toBe(false);
+  expect(ok({ Render: 'x' })).toBe(false);
+  expect(ok({ render: 5 })).toBe(false);
 });

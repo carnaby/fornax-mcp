@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { type Priority, priorityInput } from './client.js';
-import { jobTypeContract } from './contract.js';
+import { jobTypeContract, TYPE_NAME } from './contract.js';
 
 export const WORKER_HEADERS = { name: 'x-fornax-worker', version: 'x-fornax-version', lease: 'x-fornax-lease', warning: 'x-fornax-warning' } as const;
 
@@ -14,7 +14,20 @@ export const LEASE_MS = 600_000;
 export const RELEASE_REASONS = ['stopping', 'environment'] as const;
 export type ReleaseReason = (typeof RELEASE_REASONS)[number];
 
-export const announceBody = z.strictObject({ types: z.array(jobTypeContract).max(100) });
+/** A C0 or C1 control character or DEL (by code point: an environment line is one line of plain text). */
+const isControl = (ch: string): boolean => {
+  const c = ch.codePointAt(0)!;
+  return c < 0x20 || (c >= 0x7f && c <= 0x9f);
+};
+
+/** Spec 12 § 3.1: what the worker runs a type with, as the last `fornax-environment:` line of its check says. */
+export const typeEnvironment = z.string().min(1).max(400).refine((s) => ![...s].some(isControl), 'must be one line without control characters');
+
+/** PUT /api/worker/types. `environments` (0.14.1): a line per announced type; a worker before 0.14.1 sends none. */
+export const announceBody = z.strictObject({
+  types: z.array(jobTypeContract).max(100),
+  environments: z.record(z.string().regex(TYPE_NAME), typeEnvironment).optional(),
+});
 
 export const claimBody = z.strictObject({ wait: z.number().int().min(0).max(MAX_CLAIM_WAIT_S).default(25) });
 
