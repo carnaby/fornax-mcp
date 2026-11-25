@@ -199,7 +199,7 @@ describe('openDb over node:sqlite', () => {
     const values = { name: 'echo', contract, contractHash: 'h', offered: true, lastOfferedAt: new Date(5_000) };
     t.db.insert(jobTypes).values(values).run();
     t.db.insert(jobTypes).values({ ...values, name: 'off', offered: false }).run();
-    expect(t.db.select().from(jobTypes).where(eq(jobTypes.name, 'echo')).get()).toEqual(values);
+    expect(t.db.select().from(jobTypes).where(eq(jobTypes.name, 'echo')).get()).toEqual({ ...values, environment: null });
     expect(t.db.select({ name: jobTypes.name }).from(jobTypes).where(eq(jobTypes.offered, false)).all()).toEqual([{ name: 'off' }]);
     const raw = t.db.$client.prepare('select offered, last_offered_at, contract from job_types where name = ?').raw().get('echo');
     expect(raw).toEqual([1, 5_000, JSON.stringify(contract)]);

@@ -55,8 +55,8 @@ export const workerRoutes: FastifyPluginAsync<RouteDeps> = async (app, deps) => 
   app.get('/ping', async () => ({ ok: true }));
 
   app.put('/types', async (req) => {
-    const { types } = parse(announceBody, req.body);
-    return announceTypes(deps.db, types, deps.clock());
+    const { types, environments } = parse(announceBody, req.body);
+    return announceTypes(deps.db, types, deps.clock(), environments);
   });
 
   // Spec 05a 2.4: why the worker takes no job now (the card is busy or unreadable), or null. Like every worker request

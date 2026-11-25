@@ -1,7 +1,7 @@
 /** What every MCP client is told on initialize (spec 8.1). */
 export const SERVER_INSTRUCTIONS = [
   'Fornax is a job queue for one GPU worker: you submit jobs of the types the worker offers, it runs them one at a time, and you fetch the results.',
-  'Start with list_job_types: each type has a description, a parameter schema, its inputs (allowed extensions, size limit) and a max runtime; it also says whether the worker is online.',
+  'Start with list_job_types: each type has a description, a parameter schema, its inputs (allowed extensions, size limit), a max runtime and its environment (what the worker runs it with, e.g. the Blender version: build inputs for that version, e.g. a .blend saved with the same Blender or bpy); it also says whether the worker is online.',
   'Input files never travel through MCP. For each input call create_upload with the file name: it returns a file_id and a curl command with a one-time link valid for 1 hour. Run that command with the local file path in place of <path>; in Windows PowerShell call curl.exe instead of curl (curl there is another command). If you cannot run commands (e.g. in claude.ai), give the user the command to run on their computer and wait until they say it finished. If curl reports a connection reset instead of an HTTP status, the file is most likely larger than the upload limit of the server. If curl says --fail-with-body is unknown (curl older than 7.76), use -f instead.',
   'Then call submit_job with the type, params and inputs (input name to file_id) and follow the job with get_job until the state is succeeded, failed or canceled: pass change from the previous answer and wait_seconds (up to 25), and get_job answers as soon as the job changes, instead of you asking again and again. While a job waits, note says why in one sentence (e.g. the worker is offline: then asking again changes nothing). Jobs wait while others run; queue_status shows the queue.',
   'Pass agent with submit_job: the name other agents reach you by (e.g. your session name). Every client sees it next to the job, so whoever waits knows whom to ask; queue_status shows who runs and who waits ahead.',
@@ -11,7 +11,7 @@ export const SERVER_INSTRUCTIONS = [
 
 export const TOOL_DESCRIPTIONS = {
   list_job_types:
-    "The job types the worker offers now: description, parameter schema (a JSON Schema subset), inputs with allowed extensions and size limits, max runtime, default priority (idle jobs wait until the worker's operator starts them); and whether the worker is online. Call it before submit_job.",
+    "The job types the worker offers now: description, parameter schema (a JSON Schema subset), inputs with allowed extensions and size limits, max runtime, default priority (idle jobs wait until the worker's operator starts them), environment (what the worker runs the type with, e.g. the Blender version, or null: match your inputs to it); and whether the worker is online. Call it before submit_job.",
   create_upload:
     'A one-time upload link (valid 1 hour) for one input file. Returns file_id, the link and a ready curl command: run it with the local path in place of <path> (curl.exe in Windows PowerShell; if you cannot run commands, give it to the user), then pass file_id to submit_job.',
   submit_job:

@@ -1,0 +1,1 @@
+ALTER TABLE `job_types` ADD `environment` text;

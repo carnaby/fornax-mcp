@@ -38,6 +38,8 @@ describe('the MCP endpoint', () => {
     expect(tools.find((x) => x.name === 'queue_status')!.description).toContain('ahead');
     expect(tools.find((x) => x.name === 'queue_status')!.description).toContain('ahead is null');
     const ins = client.getInstructions() ?? '';
+    expect(ins).toContain('environment');
+    expect(tools.find((x) => x.name === 'list_job_types')!.description).toContain('environment');
     expect(ins).toContain('Pass agent with submit_job');
     expect(ins).toMatch(/^Fornax is a job queue for one GPU worker/);
     expect(ins).toContain('create_upload');
@@ -49,6 +51,13 @@ describe('the MCP endpoint', () => {
     expect(ins).toMatch(/cannot run commands.*give the user the command/s);
     expect(ins).toContain('get_output');
     expect(ins).toContain('result_url');
+  });
+
+  test("list_job_types shows each type's environment (spec 12)", async () => {
+    announce(t.db, [renderContract], t.clock.now, { render: 'Blender 5.2.2 LTS, Cycles on OPTIX (Fake GPU)' });
+    const client = await mcp.connect('/mcp', bearerHeader(issueToken(t.db, 'alice')));
+    const r = await callJson(client, 'list_job_types');
+    expect(r.types[0]).toMatchObject({ name: 'render', environment: 'Blender 5.2.2 LTS, Cycles on OPTIX (Fake GPU)' });
   });
 
   test('the token works in the header and in the path', async () => {

@@ -133,8 +133,8 @@ export async function uploadFile(app: FastifyInstance, token: string, name: stri
   return res.json().id as string;
 }
 
-export function announce(db: Db, contracts: unknown[], now: Date): void {
-  announceTypes(db, contracts.map((c) => jobTypeContract.parse(c)), now);
+export function announce(db: Db, contracts: unknown[], now: Date, environments: Record<string, string> = {}): void {
+  announceTypes(db, contracts.map((c) => jobTypeContract.parse(c)), now, environments);
 }
 
 export const tokenIdOf = (db: Db, name: string): string => db.select({ id: tokens.id }).from(tokens).where(eq(tokens.name, name)).get()!.id;

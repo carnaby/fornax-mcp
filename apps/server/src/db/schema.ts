@@ -33,6 +33,8 @@ export const jobTypes = sqliteTable('job_types', {
   contractHash: text('contract_hash').notNull(),
   offered: integer('offered', { mode: 'boolean' }).notNull(),
   lastOfferedAt: ts('last_offered_at').notNull(),
+  /** Spec 12 § 3.2: the last `fornax-environment:` line of the type's check, as the worker announced it; null without one. */
+  environment: text('environment'),
 });
 
 export type FileKind = 'input' | 'output' | 'log' | 'preview';
