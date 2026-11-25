@@ -15,7 +15,7 @@ import type { RouteDeps } from '../http/deps.js';
 import { archiveUrl, resultUrl } from '../http/links.js';
 import { OUTPUTS_PAGE, outputsSummary, pageOutputs } from './job-outputs.js';
 import { outputBlocks } from './output.js';
-import { createUploadDescription, SERVER_INSTRUCTIONS, TOOL_DESCRIPTIONS as D, TOOL_TITLES as T } from './text.js';
+import { createUploadDescription, serverInstructions, TOOL_DESCRIPTIONS as D, TOOL_TITLES as T } from './text.js';
 import type { Block, ToolResult } from './types.js';
 
 export const MCP_SERVER_VERSION = FORNAX_VERSION;
@@ -60,7 +60,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
   const { db } = deps;
   const server = new McpServer(
     { name: 'fornax', version: MCP_SERVER_VERSION },
-    { instructions: SERVER_INSTRUCTIONS, maxToolInputElements: MAX_TOOL_INPUT_ELEMENTS },
+    { instructions: serverInstructions(deps.config.publicUrl), maxToolInputElements: MAX_TOOL_INPUT_ELEMENTS },
   );
   const jobId = z.string().min(1).max(40).describe('The job_id from submit_job or list_jobs.');
 

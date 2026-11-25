@@ -39,6 +39,12 @@ describe('the MCP endpoint', () => {
     expect(tools.find((x) => x.name === 'queue_status')!.description).toContain('ahead is null');
     expect(tools.find((x) => x.name === 'create_upload')!.description).toContain('A file_id can be the input of several of your jobs; a file no job uses is deleted after 24 hours.');
     const ins = client.getInstructions() ?? '';
+    expect(ins).toContain('In claude.ai, run curl in your cloud container: the user adds fornax.example.com under Settings → Capabilities → Additional allowed domains');
+    expect(ins).toContain('If you cannot run commands at all');
+    expect(ins).not.toContain('(e.g. in claude.ai)');
+    expect(ins).toContain('One file_id can be the input of several of your jobs.');
+    expect(ins).toContain('archive_url');
+    expect(ins).toContain('pass next_offset as offset');
     expect(ins).toContain('outputs_offset');
     expect(tools.find((x) => x.name === 'get_job')!.description).toContain('outputs_next_offset');
     expect(tools.find((x) => x.name === 'get_job')!.description).toContain('archive_url');
