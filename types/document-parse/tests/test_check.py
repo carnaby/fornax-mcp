@@ -76,7 +76,9 @@ class CheckTest(unittest.TestCase):
     def test_ready(self):
         code, out, err = self.check()
         self.assertEqual(code, 0, err)
-        self.assertRegex(out.strip(), r"^Python \S+, PyTorch 0\.0-fake \(CUDA 12\.8\), docling \S+, transformers \S+, rapidocr \S+; Fake GPU$")
+        lines = out.strip().splitlines()
+        self.assertRegex(lines[0], r"^Python \S+, PyTorch 0\.0-fake \(CUDA 12\.8\), docling \S+, transformers \S+, rapidocr \S+; Fake GPU$")
+        self.assertRegex(lines[-1], r"^fornax-environment: PyTorch 0\.0-fake \(CUDA 12\.8\), docling \S+, transformers \S+, rapidocr \S+; Fake GPU$")
 
     def test_a_missing_model_file(self):
         (self.pack / "env" / "models" / "paddleocr-vl" / "model.safetensors").unlink()

@@ -133,6 +133,12 @@ Rules, checked when the pack loads:
 ## check and setup
 
 - `check` runs when the worker starts and in `fornax doctor`. Exit code 0 means ready; it may take at most 120 s.
+- A passing `check` may print one stdout line `fornax-environment: <text>`: what the type runs with (the main tool's
+  version, key libraries, the GPU), e.g. `fornax-environment: Blender 5.2.2 LTS, Cycles on OPTIX (NVIDIA GeForce RTX
+  5060 Ti)`. The last such line counts (at most 200 characters, one line); clients see it as `environment` in
+  `list_job_types`, so that an agent can match its inputs (a `.blend` saved by the same Blender). Every client of the
+  server sees it: no paths, user or host names, tokens. The worker reads it whenever it checks the packs (at start and
+  when a pack changes): a tool updated while the worker runs shows after a restart.
 - `setup` runs once in `fornax types install`, with the pack directory as working directory. It installs into
   `{pack}/env` only; it may take at most 2 hours. If it fails, nothing stays installed.
 - `secrets` lists secrets the setup gets as environment variables (names `A-Z`, `0-9`, `_`; at most 16), only when

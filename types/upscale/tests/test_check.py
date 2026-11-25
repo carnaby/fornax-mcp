@@ -30,6 +30,7 @@ class CheckTest(unittest.TestCase):
         code, text = self.check()
         self.assertEqual(code, 0, text)
         self.assertIn("Fake GPU 0: 16311 MiB, 1100 in use", text)
+        self.assertRegex(text, r"(?m)^fornax-environment: PyTorch \S+ \(CUDA \S+\); Fake GPU 0$")
 
     def test_two_gpus_are_refused(self):
         set_card(self.root, 1100, gpus=2)

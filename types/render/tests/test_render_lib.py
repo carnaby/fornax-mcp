@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-from render_lib import MAX_FRAMES, InvalidParams, first_file_strip, first_refused_node, frame_name, frames, outputs_entry, preview_name, preview_size, progress_line, refused_node, script_args  # noqa: E402
+from render_lib import MAX_FRAMES, InvalidParams, environment_line, first_file_strip, first_refused_node, frame_name, frames, outputs_entry, preview_name, preview_size, progress_line, refused_node, script_args  # noqa: E402
 
 
 class ScriptArgs(unittest.TestCase):
@@ -99,6 +99,12 @@ class FileStrips(unittest.TestCase):
     def test_other_strips_pass(self):
         self.assertIsNone(first_file_strip([]))
         self.assertIsNone(first_file_strip(["SCENE", "COLOR", "TEXT", "META", "CROSS"]))
+
+
+class EnvironmentLine(unittest.TestCase):
+    def test_blender_version_device_and_gpus(self):
+        self.assertEqual(environment_line("5.2.2 LTS", "OPTIX", ["Fake GPU", "Other GPU"]),
+                         "fornax-environment: Blender 5.2.2 LTS, Cycles on OPTIX (Fake GPU, Other GPU)")
 
 
 if __name__ == "__main__":

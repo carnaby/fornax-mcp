@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The tts pack's check (runs in {pack}/env, at most 120 s, without loading a model; spec 10 § 3.3): ffmpeg runs,
 the model files and voices are in place, omnivoice and piper are installed, PyTorch sees CUDA. argv: --ffmpeg <ffmpeg>.
-Exit 0 ready (one summary line), 3 not ready (one sentence)."""
+Exit 0 ready (a summary line and the fornax-environment line), 3 not ready (one sentence)."""
 import argparse
 import importlib.metadata
 import importlib.util
@@ -66,7 +66,10 @@ def main(argv=None):
         fail(f"PyTorch does not load ({e}): run fornax types setup tts")
     if not torch.cuda.is_available():
         fail("PyTorch sees no CUDA device: install or update the NVIDIA driver")
-    print(f"Python {platform.python_version()}, PyTorch {torch.__version__} (CUDA {torch.version.cuda}), omnivoice {version('omnivoice')}, piper-tts {version('piper-tts')}, ffmpeg {ffmpeg}; {torch.cuda.get_device_name(0)}")
+    environment = (f"PyTorch {torch.__version__} (CUDA {torch.version.cuda}), omnivoice {version('omnivoice')}, "
+                   f"piper-tts {version('piper-tts')}, ffmpeg {ffmpeg}; {torch.cuda.get_device_name(0)}")
+    print(f"Python {platform.python_version()}, {environment}")
+    print(f"fornax-environment: {environment}")
     return 0
 
 

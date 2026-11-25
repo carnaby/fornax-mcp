@@ -91,3 +91,8 @@ def first_file_strip(strip_types):
         if strip_type in FILE_STRIP_TYPES:
             return FILE_STRIP_TYPES[strip_type]
     return None
+
+
+def environment_line(version_string, kind, names):
+    """The check's line for list_job_types (types/README.md): Blender's version, the Cycles device and the GPUs."""
+    return f"fornax-environment: Blender {version_string}, Cycles on {kind} ({', '.join(names)})"

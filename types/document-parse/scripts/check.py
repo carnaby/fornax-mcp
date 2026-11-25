@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The document-parse pack's check (runs in {pack}/env, at most 120 s, without loading a model; spec 11 § 3.3): the
 model files are in place, docling, rapidocr, pypdfium2 and transformers are installed, transformers has PaddleOCR-VL,
-PyTorch sees CUDA. No arguments. Exit 0 ready (one summary line), 3 not ready (one sentence)."""
+PyTorch sees CUDA. No arguments. Exit 0 ready (a summary line and the fornax-environment line), 3 not ready (one sentence)."""
 import argparse
 import importlib.metadata
 import importlib.util
@@ -49,8 +49,10 @@ def main(argv=None):
         transformers.PaddleOCRVLForConditionalGeneration  # noqa: B018  (a lazy attribute: this imports the model code)
     except Exception as e:
         fail(f"transformers {version('transformers')} has no PaddleOCR-VL ({type(e).__name__}): run fornax types setup document-parse")
-    print(f"Python {platform.python_version()}, PyTorch {torch.__version__} (CUDA {torch.version.cuda}), docling {version('docling')}, "
-          f"transformers {version('transformers')}, rapidocr {version('rapidocr')}; {torch.cuda.get_device_name(0)}")
+    environment = (f"PyTorch {torch.__version__} (CUDA {torch.version.cuda}), docling {version('docling')}, "
+                   f"transformers {version('transformers')}, rapidocr {version('rapidocr')}; {torch.cuda.get_device_name(0)}")
+    print(f"Python {platform.python_version()}, {environment}")
+    print(f"fornax-environment: {environment}")
     return 0
 
 
