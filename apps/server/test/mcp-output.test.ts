@@ -85,7 +85,7 @@ describe('get_output', () => {
     expect(original.rawPayload.equals(png)).toBe(true);
   });
 
-  test('text and JSON up to 60 kB come back as text; larger ones and other files as a link', async () => {
+  test('text and JSON up to 60 kB come back whole; larger text in parts; other files as a link', async () => {
     const job = await jobWith([['result.json', '{"words": 3}'], ['document.md', '# Nadpis'], ['big.txt', 'x'.repeat(60_001)], ['clip.mp4', 'MP4'], ['log.txt', 'all good', 'log']]);
     await job.complete();
     const client = await mcp.connect('/mcp', bearerHeader(job.alice));
@@ -100,8 +100,12 @@ describe('get_output', () => {
     expect(log.blocks[1]).toEqual({ type: 'text', text: 'all good' });
 
     const big = await get('big.txt');
-    expect(big.blocks).toHaveLength(1);
-    expect(JSON.parse(big.text)).toMatchObject({ name: 'big.txt', size: 60_001, download_url: expect.stringContaining('?sig='), note: expect.stringContaining('60 kB') });
+    expect(big.blocks.map((b) => b.type)).toEqual(['text', 'text']);
+    expect(JSON.parse(big.text)).toMatchObject({ name: 'big.txt', size: 60_001, offset: 0, next_offset: 60_000 });
+    expect(big.blocks[1]!.text).toBe('x'.repeat(60_000));
+    const rest = await callTool(client, 'get_output', { job_id: job.id, name: 'big.txt', offset: 60_000 });
+    expect(JSON.parse(rest.text)).toMatchObject({ offset: 60_000, next_offset: null });
+    expect(rest.blocks[1]!.text).toBe('x');
     const video = await get('clip.mp4');
     expect(video.blocks).toHaveLength(1);
     expect(JSON.parse(video.text)).toMatchObject({ name: 'clip.mp4', mime: 'video/mp4', download_url: expect.stringContaining('/outputs/clip.mp4?sig=') });
@@ -120,6 +124,29 @@ describe('get_output', () => {
     expect(Buffer.byteLength(tail)).toBeGreaterThan(59_990);
     expect(log.endsWith(tail)).toBe(true);
     expect(tail.startsWith('é')).toBe(true);
+  });
+
+  test('a log can be read from the start in parts; max_bytes sets the part size', async () => {
+    const log = `${'riadok ľščť\n'.repeat(5_000)}END`;
+    const job = await jobWith([['log.txt', log, 'log']]);
+    await job.complete();
+    const client = await mcp.connect('/mcp', bearerHeader(job.alice));
+    let offset: number | null = 0;
+    let text = '';
+    while (offset !== null) {
+      const r = await callTool(client, 'get_output', { job_id: job.id, name: 'log.txt', offset, max_bytes: 10_000 });
+      const info = JSON.parse(r.text);
+      expect(Buffer.byteLength(r.blocks[1]!.text!)).toBeLessThanOrEqual(10_000);
+      text += r.blocks[1]!.text!;
+      offset = info.next_offset;
+    }
+    expect(text).toBe(log);
+    const past = await callTool(client, 'get_output', { job_id: job.id, name: 'log.txt', offset: 10_000_000 });
+    expect(JSON.parse(past.text)).toMatchObject({ next_offset: null });
+    expect(past.blocks[1]!.text).toBe('');
+    // The SDK answers invalid arguments with an error result or a thrown protocol error: either is a refusal.
+    const refused = await client.callTool({ name: 'get_output', arguments: { job_id: job.id, name: 'log.txt', max_bytes: 999 } }).then((r) => r.isError === true, () => true);
+    expect(refused).toBe(true);
   });
 
   test("before the job has finished, for an unknown name and for another client's job it is a tool error", async () => {

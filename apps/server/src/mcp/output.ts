@@ -5,6 +5,7 @@ import type { JobRow } from '../domain/jobs.js';
 import { downloadableFile, jobFile } from '../domain/outputs.js';
 import { INLINE_IMAGE_BYTES, INLINE_TEXT_BYTES, isTextMime } from '../files/mime.js';
 import { imageInfo, PREVIEW_MAX_SOURCE_BYTES, PREVIEWABLE, renderPreview, serverPreviewName } from '../files/preview.js';
+import { textWindow } from '../files/text-window.js';
 import type { RouteDeps } from '../http/deps.js';
 import { downloadUrl } from '../http/links.js';
 import type { Block } from './types.js';
@@ -62,7 +63,7 @@ async function imageBlock(deps: RouteDeps, job: JobRow, f: FileRow): Promise<Blo
  * get_output: first a JSON block about the file with a signed download link; then an image block of its preview (or of
  * the file itself), at most 2000 px per side, or its text when it is short text; otherwise the JSON says to use the link.
  */
-export async function outputBlocks(deps: RouteDeps, job: JobRow, name: string): Promise<Block[]> {
+export async function outputBlocks(deps: RouteDeps, job: JobRow, name: string, window: { offset?: number; maxBytes?: number } = {}): Promise<Block[]> {
   if (!job.manifest) throw conflict(`the job is ${job.state}; its outputs are ready once it has finished`);
   const file = downloadableFile(deps.db, job, name);
   if (!file) throw notFound(`output ${name} not found; get_job lists the outputs`);
@@ -80,17 +81,22 @@ export async function outputBlocks(deps: RouteDeps, job: JobRow, name: string): 
     const image = await imageBlock(deps, job, candidate);
     if (image) return [json(candidate === file ? info : { ...info, preview: candidate.name }), image];
   }
-  if (file.kind === 'log' && file.size > INLINE_TEXT_BYTES) {
-    // Like the result page: the end of a long log is what tells how the job went.
-    const tail = await readOrGone(file, () => deps.store.tail(file.id, INLINE_TEXT_BYTES));
-    if (!tail.text.includes('\u0000')) return [json({ ...info, note: `the last ${INLINE_TEXT_BYTES / 1000} kB of the log; download all of it with the link` }), { type: 'text', text: tail.text }];
-    return [json({ ...info, note: 'not readable text: download it with the link' })];
+  if (file.kind === 'log' || isTextMime(file.mime)) {
+    // Spec 14 § 6.1: text in parts. Without an offset a long log starts with its end (how the job went), other text
+    // with its beginning.
+    const max = window.maxBytes ?? INLINE_TEXT_BYTES;
+    const fromEnd = window.offset === undefined && file.kind === 'log' && file.size > max;
+    const start = window.offset !== undefined ? Math.min(window.offset, file.size) : fromEnd ? file.size - max : 0;
+    const buf = await readOrGone(file, () => deps.store.readRange(file.id, start, Math.min(max, file.size - start)));
+    const w = textWindow(buf, start, file.size);
+    if (w.binary) return [json({ ...info, note: 'not readable text: download it with the link' })];
+    const whole = w.offset === 0 && w.nextOffset === null;
+    const note = whole
+      ? undefined
+      : fromEnd
+        ? `the last ${max / 1000} kB of the log; read it from the start with offset 0`
+        : `bytes ${w.offset} to ${w.nextOffset ?? file.size} of ${file.size}; pass next_offset as offset for the next part`;
+    return [json({ ...info, offset: w.offset, next_offset: w.nextOffset, ...(note ? { note } : {}) }), { type: 'text', text: w.text }];
   }
-  if (isTextMime(file.mime) && file.size <= INLINE_TEXT_BYTES) {
-    const data = await readOrGone(file, () => readFile(deps.store.pathOf(file.id)));
-    if (!data.includes(0)) return [json(info), { type: 'text', text: data.toString('utf8') }];
-    return [json({ ...info, note: 'not readable text: download it with the link' })];
-  }
-  const note = isTextMime(file.mime) ? `larger than ${INLINE_TEXT_BYTES / 1000} kB: download it with the link` : 'download it with the link';
-  return [json({ ...info, note })];
+  return [json({ ...info, note: 'download it with the link' })];
 }

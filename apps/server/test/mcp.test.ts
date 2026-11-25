@@ -42,6 +42,7 @@ describe('the MCP endpoint', () => {
     expect(ins).toContain('outputs_offset');
     expect(tools.find((x) => x.name === 'get_job')!.description).toContain('outputs_next_offset');
     expect(tools.find((x) => x.name === 'get_job')!.description).toContain('archive_url');
+    expect(tools.find((x) => x.name === 'get_output')!.description).toContain('next_offset');
     expect(tools.find((x) => x.name === 'list_jobs')!.description).toContain('result_url');
     expect(ins).toContain('environment');
     expect(tools.find((x) => x.name === 'list_job_types')!.description).toContain('environment');

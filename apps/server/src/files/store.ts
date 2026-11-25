@@ -82,4 +82,16 @@ export class FileStore {
       await fh.close();
     }
   }
+
+  /** Bytes [start, start + length) of a stored file (fewer at its end). */
+  async readRange(id: string, start: number, length: number): Promise<Buffer> {
+    const fh = await open(this.pathOf(id), 'r');
+    try {
+      const buf = Buffer.alloc(Math.max(0, length));
+      const { bytesRead } = await fh.read(buf, 0, buf.length, start);
+      return buf.subarray(0, bytesRead);
+    } finally {
+      await fh.close();
+    }
+  }
 }

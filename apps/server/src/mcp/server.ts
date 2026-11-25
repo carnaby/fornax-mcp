@@ -150,9 +150,11 @@ export function buildMcpServer(ctx: McpContext): McpServer {
       inputSchema: z.object({
         job_id: jobId,
         name: z.string().min(1).max(300).describe('An output name as get_job lists it, the preview name of an output, or the log name.'),
+        offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional().describe('Text: the byte to start at (next_offset of the previous answer); a log without it starts with its end.'),
+        max_bytes: z.number().int().min(1_000).max(60_000).optional().describe('Text: at most this many bytes per part; 60000 when left out.'),
       }),
     },
-    ({ job_id, name }) => runBlocks(ctx, (me) => outputBlocks(deps, getOwnJob(db, me.tokenId, job_id), name)),
+    ({ job_id, name, offset, max_bytes }) => runBlocks(ctx, (me) => outputBlocks(deps, getOwnJob(db, me.tokenId, job_id), name, { offset, maxBytes: max_bytes })),
   );
 
   server.registerTool(
