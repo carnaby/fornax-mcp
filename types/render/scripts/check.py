@@ -1,5 +1,6 @@
 """The render pack's check, inside Blender: blender -b --factory-startup --python-exit-code 1 --python check.py -- --ffmpeg <ffmpeg>
-Blender 4.2 or newer, a GPU for Cycles and ffmpeg with libx264. Exit 0 ready (a summary line and the
+Blender 4.2 or newer, a GPU for Cycles and ffmpeg with libx264; whether Eevee works is reported, never a reason to
+fail. Exit 0 ready (a summary line and the
 fornax-environment line), 3 not ready."""
 import os
 import subprocess
@@ -9,7 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import bpy  # noqa: E402
 from blender_gpu import enable_gpu  # noqa: E402
-from render_lib import check_args, environment_line, ffmpeg_version, has_libx264  # noqa: E402
+from render_lib import check_args, eevee_text, environment_line, ffmpeg_version, has_libx264, probe_eevee  # noqa: E402
 
 MINIMUM = (4, 2, 0)
 
@@ -34,5 +35,7 @@ except (OSError, subprocess.TimeoutExpired) as e:
 if not has_libx264(encoders.stdout):
     leave(3, "ffmpeg has no libx264 encoder: install an ffmpeg build with libx264")
 ffmpeg_text = ffmpeg_version(version.stdout) or "?"
-print(f"Blender {bpy.app.version_string}, Cycles on {kind}: {', '.join(names)}; ffmpeg {ffmpeg_text}", flush=True)
-print(environment_line(bpy.app.version_string, kind, names, ffmpeg_text), flush=True)
+backend, reason = probe_eevee(bpy.app.binary_path, os.path.join(os.path.dirname(os.path.abspath(__file__)), "eevee_probe.py"))
+eevee = eevee_text(backend)
+print(f"Blender {bpy.app.version_string}, Cycles on {kind}: {', '.join(names)}; ffmpeg {ffmpeg_text}; {eevee if backend else f'{eevee} ({reason})'}", flush=True)
+print(environment_line(bpy.app.version_string, kind, names, ffmpeg_text, eevee), flush=True)
