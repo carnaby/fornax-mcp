@@ -1,20 +1,28 @@
-"""Render a frame range of the input .blend with Cycles on the GPU (spec 6.5). Runs inside Blender:
+"""Render a frame range of the input .blend with Cycles or Eevee on the GPU (spec 6.5, spec 15). Runs inside Blender:
   blender -b --factory-startup --disable-autoexec --python-exit-code 1 --python render.py --
           --params <params.json> --scene <scene> --out <dir> --ffmpeg <ffmpeg>
 Writes <out>/frame_NNNN.<png|jpg>, a JPEG preview of each in <out>/previews/, and <out>/outputs.json; prints one
 progress line per frame. With video, ffmpeg then makes <out>/video.mp4 from the frames. Exit codes: 0 done; 1 failed
-(an exception, or ffmpeg failed); 2 the scene or the params are invalid; 3 Cycles finds no GPU.
+(an exception, or ffmpeg failed); 2 the scene or the params are invalid, or Eevee does not work on this worker; 3 Cycles
+finds no GPU.
 """
 import json
 import os
 import subprocess
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import bpy  # noqa: E402
 from blender_gpu import enable_gpu  # noqa: E402
-from render_lib import EXTENSIONS, FILE_FORMATS, InvalidParams, encoding_line, first_file_strip, first_refused_node, frame_name, frames, gpu_settings, outputs_entry, preview_name, preview_size, progress_line, script_args, video_args, video_entry  # noqa: E402
+from render_lib import EEVEE_REFUSED, EXTENSIONS, FILE_FORMATS, InvalidParams, backend_label, encoding_line, engine_of, eevee_engine_id, first_file_strip, first_refused_node, frame_name, frames, gpu_settings, outputs_entry, preview_name, preview_size, probe_eevee, progress_line, samples_for, script_args, timing_line, video_args, video_entry  # noqa: E402
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def engine_ids():
+    return [item.identifier for item in bpy.types.RenderSettings.bl_rna.properties["engine"].enum_items]
 
 
 def leave(code, message):
@@ -176,9 +184,18 @@ def main():
     refuse_nodes()
     refuse_sequencer_files()
     refuse_freestyle_scripts()
-    kind, names = enable_gpu()
-    if kind is None:
-        leave(3, "Cycles finds no GPU (OptiX, CUDA, HIP, oneAPI or Metal); check the driver, then fornax doctor render")
+    engine = engine_of(params)
+    if engine == "cycles":
+        kind, names = enable_gpu()
+        if kind is None:
+            leave(3, "Cycles finds no GPU (OptiX, CUDA, HIP, oneAPI or Metal); check the driver, then fornax doctor render")
+    else:
+        # Spec 15 § 4.2: the check's result is not known here; a failing probe is exit 2, so the type stays offered.
+        backend, reason = probe_eevee(bpy.app.binary_path, os.path.join(HERE, "eevee_probe.py"))
+        eevee_id = eevee_engine_id(engine_ids())
+        if backend is None or eevee_id is None:
+            print(f"render: the Eevee test render failed: {reason or 'this Blender has no Eevee'}", file=sys.stderr, flush=True)
+            leave(2, EEVEE_REFUSED)
 
     muted = mute_file_outputs()
     print(f"render: muted {muted} File Output node(s)", file=sys.stderr, flush=True)
@@ -193,12 +210,17 @@ def main():
     if scene.camera is None:
         leave(2, "the scene has no camera")
     scene.render.use_multiview = False
-    scene.render.engine = "CYCLES"
-    scene.cycles.device = "GPU"
-    on_card = gpu_settings(scene)
-    print(f"render: Cycles on {kind} ({', '.join(names)}); {'; '.join(on_card)}", file=sys.stderr, flush=True)
-    samples = params.get("samples", 128)
-    scene.cycles.samples = samples
+    samples = samples_for(params)
+    if engine == "cycles":
+        scene.render.engine = "CYCLES"
+        scene.cycles.device = "GPU"
+        on_card = gpu_settings(scene)
+        print(f"render: Cycles on {kind} ({', '.join(names)}); {'; '.join(on_card)}", file=sys.stderr, flush=True)
+        scene.cycles.samples = samples
+    else:
+        scene.render.engine = eevee_id
+        scene.eevee.taa_render_samples = samples
+        print(f"render: Eevee on {backend_label(backend)}", file=sys.stderr, flush=True)
     fmt = params.get("format", "png")
     settings = scene.render.image_settings
     if hasattr(settings, "media_type"):
@@ -212,14 +234,18 @@ def main():
     out = os.path.abspath(args.out)
     os.makedirs(os.path.join(out, "previews"), exist_ok=True)
     entries = {}
+    rendering = 0.0
     for done, frame in enumerate(todo, 1):
         scene.frame_set(frame)
         name = frame_name(frame, fmt)
         scene.render.filepath = os.path.join(out, name)
+        started = time.monotonic()
         bpy.ops.render.render(write_still=True)
+        rendering += time.monotonic() - started
         width, height = save_preview(os.path.join(out, name), os.path.join(out, preview_name(frame)))
-        entries[name] = outputs_entry(width, height, frame, samples, preview_name(frame))
+        entries[name] = outputs_entry(width, height, frame, samples, preview_name(frame), engine)
         print(progress_line(done, len(todo), frame), flush=True)
+    print(timing_line(engine, len(todo), rendering), file=sys.stderr, flush=True)
     if params.get("video", False):
         # Spec 14 § 5.2: the frames stay outputs; ffmpeg adds video.mp4.
         print(encoding_line(), flush=True)

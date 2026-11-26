@@ -1,8 +1,8 @@
 name: render
-version: 2
+version: 3
 description: >-
-  Render one frame or a frame range of a .blend scene with Blender Cycles on the GPU. Every frame is an output with a
-  JPEG preview; with video, also video.mp4 (H.264). The scene's own scripts never run.
+  Render one frame or a frame range of a .blend scene with Blender on the GPU: Cycles (default) or Eevee. Every frame
+  is an output with a JPEG preview; with video, also video.mp4 (H.264). The scene's own scripts never run.
 inputs:
   scene: { extensions: [.blend], max_mb: 2048 }
 params:
@@ -12,7 +12,13 @@ params:
   properties:
     frame_start: { type: integer, minimum: 0, maximum: 1048574, description: The first frame to render. }
     frame_end: { type: integer, minimum: 0, maximum: 1048574, description: The last frame (frame_start when left out). }
-    samples: { type: integer, minimum: 1, maximum: 4096, default: 128, description: Cycles samples per pixel. }
+    engine:
+      enum: [cycles, eevee]
+      default: cycles
+      description: >-
+        The render engine: cycles (path tracing) or eevee (fast rasterizer, for motion graphics). Whether this worker
+        can run Eevee is in the type's environment ("Eevee unavailable" when it cannot).
+    samples: { type: integer, minimum: 1, maximum: 4096, description: "Samples per pixel: Cycles samples (128 when left out) or Eevee render samples (64 when left out)." }
     format: { enum: [png, jpg], default: png, description: The image format of the frames. }
     video: { type: boolean, default: false, description: "After the frames, also make video.mp4 (H.264); a transparent background becomes black." }
     fps: { type: integer, minimum: 1, maximum: 120, default: 24, description: Frames per second of video.mp4. }
