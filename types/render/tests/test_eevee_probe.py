@@ -1,6 +1,7 @@
 """probe_eevee against a fake Blender: a Python script run through make_args (spec 15 § 3.1)."""
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -103,6 +104,43 @@ class Probe(unittest.TestCase):
             time.sleep(0.1)
         self.assertFalse(alive(child))
         self.assertProbeFolderGone()
+
+    def test_a_killed_caller_takes_the_probe_with_it(self):
+        """The worker ends a job or a check by its process group (Linux) or its tree (Windows), never by the probe's
+        own limit: the probe must be inside, or a hanging one keeps the GPU after a cancel."""
+        fake = os.path.join(self.dir, "fake_blender.py")
+        with open(fake, "w", encoding="utf-8", newline="") as f:
+            f.write(textwrap.dedent("""
+                import os, sys, time
+                open(os.path.join(sys.argv[2], "fake.pid"), "w").write(str(os.getpid()))
+                time.sleep(120)
+            """))
+        caller = os.path.join(self.dir, "caller.py")
+        with open(caller, "w", encoding="utf-8", newline="") as f:
+            f.write(textwrap.dedent("""
+                import sys
+                scripts, fake, here = sys.argv[1:4]
+                sys.path.insert(0, scripts)
+                from render_lib import probe_eevee
+                probe_eevee("blender", "probe.py", timeout_s=120, make_args=lambda b, s, out: [sys.executable, fake, out, here])
+            """))
+        scripts = str(Path(__file__).resolve().parent.parent / "scripts")
+        # Like the worker runs a tool: its own process group on Linux, a plain child on Windows.
+        parent = subprocess.Popen([sys.executable, caller, scripts, fake, self.dir], start_new_session=os.name != "nt")
+        pid_file = Path(self.dir, "fake.pid")
+        deadline = time.monotonic() + 20
+        while not (pid_file.exists() and pid_file.read_text()) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        probe = int(pid_file.read_text())
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(parent.pid)], capture_output=True)
+        else:
+            os.killpg(parent.pid, signal.SIGKILL)
+        parent.wait()
+        deadline = time.monotonic() + 10
+        while alive(probe) and time.monotonic() < deadline:
+            time.sleep(0.1)
+        self.assertFalse(alive(probe))
 
     def test_a_blender_that_does_not_exist(self):
         missing = os.path.join(self.dir, "no-such-blender")

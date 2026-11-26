@@ -236,8 +236,34 @@ def eevee_probe_args(blender, script, out_dir):
     return [blender, "-b", "--factory-startup", "--disable-autoexec", "--python-exit-code", "1", "--python", script, "--", out_dir]
 
 
+def descendants(pid):
+    """Linux: every process below pid, from the parent links in /proc; [] without /proc."""
+    children = {}
+    try:
+        entries = os.listdir("/proc")
+    except OSError:
+        return []
+    for entry in entries:
+        if not entry.isdigit():
+            continue
+        try:
+            with open(f"/proc/{entry}/stat", encoding="utf-8", errors="replace") as f:
+                ppid = int(f.read().rsplit(")", 1)[1].split()[1])
+        except (OSError, ValueError, IndexError):
+            continue
+        children.setdefault(ppid, []).append(int(entry))
+    found, todo = [], [pid]
+    while todo:
+        for child in children.get(todo.pop(), []):
+            found.append(child)
+            todo.append(child)
+    return found
+
+
 def kill_tree(p):
-    """Ends the process and every process it started (Blender may compile shaders in child processes), then reaps it."""
+    """Ends the process and every process it started (Blender may compile shaders in child processes), then reaps it.
+    The probe stays in its caller's process group, so the worker's own kill of a job or check reaches it too; here,
+    at the probe's own limit, its tree is found by parent links (Windows taskkill /T, Linux /proc)."""
     if os.name == "nt":
         try:
             subprocess.run(["taskkill", "/T", "/F", "/PID", str(p.pid)], stdin=subprocess.DEVNULL, capture_output=True, timeout=10)
@@ -245,9 +271,14 @@ def kill_tree(p):
             pass
     else:
         try:
-            os.killpg(p.pid, signal.SIGKILL)  # the probe runs in its own session: its group is its tree
+            os.kill(p.pid, signal.SIGSTOP)  # no new children while the tree is read
         except OSError:
             pass
+        for pid in descendants(p.pid):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
     try:
         p.kill()
     except OSError:
@@ -282,7 +313,7 @@ def probe_eevee(blender, script, timeout_s=EEVEE_PROBE_TIMEOUT_S, make_args=eeve
         try:
             with open(stdout, "wb") as out:
                 p = subprocess.Popen(make_args(blender, script, tmp), stdin=subprocess.DEVNULL, stdout=out,
-                                     stderr=subprocess.DEVNULL, start_new_session=os.name != "nt")
+                                     stderr=subprocess.DEVNULL)
         except OSError as e:
             return None, f"Blender does not run ({type(e).__name__})"
         try:
