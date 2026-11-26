@@ -10,6 +10,16 @@ PREVIEW_MAX_PX = 1024
 MAX_FRAMES = 500
 EXTENSIONS = {"png": "png", "jpg": "jpg"}
 FILE_FORMATS = {"png": "PNG", "jpg": "JPEG"}
+# Spec 15: the engines of the engine parameter (the log's names), their samples when the job gives none, and the
+# Eevee probe (eevee_probe.py prints EEVEE_PROBE_LINE + the GPU backend).
+ENGINES = {"cycles": "Cycles", "eevee": "Eevee"}
+DEFAULT_SAMPLES = {"cycles": 128, "eevee": 64}
+EEVEE_PROBE_LINE = "fornax-eevee: "
+EEVEE_PROBE_TIMEOUT_S = 60
+EEVEE_REFUSED = 'Eevee does not work on this worker (list_job_types says "Eevee unavailable"); use engine cycles'
+BACKEND_LABELS = {"OPENGL": "OpenGL", "VULKAN": "Vulkan", "METAL": "Metal"}
+# types/README.md: the environment text after "fornax-environment: " is at most 200 characters; the worker cuts the end.
+ENVIRONMENT_MAX = 200
 
 
 # Geometry nodes that read a file by path (OBJ, PLY, STL, CSV, Text, VDB import in recent Blender).
@@ -65,12 +75,55 @@ def preview_size(width, height, limit=PREVIEW_MAX_PX):
     return max(1, round(width * limit / longer)), max(1, round(height * limit / longer))
 
 
-def outputs_entry(width, height, frame, samples, preview):
-    return {"meta": {"frame": frame, "width": width, "height": height, "samples": samples}, "preview": preview}
+def outputs_entry(width, height, frame, samples, preview, engine):
+    return {"meta": {"frame": frame, "width": width, "height": height, "samples": samples, "engine": engine}, "preview": preview}
 
 
 def progress_line(done, total, frame):
     return json.dumps({"progress": round(done / total, 4), "message": f"frame {frame} ({done}/{total})"})
+
+
+def eevee_engine_id(ids):
+    """Blender's identifier of Eevee among the render engine ids: BLENDER_EEVEE in 5.x, BLENDER_EEVEE_NEXT in 4.2-4.x;
+    None when this Blender has none."""
+    return next((i for i in ids if i.startswith("BLENDER_EEVEE")), None)
+
+
+def engine_of(params):
+    """The server fills the default (cycles); a job file without it is a v2 job: Cycles."""
+    return params.get("engine", "cycles")
+
+
+def samples_for(params):
+    """The job's samples, or the engine's default (spec 15 § 2: the schema has no default)."""
+    return params.get("samples", DEFAULT_SAMPLES[engine_of(params)])
+
+
+def timing_line(engine, frames_count, seconds):
+    """The log's last render line: the time of the renders only (no previews, no video)."""
+    per = seconds / frames_count if frames_count else 0.0
+    return f"render: {frames_count} frame(s) with {ENGINES[engine]} in {seconds:.1f} s ({per:.2f} s per frame)"
+
+
+def backend_label(raw):
+    """gpu.platform.backend_type_get() for people: OPENGL -> OpenGL."""
+    return BACKEND_LABELS.get(raw, raw)
+
+
+def eevee_text(backend):
+    """The environment's Eevee part: the raw backend of a passing probe, or None."""
+    return f"Eevee on {backend_label(backend)}" if backend else "Eevee unavailable"
+
+
+def probe_result(stdout):
+    """The raw backend of the last EEVEE_PROBE_LINE line of the probe's stdout, or None."""
+    prefix = EEVEE_PROBE_LINE.strip()  # lines are stripped: "fornax-eevee: " alone becomes "fornax-eevee:"
+    found = None
+    for line in stdout.splitlines():
+        line = line.strip()
+        if line.startswith(prefix):
+            found = line[len(prefix):].strip() or None
+    return found
 
 
 def refused_node(bl_idname, mode):
@@ -101,10 +154,17 @@ def first_file_strip(strip_types):
     return None
 
 
-def environment_line(version_string, kind, names, ffmpeg=None):
-    """The check's line for list_job_types (types/README.md): Blender's version, the Cycles device, the GPUs and ffmpeg."""
-    line = f"fornax-environment: Blender {version_string}, Cycles on {kind} ({', '.join(names)})"
-    return f"{line}; ffmpeg {ffmpeg}" if ffmpeg else line
+def environment_line(version_string, kind, names, ffmpeg=None, eevee=None):
+    """The check's line for list_job_types (types/README.md): Blender's version, the Cycles device, the GPUs, ffmpeg and
+    whether Eevee works (eevee_text). The text stays within ENVIRONMENT_MAX characters: a long GPU list is shortened,
+    so that the end (ffmpeg, Eevee) is never the part the worker cuts. "Blender X.Y" stays first (spec 14 § 3.2)."""
+    head = f"Blender {version_string}, Cycles on {kind} ("
+    tail = ")" + (f"; ffmpeg {ffmpeg}" if ffmpeg else "") + (f"; {eevee}" if eevee else "")
+    gpus = ", ".join(names)
+    room = ENVIRONMENT_MAX - len(head) - len(tail)
+    if len(gpus) > room:
+        gpus = gpus[:max(0, room - 3)] + "..."
+    return f"fornax-environment: {head}{gpus}{tail}"
 
 
 def gpu_settings(scene):

@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-from render_lib import MAX_FRAMES, InvalidParams, check_args, encoding_line, environment_line, ffmpeg_version, first_file_strip, first_refused_node, frame_name, frames, gpu_settings, has_libx264, outputs_entry, preview_name, preview_size, progress_line, refused_node, script_args, video_args, video_entry  # noqa: E402
+from render_lib import DEFAULT_SAMPLES, EEVEE_REFUSED, ENVIRONMENT_MAX, MAX_FRAMES, InvalidParams, backend_label, check_args, eevee_engine_id, eevee_text, encoding_line, engine_of, environment_line, ffmpeg_version, first_file_strip, first_refused_node, frame_name, frames, gpu_settings, has_libx264, outputs_entry, preview_name, preview_size, probe_result, progress_line, refused_node, samples_for, script_args, timing_line, video_args, video_entry  # noqa: E402
 
 
 class ScriptArgs(unittest.TestCase):
@@ -58,8 +58,8 @@ class PreviewSize(unittest.TestCase):
 class OutputsAndProgress(unittest.TestCase):
     def test_outputs_entry(self):
         self.assertEqual(
-            outputs_entry(1920, 1080, 3, 128, "previews/frame_0003.jpg"),
-            {"meta": {"frame": 3, "width": 1920, "height": 1080, "samples": 128}, "preview": "previews/frame_0003.jpg"},
+            outputs_entry(1920, 1080, 3, 128, "previews/frame_0003.jpg", "cycles"),
+            {"meta": {"frame": 3, "width": 1920, "height": 1080, "samples": 128, "engine": "cycles"}, "preview": "previews/frame_0003.jpg"},
         )
 
     def test_progress_line_is_the_workers_format(self):
@@ -176,6 +176,67 @@ class FfmpegCheck(unittest.TestCase):
     def test_environment_line_with_ffmpeg(self):
         self.assertEqual(environment_line("5.2.2 LTS", "OPTIX", ["Fake GPU"], "9.0.2"),
                          "fornax-environment: Blender 5.2.2 LTS, Cycles on OPTIX (Fake GPU); ffmpeg 9.0.2")
+
+
+class Engine(unittest.TestCase):
+    def test_eevee_engine_id_in_5x_and_4x(self):
+        self.assertEqual(eevee_engine_id(["BLENDER_EEVEE", "BLENDER_WORKBENCH", "CYCLES"]), "BLENDER_EEVEE")
+        self.assertEqual(eevee_engine_id(["BLENDER_WORKBENCH", "BLENDER_EEVEE_NEXT"]), "BLENDER_EEVEE_NEXT")
+        self.assertIsNone(eevee_engine_id(["BLENDER_WORKBENCH", "CYCLES"]))
+
+    def test_engine_of_params_as_the_server_fills_them(self):
+        self.assertEqual(engine_of({"frame_start": 1, "engine": "cycles"}), "cycles")
+        self.assertEqual(engine_of({"frame_start": 1, "engine": "eevee"}), "eevee")
+        self.assertEqual(engine_of({"frame_start": 1}), "cycles")  # a v2 job file
+
+    def test_samples_for(self):
+        self.assertEqual(DEFAULT_SAMPLES, {"cycles": 128, "eevee": 64})
+        self.assertEqual(samples_for({"engine": "cycles"}), 128)
+        self.assertEqual(samples_for({"engine": "eevee"}), 64)
+        self.assertEqual(samples_for({}), 128)
+        self.assertEqual(samples_for({"engine": "eevee", "samples": 16}), 16)
+        self.assertEqual(samples_for({"engine": "cycles", "samples": 512}), 512)
+
+    def test_timing_line(self):
+        self.assertEqual(timing_line("eevee", 150, 98.24), "render: 150 frame(s) with Eevee in 98.2 s (0.65 s per frame)")
+        self.assertEqual(timing_line("cycles", 1, 3.75), "render: 1 frame(s) with Cycles in 3.8 s (3.75 s per frame)")
+        self.assertEqual(timing_line("cycles", 0, 0.0), "render: 0 frame(s) with Cycles in 0.0 s (0.00 s per frame)")
+
+    def test_the_refusal_names_the_way_out(self):
+        self.assertEqual(EEVEE_REFUSED, 'Eevee does not work on this worker (list_job_types says "Eevee unavailable"); use engine cycles')
+
+
+class EeveeEnvironment(unittest.TestCase):
+    def test_backend_labels(self):
+        self.assertEqual([backend_label(b) for b in ("OPENGL", "VULKAN", "METAL", "OTHER")], ["OpenGL", "Vulkan", "Metal", "OTHER"])
+
+    def test_eevee_text(self):
+        self.assertEqual(eevee_text("OPENGL"), "Eevee on OpenGL")
+        self.assertEqual(eevee_text(None), "Eevee unavailable")
+
+    def test_probe_result_takes_the_last_line(self):
+        self.assertEqual(probe_result("Blender 5.2.2\nfornax-eevee: VULKAN\n  fornax-eevee: OPENGL  \nSaved: x"), "OPENGL")
+        self.assertIsNone(probe_result("Blender 5.2.2\nSaved: x"))
+        self.assertIsNone(probe_result("fornax-eevee: "))
+        self.assertIsNone(probe_result(""))
+
+    def test_environment_line_with_eevee(self):
+        self.assertEqual(environment_line("5.2.2 LTS", "OPTIX", ["Fake GPU"], "9.0.2", "Eevee on OpenGL"),
+                         "fornax-environment: Blender 5.2.2 LTS, Cycles on OPTIX (Fake GPU); ffmpeg 9.0.2; Eevee on OpenGL")
+        self.assertEqual(environment_line("5.2.2 LTS", "OPTIX", ["Fake GPU"], "9.0.2", "Eevee unavailable"),
+                         "fornax-environment: Blender 5.2.2 LTS, Cycles on OPTIX (Fake GPU); ffmpeg 9.0.2; Eevee unavailable")
+
+    def test_a_long_gpu_list_is_shortened_eevee_stays(self):
+        names = [f"Example Vendor Graphics Card Number {i} With A Long Name" for i in range(6)]
+        line = environment_line("5.2.2 LTS", "OPTIX", names, "9.0.2-full_build-example", "Eevee unavailable")
+        text = line[len("fornax-environment: "):]
+        self.assertEqual(len(text), ENVIRONMENT_MAX)
+        self.assertTrue(text.startswith("Blender 5.2.2 LTS, Cycles on OPTIX (Example Vendor"))
+        self.assertTrue(text.endswith("...); ffmpeg 9.0.2-full_build-example; Eevee unavailable"))
+
+    def test_a_short_line_is_not_touched(self):
+        line = environment_line("5.2.2 LTS", "OPTIX", ["Fake GPU"], "9.0.2", "Eevee on OpenGL")
+        self.assertNotIn("...", line)
 
 
 if __name__ == "__main__":
