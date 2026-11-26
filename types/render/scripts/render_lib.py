@@ -3,6 +3,11 @@ and which nodes and sequencer strips make a scene invalid."""
 import argparse
 import json
 import os
+import shutil
+import signal
+import subprocess
+import tempfile
+import time
 
 PREVIEW_MAX_PX = 1024
 # The worker accepts at most 1000 output files per job and every frame writes two (the frame and its preview):
@@ -224,3 +229,71 @@ def ffmpeg_version(text):
 def has_libx264(text):
     """Whether `ffmpeg -encoders` lists the libx264 encoder."""
     return any(len(line.split()) >= 2 and line.split()[1] == "libx264" for line in text.splitlines())
+
+
+def eevee_probe_args(blender, script, out_dir):
+    """The probe's command: Blender without this PC's add-ons and startup file, eevee_probe.py writing into out_dir."""
+    return [blender, "-b", "--factory-startup", "--disable-autoexec", "--python-exit-code", "1", "--python", script, "--", out_dir]
+
+
+def kill_tree(p):
+    """Ends the process and every process it started (Blender may compile shaders in child processes), then reaps it."""
+    if os.name == "nt":
+        try:
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(p.pid)], stdin=subprocess.DEVNULL, capture_output=True, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            pass
+    else:
+        try:
+            os.killpg(p.pid, signal.SIGKILL)  # the probe runs in its own session: its group is its tree
+        except OSError:
+            pass
+    try:
+        p.kill()
+    except OSError:
+        pass
+    p.wait()
+
+
+def remove_tree(path, wait_s=5.0):
+    """Removes a folder; Windows keeps a killed process's files locked for a moment, so it retries until wait_s.
+    Never raises; False when the folder stayed."""
+    deadline = time.monotonic() + wait_s
+    while True:
+        try:
+            shutil.rmtree(path)
+            return True
+        except FileNotFoundError:
+            return True
+        except OSError:
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.05)
+
+
+def probe_eevee(blender, script, timeout_s=EEVEE_PROBE_TIMEOUT_S, make_args=eevee_probe_args):
+    """Spec 15 § 3.1: an Eevee test render in its own Blender process (a crash there must not end the caller).
+    (backend, None) when it worked, (None, reason) otherwise; the reason names no path and no tool output.
+    The probe's folder (its frame and stdout) is removed in every case."""
+    tmp = tempfile.mkdtemp(prefix="fornax-eevee-")
+    try:
+        stdout = os.path.join(tmp, "stdout.txt")
+        # stdout to a file, not a pipe: a grandchild that outlives a kill cannot block reading a pipe.
+        try:
+            with open(stdout, "wb") as out:
+                p = subprocess.Popen(make_args(blender, script, tmp), stdin=subprocess.DEVNULL, stdout=out,
+                                     stderr=subprocess.DEVNULL, start_new_session=os.name != "nt")
+        except OSError as e:
+            return None, f"Blender does not run ({type(e).__name__})"
+        try:
+            code = p.wait(timeout=timeout_s)
+        except subprocess.TimeoutExpired:
+            kill_tree(p)
+            return None, f"the test render did not finish within {timeout_s:g} s"
+        if code != 0:
+            return None, f"the test render ended with exit code {code}"
+        with open(stdout, encoding="utf-8", errors="replace") as f:
+            backend = probe_result(f.read())
+        return (backend, None) if backend else (None, "the test render gave no result")
+    finally:
+        remove_tree(tmp)
