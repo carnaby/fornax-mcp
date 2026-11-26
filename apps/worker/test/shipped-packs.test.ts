@@ -29,7 +29,7 @@ describe('built-in type packs', () => {
 
   test("render: Blender never runs the scene's scripts and is told which file the input is", () => {
     const pack = loadPack(shippedPack('render')!);
-    expect(pack.contract).toMatchObject({ name: 'render', version: 2, max_runtime_s: 6 * 3600 });
+    expect(pack.contract).toMatchObject({ name: 'render', version: 3, max_runtime_s: 6 * 3600 });
     expect(pack.contract.params.required).toEqual(['frame_start']);
     expect(pack.impl.tools).toEqual(['blender', 'ffmpeg']);
     expect(pack.impl.setup).toBeUndefined();
@@ -44,6 +44,14 @@ describe('built-in type packs', () => {
     expect(props.video).toMatchObject({ type: 'boolean', default: false });
     expect(props.fps).toMatchObject({ type: 'integer', minimum: 1, maximum: 120, default: 24 });
     expect(props.crf).toMatchObject({ type: 'integer', minimum: 0, maximum: 51, default: 18 });
+    // Spec 15 § 2: engine, and samples without a default (the pack picks 128 for Cycles, 64 for Eevee).
+    expect(pack.contract.description).toContain('Cycles (default) or Eevee');
+    expect(props.engine).toMatchObject({ enum: ['cycles', 'eevee'], default: 'cycles' });
+    expect(props.engine!.description).toContain('Eevee unavailable');
+    expect(props.samples).toMatchObject({ type: 'integer', minimum: 1, maximum: 4096 });
+    expect(props.samples).not.toHaveProperty('default');
+    expect(props.samples!.description).toContain('128 when left out');
+    expect(props.samples!.description).toContain('64 when left out');
   });
 
   test("lease: no tools, no inputs; it runs on the worker's own Node", () => {
