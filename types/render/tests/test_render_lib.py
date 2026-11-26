@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-from render_lib import DEFAULT_SAMPLES, EEVEE_REFUSED, ENVIRONMENT_MAX, MAX_FRAMES, InvalidParams, backend_label, check_args, eevee_engine_id, eevee_text, encoding_line, engine_of, environment_line, ffmpeg_version, first_file_strip, first_refused_node, frame_name, frames, gpu_settings, has_libx264, outputs_entry, preview_name, preview_size, probe_result, progress_line, refused_node, samples_for, script_args, timing_line, video_args, video_entry  # noqa: E402
+from render_lib import DEFAULT_SAMPLES, EEVEE_REFUSED, ENVIRONMENT_MAX, MAX_FRAMES, InvalidParams, backend_label, check_args, eevee_engine_id, eevee_text, encoding_line, engine_of, environment_line, ffmpeg_version, first_file_strip, first_refused_node, frame_name, frames, gpu_backend, gpu_settings, has_libx264, outputs_entry, preview_name, preview_size, probe_result, progress_line, refused_node, samples_for, script_args, timing_line, video_args, video_entry  # noqa: E402
 
 
 class ScriptArgs(unittest.TestCase):
@@ -213,6 +213,14 @@ class EeveeEnvironment(unittest.TestCase):
     def test_eevee_text(self):
         self.assertEqual(eevee_text("OPENGL"), "Eevee on OpenGL")
         self.assertEqual(eevee_text(None), "Eevee unavailable")
+
+    def test_a_backend_query_that_fails_after_a_good_render_still_means_eevee_works(self):
+        def refuses():
+            raise SystemError("GPU functions for drawing requires the gpu module to be initialized")
+        self.assertEqual(gpu_backend(lambda: "VULKAN"), "VULKAN")
+        self.assertEqual(gpu_backend(refuses), "UNKNOWN")
+        self.assertEqual(gpu_backend(lambda: ""), "UNKNOWN")
+        self.assertEqual(eevee_text(gpu_backend(refuses)), "Eevee on an unknown GPU backend")
 
     def test_probe_result_takes_the_last_line(self):
         self.assertEqual(probe_result("Blender 5.2.2\nfornax-eevee: VULKAN\n  fornax-eevee: OPENGL  \nSaved: x"), "OPENGL")

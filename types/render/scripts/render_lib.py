@@ -22,7 +22,7 @@ DEFAULT_SAMPLES = {"cycles": 128, "eevee": 64}
 EEVEE_PROBE_LINE = "fornax-eevee: "
 EEVEE_PROBE_TIMEOUT_S = 60
 EEVEE_REFUSED = 'Eevee does not work on this worker (list_job_types says "Eevee unavailable"); use engine cycles'
-BACKEND_LABELS = {"OPENGL": "OpenGL", "VULKAN": "Vulkan", "METAL": "Metal"}
+BACKEND_LABELS = {"OPENGL": "OpenGL", "VULKAN": "Vulkan", "METAL": "Metal", "UNKNOWN": "an unknown GPU backend"}
 # types/README.md: the environment text after "fornax-environment: " is at most 200 characters; the worker cuts the end.
 ENVIRONMENT_MAX = 200
 
@@ -113,6 +113,16 @@ def timing_line(engine, frames_count, seconds):
 def backend_label(raw):
     """gpu.platform.backend_type_get() for people: OPENGL -> OpenGL."""
     return BACKEND_LABELS.get(raw, raw)
+
+
+def gpu_backend(read):
+    """The probe's backend after a render that worked: read() is gpu.platform.backend_type_get. Only Blender 5.2 is
+    known to answer it in background mode; a Blender that refuses still rendered with Eevee, so this is UNKNOWN, never
+    a failed probe."""
+    try:
+        return read() or "UNKNOWN"
+    except Exception:  # noqa: BLE001 - any refusal of the gpu module
+        return "UNKNOWN"
 
 
 def eevee_text(backend):

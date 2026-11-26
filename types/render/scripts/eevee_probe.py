@@ -8,7 +8,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import bpy  # noqa: E402
-from render_lib import EEVEE_PROBE_LINE, eevee_engine_id  # noqa: E402
+from render_lib import EEVEE_PROBE_LINE, eevee_engine_id, gpu_backend  # noqa: E402
 
 
 def main():
@@ -28,7 +28,7 @@ def main():
     scene.render.filepath = os.path.join(out, "probe.png")
     bpy.ops.render.render(write_still=True)
     import gpu  # initialised by the render: before it, the gpu module refuses in background mode
-    print(f"{EEVEE_PROBE_LINE}{gpu.platform.backend_type_get()}", flush=True)
+    print(f"{EEVEE_PROBE_LINE}{gpu_backend(gpu.platform.backend_type_get)}", flush=True)
     sys.stdout.flush()
     os._exit(0)
 
