@@ -42,12 +42,13 @@ describe('the lease tool', () => {
   test('done ends it with 0 and removes its folder, <data>/leases/<job id>, the folder fornax lease uses', async () => {
     const { pack, dir } = install();
     const run = tool(pack, { minutes: 5, label: 'blender' });
-    await waitFor(() => existsSync(dir), 5000, 'the lease folder');
+    // The folder exists before the first tick prints: a done written in between ends the lease before any line.
+    await waitFor(() => run.out.join('').includes('{"progress":0,"message":"blender, 0 min"}'), 5000, 'the first progress line');
+    expect(existsSync(dir)).toBe(true);
     writeFileSync(join(dir, 'alive'), 'S1');
     writeFileSync(join(dir, 'done'), 'S1');
     expect(await run.code).toBe(0);
     expect(existsSync(dir)).toBe(false);
-    expect(run.out.join('')).toContain('{"progress":0,"message":"blender, 0 min"}');
   });
 
   test('a done written before the tool started (a program quicker than the worker) ends it at once', async () => {
