@@ -57,18 +57,20 @@ describe('addToPath on Windows (seams, no registry)', () => {
 
 describe('PowerShell on Windows (real powershell.exe, reads only)', () => {
   // A cold Windows PowerShell on a busy CI runner took over 30 s to start (15 s the next time): these tests check the
-  // output, not the speed, so they wait longer than the install does.
+  // output, not the speed, so they wait longer than the install does. The test itself waits longer still: with vitest's
+  // 30 s a PowerShell that answered after 37 s failed the test.
   const SLOW_RUNNER_MS = 120_000;
+  const TEST_MS = SLOW_RUNNER_MS + 10_000;
 
   test.runIf(process.platform === 'win32')('output is read as UTF-8 (Windows PowerShell writes the OEM code page otherwise)', () => {
     expect(psOut('[string][char]0x017E + [char]0x00E1', {}, SLOW_RUNNER_MS).trimEnd()).toBe('\u017E\u00E1');
-  });
+  }, TEST_MS);
 
   test.runIf(process.platform === 'win32')('the user Path is read raw from the registry with its kind (reads only, never written)', () => {
     const { value, kind } = readUserPathRaw(SLOW_RUNNER_MS);
     expect(['String', 'ExpandString']).toContain(kind);
     if (value !== null) expect(value).not.toMatch(/[\r\n]/);
-  });
+  }, TEST_MS);
 });
 
 describe.skipIf(process.platform === 'win32')('addToPath on Linux (symlinks need no privilege here)', () => {
