@@ -1,12 +1,17 @@
 # render
 
-Renders frames of a `.blend` scene with Blender Cycles on the GPU. Every frame is an output; the pack makes a JPEG
-preview of each (at most 1024 px), which `get_output` and the result page show.
+Renders frames of a `.blend` scene with Blender on the GPU: Cycles (default) or Eevee (parameter `engine`). Every
+frame is an output; the pack makes a JPEG preview of each (at most 1024 px), which `get_output` and the result page
+show.
 
 ## What you need
 
 - [Blender](https://www.blender.org/download/) 4.2 or newer, and a GPU Cycles can use (NVIDIA: OptiX or CUDA; AMD: HIP;
   Intel: oneAPI; Apple: Metal).
+- For Eevee: a GPU with OpenGL 4.3 or Vulkan, and on Windows a worker that runs in a signed-in user's session (the
+  tray or a terminal). A worker running as a service without a desktop has no Eevee; Cycles still works. The check
+  renders one small Eevee frame: `environment` says `Eevee on OpenGL` (or Vulkan) or `Eevee unavailable`, and
+  `fornax doctor render` gives the reason.
 - Its path in `worker.yaml`. On Windows give `blender.exe` itself, not `blender-launcher.exe`: the launcher starts
   Blender and ends at once, so the worker could neither follow nor stop the render.
 - ffmpeg with the libx264 encoder, for `video` (the same `tools.ffmpeg` as tts); `fornax doctor render` says when it
@@ -21,7 +26,7 @@ preview of each (at most 1024 px), which `get_output` and the result page show.
     fornax types install render
     fornax doctor render
 
-There is no setup step: the pack only checks Blender's version, the GPU and ffmpeg.
+There is no setup step: the pack only checks Blender's version, the GPU and ffmpeg, and tries Eevee.
 
 ## Safety
 
@@ -39,13 +44,20 @@ switched off, so a scene cannot read files of this PC, write outside the job's o
 
 ## Parameters
 
-`frame_start` (required), `frame_end` (default `frame_start`), `samples` (default 128), `format` (`png` or `jpg`).
+`engine` (`cycles` or `eevee`, default `cycles`), `frame_start` (required), `frame_end` (default `frame_start`),
+`samples` (default 128 with Cycles, 64 with Eevee), `format` (`png` or `jpg`).
 `video` (default `false`: also `video.mp4`, H.264), `fps` (default 24), `crf` (default 18). With video, at most 499
 frames and at least 2.
 At most 500 frames per job; split a long animation into several jobs with the same `group`.
+An Eevee job on a worker whose `environment` says `Eevee unavailable` fails at once (invalid input) and tells to use
+`cycles`. The log ends with the time per frame of either engine.
 
 ## Smoke test
 
     blender -b --factory-startup --python scripts/make_test_scene.py -- test.blend
 
 makes a small three-frame scene to submit as a job.
+
+    blender -b --factory-startup --python scripts/make_test_scene.py -- motion.blend --motion
+
+makes a 150-frame logo intro (1080p, 30 fps) to compare both engines.
