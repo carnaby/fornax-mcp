@@ -145,6 +145,19 @@ describe('the MCP endpoint', () => {
     expect(byName.submit_job!.description).toContain('Use high for work someone is waiting for right now');
   });
 
+  test('every tool refuses an argument it does not know and names it, instead of ignoring it', async () => {
+    const client = await mcp.connect('/mcp', bearerHeader(issueToken(t.db, 'alice')));
+    const { tools } = await client.listTools();
+    for (const tool of tools) {
+      // The SDK answers invalid arguments with an error result or a thrown protocol error: either is a refusal.
+      const text = await client
+        .callTool({ name: tool.name, arguments: { ...(ARGS[tool.name] ?? {}), pages: 10 } })
+        .then((r) => (r.isError === true ? ((r.content as { text?: string }[])[0]?.text ?? '') : 'accepted'), (e: Error) => e.message);
+      expect(text, tool.name).not.toBe('accepted');
+      expect(text, tool.name).toContain('pages');
+    }
+  });
+
   test('GET and DELETE are 405 on both paths', async () => {
     const alice = issueToken(t.db, 'alice');
     for (const method of ['GET', 'DELETE']) {

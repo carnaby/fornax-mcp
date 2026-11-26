@@ -64,7 +64,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
   );
   const jobId = z.string().min(1).max(40).describe('The job_id from submit_job or list_jobs.');
 
-  server.registerTool('list_job_types', { title: T.list_job_types, description: D.list_job_types, annotations: READS, inputSchema: z.object({}) }, () =>
+  server.registerTool('list_job_types', { title: T.list_job_types, description: D.list_job_types, annotations: READS, inputSchema: z.strictObject({}) }, () =>
     runJson(ctx, () => ({ types: offeredTypes(db).map(typeView), worker: workerOnline(db, deps.clock()) })),
   );
 
@@ -74,7 +74,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
       title: T.create_upload,
       description: createUploadDescription(deps.config.retention.orphanUploadMs),
       annotations: CREATES,
-      inputSchema: z.object({
+      inputSchema: z.strictObject({
         name: z.string().min(1).max(500).describe('The file name with its extension, e.g. "scene.blend"; the job type decides which extensions an input accepts.'),
       }),
     },
@@ -87,7 +87,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
       title: T.submit_job,
       description: D.submit_job,
       annotations: CREATES,
-      inputSchema: z.object({
+      inputSchema: z.strictObject({
         type: z.string().min(1).max(40).describe('A type name from list_job_types.'),
         params: z.record(z.string(), z.unknown()).default({}).describe("Parameters as the type's schema describes them."),
         inputs: z.record(z.string(), z.string().min(1).max(40)).default({}).describe('Input name to file_id from create_upload, after the upload finished.'),
@@ -118,7 +118,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
       title: T.get_job,
       description: D.get_job,
       annotations: READS,
-      inputSchema: z.object({
+      inputSchema: z.strictObject({
         job_id: jobId,
         wait_seconds: z
           .number().int().min(0).max(MAX_MCP_JOB_WAIT_S).optional()
@@ -147,7 +147,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
       title: T.get_output,
       description: D.get_output,
       annotations: READS,
-      inputSchema: z.object({
+      inputSchema: z.strictObject({
         job_id: jobId,
         name: z.string().min(1).max(300).describe('An output name as get_job lists it, the preview name of an output, or the log name.'),
         offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional().describe('Text: the byte to start at (next_offset of the previous answer); a log without it starts with its end.'),
@@ -163,7 +163,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
       title: T.list_jobs,
       description: D.list_jobs,
       annotations: READS,
-      inputSchema: z.object({
+      inputSchema: z.strictObject({
         state: z.enum(JOB_STATES).optional(),
         group: z.string().regex(GROUP).optional(),
         limit: z.number().int().min(1).max(200).default(20),
@@ -172,7 +172,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
     (a) => runJson(ctx, (me) => ({ jobs: listJobs(db, me.tokenId, a).map((r) => ({ ...outputsSummary(jobView(db, r)), result_url: resultUrl(deps, r) })) })),
   );
 
-  server.registerTool('cancel_job', { title: T.cancel_job, description: D.cancel_job, annotations: CANCELS, inputSchema: z.object({ job_id: jobId }) }, ({ job_id }) =>
+  server.registerTool('cancel_job', { title: T.cancel_job, description: D.cancel_job, annotations: CANCELS, inputSchema: z.strictObject({ job_id: jobId }) }, ({ job_id }) =>
     runJson(ctx, (me) => {
       const row = cancelJob(db, me.tokenId, job_id, deps.clock());
       return { job_id: row.id, state: row.state };
@@ -181,7 +181,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
 
   server.registerTool(
     'set_job_priority',
-    { title: T.set_job_priority, description: D.set_job_priority, annotations: CHANGES, inputSchema: z.object({ job_id: jobId, priority: priorityInput }) },
+    { title: T.set_job_priority, description: D.set_job_priority, annotations: CHANGES, inputSchema: z.strictObject({ job_id: jobId, priority: priorityInput }) },
     ({ job_id, priority }) =>
       runJson(ctx, (me) => {
         const d = jobDetail(db, deps.config, setJobPriority(db, job_id, priority, deps.clock(), me.tokenId), deps.clock());
@@ -195,7 +195,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
       title: T.requeue_job,
       description: D.requeue_job,
       annotations: STOPS,
-      inputSchema: z.object({ job_id: jobId, idle: z.boolean().default(false).describe('Back as idle (paused) instead of waiting for its turn.') }),
+      inputSchema: z.strictObject({ job_id: jobId, idle: z.boolean().default(false).describe('Back as idle (paused) instead of waiting for its turn.') }),
     },
     ({ job_id, idle }) =>
       runJson(ctx, (me) => {
@@ -208,7 +208,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
     'queue_status',
     {
       title: T.queue_status, description: D.queue_status, annotations: READS,
-      inputSchema: z.object({ job_id: z.string().min(1).max(40).optional().describe('One of your waiting jobs: ahead then lists only the jobs before it.') }),
+      inputSchema: z.strictObject({ job_id: z.string().min(1).max(40).optional().describe('One of your waiting jobs: ahead then lists only the jobs before it.') }),
     },
     ({ job_id }) => runJson(ctx, (me) => queueStatus(db, deps.clock(), me.tokenId, job_id)),
   );
