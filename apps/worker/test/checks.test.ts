@@ -181,6 +181,9 @@ describe('environment (spec 12 § 2)', () => {
     const pack = (name: string, js: string) => loadPack(writeEchoPack(types, { name, check: ['{tool.node}', '-e', js] }));
     expect(await runCheck(pack('ok', 'console.log("fornax-environment: Node fake 1.0")'), NODE_TOOLS, dirsFor(tmp()))).toEqual({ problem: null, environment: 'Node fake 1.0' });
     expect(await runCheck(pack('stderr', 'console.error("fornax-environment: on stderr")'), NODE_TOOLS, dirsFor(tmp()))).toEqual({ problem: null, environment: null });
+    // Deferred 0.14.1: a check that prints a lot after its line still has it (the scan sees all of stdout, not its end).
+    const chatty = 'console.log("fornax-environment: early"); for (let i = 0; i < 2000; i++) console.log("x".repeat(99))';
+    expect(await runCheck(pack('chatty', chatty), NODE_TOOLS, dirsFor(tmp()))).toEqual({ problem: null, environment: 'early' });
     const sick = await runCheck(pack('sick', 'console.log("fornax-environment: x"); process.exitCode = 3'), NODE_TOOLS, dirsFor(tmp()));
     expect(sick).toEqual({ problem: expect.stringMatching(/^check failed \(exit code 3\)/), environment: null });
     expect(await runCheck(pack('quiet', 'process.exit(0)'), NODE_TOOLS, dirsFor(tmp()))).toEqual({ problem: null, environment: null });

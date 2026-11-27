@@ -80,6 +80,12 @@ describe('renderQueue', () => {
     expect(lines.find((l) => l.includes('Q2'))).toContain('  2  upscale  carol');
   });
 
+  test('a job whose type is not offered gets no number either: the server places it nowhere', () => {
+    const lines = renderQueue(view({ queued: [job({ id: 'Q1' }), job({ id: 'QU', type_unavailable: true }), job({ id: 'Q2' })] }));
+    expect(lines.find((l) => l.includes('QU'))).toContain('  -  upscale  carol');
+    expect(lines.find((l) => l.includes('Q2'))).toContain('  2  upscale  carol');
+  });
+
   test('headline, running with elapsed time and progress, waiting in order with notes, finished with errors', () => {
     const lines = renderQueue(view({
       running: job({ id: 'R1', state: 'running', started_at: '2026-11-15T13:47:13.000Z', progress: 0.62, progress_message: 'encoding batch 2/4' }),
@@ -90,7 +96,7 @@ describe('renderQueue', () => {
     expect(lines[1]).toContain('running');
     expect(lines[1]).toContain('upscale  carol  clip.mp4  12:47  62 %  encoding batch 2/4  R1');
     expect(lines[2]).toContain('1  render  carol  scene.blend  waits 4:00  Q1');
-    expect(lines[3]).toContain('2  lease  bob  chrome  waits 4:00  type not offered, retry at ');
+    expect(lines[3]).toContain('-  lease  bob  chrome  waits 4:00  type not offered, retry at ');
     expect(lines[4]).toContain('failed  upscale  carol  clip.mp4  took 0:12  at ');
     expect(lines[5]).toBe('          bad input');
   });

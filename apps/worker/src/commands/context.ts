@@ -23,6 +23,8 @@ export type Ctx = {
   clipboard?: (text: string) => string | null;
   /** Test seam: nvidia-smi as program and leading arguments (fornax doctor and the worker's card check). */
   nvidiaSmi?: string[];
+  /** Test seam: whether Windows long paths are on (null: not Windows or unknown); default reads the registry. */
+  longPaths?: () => Promise<boolean | null>;
   /** One line to stderr (fornax lease keeps stdout for its program); falls back to `out`. */
   err?: (line: string) => void;
   /** The environment for FORNAX_CLIENT_TOKEN and FORNAX_LEASE; process.env when absent. */

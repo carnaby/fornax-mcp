@@ -107,9 +107,12 @@ export async function runWorker(o: LoopOptions): Promise<number> {
       try {
         return await o.api.announce(types, lines);
       } catch (e) {
-        // Spec 12 § 3.3: a server before 0.14.1 refuses the field (strict body): offer the types without it.
+        // Spec 12 § 3.3: a server before 0.14.1 refuses the field (strict body): offer the types without it. Any other 400
+        // lands here too, so the line gives the server's reason rather than blaming its age.
         if (!(e instanceof ApiError) || e.status !== 400) throw e;
-        if (!saidOldServer) o.out('the server does not know type environments (it is older than this worker): offering the types without them; update the server');
+        if (!saidOldServer) {
+          o.out(`the server refused the type environments (${e.message}): offering the types without them; a server older than this worker needs an update`);
+        }
         saidOldServer = true;
         return o.api.announce(types);
       }

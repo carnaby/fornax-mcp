@@ -81,8 +81,37 @@ export type CheckOptions = { timeoutMs?: number; killGraceMs?: number; signal?: 
 
 /** Spec 12 § 2.1: a check's stdout line that says what the type runs with; the last one counts. */
 export const ENVIRONMENT_PREFIX = 'fornax-environment:';
-/** The stdout of a check kept for the environment line: the end of it is enough. */
-const KEEP_STDOUT = 65_536;
+/** The longest unfinished stdout line kept while scanning: a longer one cannot be a short environment line. */
+const KEEP_LINE = 65_536;
+
+/** Reads a check's stdout as it comes and keeps only its last environment line, so any amount of output after it is fine. */
+class EnvironmentScan {
+  private line = '';
+  private overlong = false;
+  private found: string | null = null;
+
+  push(text: string): void {
+    const parts = (this.line + text).split(/\n/);
+    this.line = parts.pop()!;
+    for (const part of parts) {
+      if (!this.overlong) this.see(part);
+      this.overlong = false;
+    }
+    if (this.line.length > KEEP_LINE) {
+      this.line = '';
+      this.overlong = true;
+    }
+  }
+
+  result(): string | null {
+    if (!this.overlong) this.see(this.line);
+    return this.found === null ? null : environmentOf(this.found);
+  }
+
+  private see(line: string): void {
+    if (line.trim().startsWith(ENVIRONMENT_PREFIX)) this.found = line;
+  }
+}
 
 /** The text of the last `fornax-environment:` line, one console-safe line of at most 200 characters; null without one. */
 export function environmentOf(stdout: string): string | null {
@@ -108,7 +137,7 @@ export async function runCheck(pack: Pack, tools: Record<string, string>, dirs: 
   }
   if (!pack.impl.check) return { problem: null, environment: null };
   const timeoutMs = opts.timeoutMs ?? CHECK_TIMEOUT_MS;
-  let stdout = '';
+  const scan = new EnvironmentScan();
   const r = await runProcess({
     argv: expandArgv(pack.impl.check, { pack: pack.dir, tools }),
     cwd: pack.dir,
@@ -117,7 +146,7 @@ export async function runCheck(pack: Pack, tools: Record<string, string>, dirs: 
     killGraceMs: opts.killGraceMs,
     signal: opts.signal,
     onOutput: (text, stream) => {
-      if (stream === 'stdout') stdout = (stdout + text).slice(-KEEP_STDOUT);
+      if (stream === 'stdout') scan.push(text);
     },
   });
   const tail = oneLine(r.log.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).at(-1) ?? '');
@@ -125,7 +154,7 @@ export async function runCheck(pack: Pack, tools: Record<string, string>, dirs: 
   if (r.canceled) return not('check was interrupted');
   if (r.timedOut) return not(`check did not finish within ${timeoutMs / 1000} s`);
   if (r.code !== 0) return not(`check failed (exit code ${r.code ?? r.signal})${tail ? `: ${tail}` : ''}`);
-  return { problem: null, environment: environmentOf(stdout) };
+  return { problem: null, environment: scan.result() };
 }
 
 /** Why this pack cannot be offered now, or null when it is ready. */

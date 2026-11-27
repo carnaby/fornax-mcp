@@ -170,6 +170,16 @@ describe('fornax CLI', () => {
     expect(text).toContain(`WARN  secret file ${file} can be read or changed by other users (mode 0644); run chmod 600 ${file}`);
   });
 
+  test('doctor warns when Windows long paths are off; silent when on or unknown (deferred 0.14.1)', async () => {
+    const { ctx, run } = cli();
+    ctx.longPaths = async () => false;
+    expect((await run('doctor')).text).toMatch(/^WARN\s+Windows long paths are off \(LongPathsEnabled\): /m);
+    for (const answer of [true, null]) {
+      ctx.longPaths = async () => answer;
+      expect((await run('doctor')).text).not.toMatch(/long paths/);
+    }
+  });
+
   test('doctor names the client token, or says fornax lease cannot run without one', async () => {
     const s = await server();
     const { ctx, run } = cli();

@@ -5,6 +5,7 @@ import { ClientApi } from '../client-api.js';
 import { ConfigError, readClientToken, readToken, readWorkerConfig, serverWarning, type WorkerConfig } from '../config.js';
 import { doctorGpuLines, readGpu } from '../gpu.js';
 import { isInstalledCopy } from '../install/app.js';
+import { LONG_PATHS_ON, windowsLongPaths } from '../longpaths.js';
 import { fetchBundleInfo } from '../install/bundle-info.js';
 import { loadPacks } from '../pack.js';
 import { readSecret, secretFile, storedSecretNames } from '../secrets.js';
@@ -99,6 +100,11 @@ export async function doctor(ctx: Ctx, only?: string): Promise<number> {
   for (const g of doctorGpuLines(await readGpu({ command: ctx.nvidiaSmi }), config?.gpu.maxUsedMib ?? null)) {
     if (g.level === 'WARN') warn(g.text);
     else line(g.level === 'ok', g.text);
+  }
+
+  // Deferred 0.14.1: Python packs keep their bytecode under a doubled path, which needs long paths on Windows.
+  if ((await (ctx.longPaths ?? windowsLongPaths)()) === false) {
+    warn(`Windows long paths are off (LongPathsEnabled): Python packs compile their deepest modules again on every job; as administrator run ${LONG_PATHS_ON}`);
   }
 
   const { packs, errors } = loadPacks(ctx.paths.typesDir);

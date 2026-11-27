@@ -64,13 +64,14 @@ export function renderQueue(q: OperatorQueue, finishedShown = 10): string[] {
     lines.push('running   nothing');
   }
   if (!q.queued.length) lines.push('waiting   nothing');
-  // Only the jobs that can start get a number: an idle job waits for a person, not for its turn (deferred 07 #10).
+  // Only the jobs that can start get a number: an idle job waits for a person, not for its turn (deferred 07 #10), and a
+  // job whose type the worker does not offer has no place in the server's order (its `ahead` skips it).
   let turn = 0;
   q.queued.forEach((j, i) => {
     // Spec 07 § 4.3: high and idle are said; normal is the plain case.
     const priority = j.priority === 'high' ? 'high' : j.priority === 'idle' ? (j.idle_since ? `idle since ${clock(j.idle_since)}` : 'idle') : '';
     const notes = [priority, j.type_unavailable ? 'type not offered' : '', j.run_after ? `retry at ${clock(j.run_after)}` : ''].filter(Boolean).join(', ');
-    lines.push(cols(i === 0 ? 'waiting ' : '        ', j.priority === 'idle' ? '-' : String(++turn), j.type, who(j), what(j), `waits ${duration(now - Date.parse(j.created_at))}`, notes, j.id));
+    lines.push(cols(i === 0 ? 'waiting ' : '        ', j.priority === 'idle' || j.type_unavailable ? '-' : String(++turn), j.type, who(j), what(j), `waits ${duration(now - Date.parse(j.created_at))}`, notes, j.id));
   });
   q.finished.slice(0, finishedShown).forEach((j, i) => {
     const took = j.started_at && j.finished_at ? `took ${duration(Date.parse(j.finished_at) - Date.parse(j.started_at))}` : '';

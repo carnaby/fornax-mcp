@@ -73,6 +73,27 @@ describe('runWorker', () => {
     ]);
   });
 
+  test('after a broken type the others are offered again with their environments, the broken one without (deferred 0.14.1)', async () => {
+    const { paths, api, alice, say } = await setup();
+    writeEchoPack(paths.typesDir, { check: ['{tool.node}', '-e', 'console.log("fornax-environment: echo env")'] });
+    writeEchoPack(paths.typesDir, { name: 'other', check: ['{tool.node}', '-e', 'console.log("fornax-environment: other env")'] });
+    const sent: { names: string[]; environments: Record<string, string> | null }[] = [];
+    const watched = Object.assign(Object.create(api) as WorkerApi, {
+      announce: (types: { name: string }[], environments?: Record<string, string>) => {
+        sent.push({ names: types.map((t) => t.name).sort(), environments: environments ?? null });
+        return api.announce(types as Parameters<WorkerApi['announce']>[0], environments);
+      },
+    });
+    const worker = runWorker({ api: watched, paths, tools: NODE_TOOLS, out: say, signal: new AbortController().signal, once: true, ...fast });
+    await waitFor(async () => (await alice.offered()).includes('echo'), 10_000, 'echo to be offered');
+    await alice.submit('echo', { mode: 'exit', code: 3 });
+    expect(await worker).toBe(0);
+    expect(sent).toEqual([
+      { names: ['echo', 'other'], environments: { echo: 'echo env', other: 'other env' } },
+      { names: ['other'], environments: { other: 'other env' } },
+    ]);
+  });
+
   test('exit code 4 fails the job after its first attempt', async () => {
     const { paths, api, alice, say } = await setup();
     const worker = runWorker({ api, paths, tools: NODE_TOOLS, out: say, signal: new AbortController().signal, once: true, ...fast });
@@ -153,7 +174,10 @@ describe('runWorker', () => {
     expect(code).toBe(0);
     expect(sent).toEqual([{ echo: 'Node fake 1.0' }, null]);
     expect(lines).toContain('offering: echo');
-    expect(lines.filter((l) => l.startsWith('the server does not know type environments'))).toHaveLength(1);
+    // Deferred 0.14.1: any 400 lands here, so the line carries the server's own reason instead of blaming its age.
+    expect(lines.filter((l) => l.startsWith('the server refused the type environments'))).toEqual([
+      'the server refused the type environments (invalid body: environments: unrecognized key): offering the types without them; a server older than this worker needs an update',
+    ]);
   });
 
   test('a pack without an environment line is announced in the old shape', async () => {

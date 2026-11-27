@@ -203,6 +203,8 @@ On the PC with the GPU (Windows or Linux, Node.js 22 or newer):
 4. Install job types and check them: `fornax types install transcribe`, `fornax types install render`,
    `fornax types install upscale` (needs ffprobe in `worker.yaml`), `fornax types install tts`, `fornax types install document-parse`, `fornax doctor`. The `render` pack (Cycles or Eevee) needs scenes
    that are self-contained (File > External Data > Pack Resources); Eevee needs a worker in a signed-in user's session.
+   On Windows, turn on long paths (`fornax doctor` warns when they are off): the Python packs keep their compiled
+   modules under a deep path, and without long paths the deepest ones are compiled again on every job.
 5. Start it: `fornax worker`. Ctrl+C gives the running job back; a second Ctrl+C kills the tool.
 
 Some types download models that need an account's token (`transcribe`'s speaker recognition needs a Hugging Face
