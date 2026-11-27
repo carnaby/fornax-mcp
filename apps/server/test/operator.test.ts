@@ -1,7 +1,7 @@
 import { FORNAX_VERSION } from '@fornax/protocol';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, test } from 'vitest';
-import { jobs } from '../src/db/schema.js';
+import { files, jobInputs, jobs } from '../src/db/schema.js';
 import type { DomainError } from '../src/domain/errors.js';
 import { cancelAnyJob, type JobRow, submitJob } from '../src/domain/jobs.js';
 import { OPERATOR_FINISHED, operatorQueue } from '../src/domain/operator.js';
@@ -59,6 +59,18 @@ describe('operatorQueue (spec 06 2.3)', () => {
     });
     expect(q.queued.map((j) => j.id)).toEqual([l.id]);
     expect(q.queued[0]).toMatchObject({ owner: 'bob', label: 'chrome', inputs: {}, type_unavailable: false, run_after: null });
+  });
+
+  test('a waiting job whose type is withdrawn says so; an input whose file is gone shows null (deferred 06a)', async () => {
+    const r = await render('alice');
+    const l = lease('chrome');
+    announce(t.db, [renderContract], t.clock.now);
+    const scene = r.inputs.scene!;
+    t.db.delete(jobInputs).where(eq(jobInputs.fileId, scene)).run();
+    t.db.delete(files).where(eq(files.id, scene)).run();
+    const q = view();
+    expect(q.queued.find((j) => j.id === l.id)).toMatchObject({ type_unavailable: true });
+    expect(q.queued.find((j) => j.id === r.id)).toMatchObject({ type_unavailable: false, inputs: { scene: null } });
   });
 
   test('a waiting job after a failed attempt shows its retry time', async () => {

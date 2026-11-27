@@ -20,7 +20,7 @@ test('migrations create the tables', () => {
   expect(row?.status).toBe('pending');
 });
 
-/** A database as 0.8.0 left it: 0007–0010 not applied, their new columns and table absent, a job saved with priority 0 (then: low). */
+/** A database as 0.8.0 left it: 0007–0010 not applied, their new columns and table absent, a job saved with priority 0 (then: low), a type offered. */
 function databaseOf080(file: string): void {
   const opened = openDb(file);
   try {
@@ -30,6 +30,7 @@ function databaseOf080(file: string): void {
       attempts: 0, envReleases: 0, runAfter: now, leaseId: null, leaseExpiresAt: null, confirmedAt: null, progress: null, progressMessage: null,
       error: null, manifest: null, createdAt: now, startedAt: null, finishedAt: null, updatedAt: now, queueRank: 1, stoppedLeaseId: null, idleSince: null,
     }).run();
+    opened.db.insert(jobTypes).values({ name: 'render', contract: jobTypeContract.parse(renderContract), contractHash: 'h', offered: true, lastOfferedAt: now }).run();
   } finally {
     opened.close();
   }
@@ -76,10 +77,7 @@ test('0009: a type stored before 0.14.1 has no environment (spec 12 § 3.2)', ()
   try {
     const file = join(dir, 'fornax.db');
     databaseOf080(file);
-    withDb(file, (db) => {
-      db.insert(jobTypes).values({ name: 'render', contract: jobTypeContract.parse(renderContract), contractHash: 'h', offered: true, lastOfferedAt: new Date(1_000) }).run();
-      expect(db.select().from(jobTypes).get()?.environment).toBeNull();
-    });
+    withDb(file, (db) => expect(db.select().from(jobTypes).all()).toMatchObject([{ name: 'render', offered: true, environment: null }]));
   } finally {
     rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }

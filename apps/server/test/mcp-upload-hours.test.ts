@@ -15,3 +15,10 @@ test("create_upload states the server's own lifetime of an unused upload (spec 1
 test('one hour is singular', () => {
   expect(createUploadDescription(3_600_000)).toMatch(/deleted after 1 hour\.$/);
 });
+
+test('a fractional lifetime is said in minutes, not rounded to hours', () => {
+  expect(createUploadDescription(0.25 * 3_600_000)).toMatch(/deleted after 15 minutes\.$/);
+  expect(createUploadDescription(1.5 * 3_600_000)).toMatch(/deleted after 90 minutes\.$/);
+  expect(createUploadDescription(60_000)).toMatch(/deleted after 1 minute\.$/);
+  expect(createUploadDescription(1_000)).toMatch(/deleted after 1 minute\.$/);
+});

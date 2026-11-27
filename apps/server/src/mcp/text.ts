@@ -35,8 +35,14 @@ export const TOOL_DESCRIPTIONS = {
 
 /** Spec 13 § 3, spec 14 § 2.4: create_upload says that a file serves several jobs and how long an unused one is kept. */
 export function createUploadDescription(orphanUploadMs: number): string {
-  const hours = Math.round(orphanUploadMs / 3_600_000);
-  return `${TOOL_DESCRIPTIONS.create_upload} A file_id can be the input of several of your jobs; a file no job uses is deleted after ${hours} ${hours === 1 ? 'hour' : 'hours'}.`;
+  return `${TOOL_DESCRIPTIONS.create_upload} A file_id can be the input of several of your jobs; a file no job uses is deleted after ${lifetime(orphanUploadMs)}.`;
+}
+
+/** Whole hours as hours; anything else (FORNAX_ORPHAN_UPLOAD_HOURS may be 0.25) in minutes, at least one. */
+function lifetime(ms: number): string {
+  const unit = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  if (ms % 3_600_000 === 0) return unit(ms / 3_600_000, 'hour');
+  return unit(Math.max(1, Math.round(ms / 60_000)), 'minute');
 }
 
 /** Short names clients show for the tools. */

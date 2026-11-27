@@ -165,6 +165,17 @@ describe('Requeue and Pause (spec 07 § 3)', () => {
     expect(claimJob(t.db, t.clock.now)!.id).toBe(n1.id);
   });
 
+  test('Pause after hand moves of idle jobs above normal ones: still the top of Idle (deferred 07 #5)', async () => {
+    const r = await job('normal');
+    claimJob(t.db, t.clock.now);
+    const n1 = await job('normal');
+    const i1 = await job('idle');
+    moveJob(t.db, i1.id, { before: n1.id });
+    requeueJob(t.db, r.id, { idle: true }, t.clock.now, null);
+    expect(queueOrder(t.db)).toEqual(ids(r, i1, n1));
+    expect(claimJob(t.db, t.clock.now)!.id).toBe(n1.id);
+  });
+
   test('a late heartbeat with the stopped lease does not take the job back (Review Focus 4)', async () => {
     const r = await job('normal');
     const c = claimJob(t.db, t.clock.now)!;
