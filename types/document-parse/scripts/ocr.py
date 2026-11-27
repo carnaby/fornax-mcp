@@ -32,15 +32,25 @@ class PaddleOcr:
         self.model = PaddleOCRVLForConditionalGeneration.from_pretrained(folder, dtype=torch.bfloat16).to("cuda").eval()
         self.processor = AutoProcessor.from_pretrained(folder)
 
-    def read(self, image, max_new_tokens, penalty=1.0):
-        """The text of a page or a crop (a PIL image), stripped."""
+    def read(self, image, max_new_tokens, penalty=1.0, scored=False):
+        """The text of a page or a crop (a PIL image), stripped. With `scored` (spec 16 § 5.1): (text, token_ends,
+        token_probs) instead, the text not stripped so that the offsets fit it: token_ends[i] is the length of the
+        decoded text of tokens 0..i, token_probs[i] the softmax of the raw logits at the chosen token."""
         messages = [{"role": "user", "content": [{"type": "image", "image": image}, {"type": "text", "text": PROMPT}]}]
         inputs = self.processor.apply_chat_template(messages, tokenize=True, add_generation_prompt=True, return_dict=True,
                                                     return_tensors="pt").to("cuda")
+        start = inputs["input_ids"].shape[1]
         with self.torch.inference_mode():
-            ids = self.model.generate(**inputs, **generate_kwargs(max_new_tokens, penalty))
-        new = ids[:, inputs["input_ids"].shape[1]:]
-        return self.processor.batch_decode(new, skip_special_tokens=True)[0].strip()
+            if not scored:
+                ids = self.model.generate(**inputs, **generate_kwargs(max_new_tokens, penalty))
+                return self.processor.batch_decode(ids[:, start:], skip_special_tokens=True)[0].strip()
+            out = self.model.generate(**inputs, **generate_kwargs(max_new_tokens, penalty), return_dict_in_generate=True,
+                                      output_logits=True)
+            new = out.sequences[0, start:].tolist()
+            probs = [self.torch.softmax(out.logits[i][0].float(), dim=-1)[token].item() for i, token in enumerate(new)]
+        decode = self.processor.tokenizer.decode
+        ends = [len(decode(new[: i + 1], skip_special_tokens=True)) for i in range(len(new))]
+        return decode(new, skip_special_tokens=True), ends, probs
 
     def peak_vram_mib(self):
         return round(self.torch.cuda.max_memory_allocated() / 2**20)

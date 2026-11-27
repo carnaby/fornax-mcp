@@ -13,6 +13,7 @@ PACK_SRC = Path(__file__).resolve().parent.parent
 #   full (the page text of the OCR path: a string, or a list per page); regions ([[label, text], ...] per page);
 #   fail_at_page (the full read of that page runs out of memory); block_outputs (a folder made where an output goes);
 #   convert_seconds (the text path's conversion takes this long), tick_s (run.TICK_S for the test).
+#   low_words ({word: probability} for a scored read: spec 16 blocks; other characters 0.99).
 FAKE_CONVERT = '''import json, os, sys, time
 import common
 import parse_lib as lib
@@ -123,16 +124,25 @@ class PaddleOcr:
         if mode == "load-error":
             raise RuntimeError("the weights are broken")
 
-    def read(self, image, max_new_tokens, penalty=1.0):
+    def read(self, image, max_new_tokens, penalty=1.0, scored=False):
         crop = hasattr(image, "text")
         with open(os.path.join(HERE, "calls.jsonl"), "a", encoding="utf-8") as f:
-            f.write(json.dumps({"call": "read", "crop": crop, "max_new_tokens": max_new_tokens, "penalty": penalty}) + NL)
+            f.write(json.dumps({"call": "read", "crop": crop, "max_new_tokens": max_new_tokens, "penalty": penalty, "scored": scored}) + NL)
         if crop:
             return image.text
         if B.get("fail_at_page") == image.page:
             raise OutOfMemoryError("CUDA out of memory. Tried to allocate 2.00 GiB")
         full = B.get("full", "Prvý riadok strany." + NL + NL + "Druhý odsek.")
-        return full[image.page - 1] if isinstance(full, list) else full
+        text = full[image.page - 1] if isinstance(full, list) else full
+        if not scored:
+            return text
+        # One token per character; the first occurrence of each word in low_words gets its probability.
+        probs = [0.99] * len(text)
+        for word, p in B.get("low_words", {}).items():
+            at = text.find(word)
+            if at >= 0:
+                probs[at:at + len(word)] = [p] * len(word)
+        return text, list(range(1, len(text) + 1)), probs
 
     def peak_vram_mib(self):
         return 2400
