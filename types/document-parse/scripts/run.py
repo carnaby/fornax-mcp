@@ -44,10 +44,10 @@ def read_request(params_path, document):
     return params, kind
 
 
-def choose(convert, document, kind, ocr):
-    """The path and the number of pages (None when only Docling can tell, e.g. a DOCX); spec § 4.1."""
+def choose(convert, document, kind, ocr, blocks=False):
+    """The path and the number of pages (None when only Docling can tell, e.g. a DOCX); spec § 4.1, spec 16."""
     chars = convert.pdf_profile(document) if kind == "pdf" else None
-    path = lib.choose_path(kind, ocr, chars)
+    path = lib.choose_path(kind, ocr, chars, blocks)
     if chars is not None:
         pages = len(chars)
     elif kind == "image":
@@ -74,20 +74,28 @@ def text_path(convert, document, pages):
     finally:
         stop.set()
         ticker.join()
-    return markdown, document_dict, pages, tables, None, convert.peak_vram_mib()
+    return markdown, document_dict, pages, tables, None, convert.peak_vram_mib(), None
 
 
-def ocr_path(convert, document, kind, pages):
-    """Each page: the full page, then the layout's regions the full page missed (spec § 4.3, § 4.4)."""
+def ocr_path(convert, document, kind, pages, min_confidence=None):
+    """Each page: the full page, then the layout's regions the full page missed (spec § 4.3, § 4.4). With
+    `min_confidence` (blocks, spec 16 G1) the full page is read with token probabilities and its paragraphs become the
+    page's blocks; the last value returned is then the pages of blocks.json, else None."""
     import ocr
 
     engine = ocr.PaddleOcr()
     layout = convert.Layout()
     say("the models are ready")
     images = convert.pdf_pages(document) if kind == "pdf" else convert.image_pages(document)
-    texts, doc_pages, added_total = [], [], 0
+    texts, doc_pages, added_total, block_pages = [], [], 0, []
     for i, image in enumerate(images, 1):
-        full = engine.read(image, lib.FULL_PAGE_TOKENS)
+        if min_confidence is None:
+            full = engine.read(image, lib.FULL_PAGE_TOKENS)
+        else:
+            raw, ends, probs = engine.read(image, lib.FULL_PAGE_TOKENS, scored=True)
+            words = lib.word_confidences(raw, ends, probs)
+            block_pages.append({"width": image.width, "height": image.height, "blocks": lib.paragraph_blocks(raw, words, min_confidence)})
+            full = raw.strip()
         regions = [(label, engine.read(crop, lib.token_limit(crop.width, crop.height), lib.REGION_PENALTY))
                    for label, crop in layout.regions(image)]
         added = lib.fill_in(full, regions)
@@ -95,7 +103,8 @@ def ocr_path(convert, document, kind, pages):
         texts.append(lib.page_markdown(full, added))
         doc_pages.append({"width": image.width, "height": image.height, "paragraphs": lib.paragraphs(full), "added": added})
         progress(0.98 * i / pages, f"page {i}/{pages}")
-    return lib.join_pages(texts), convert.build_document(doc_pages), len(texts), 0, added_total, engine.peak_vram_mib()
+    return (lib.join_pages(texts), convert.build_document(doc_pages), len(texts), 0, added_total, engine.peak_vram_mib(),
+            block_pages if min_confidence is not None else None)
 
 
 def write_outputs(out, files):
@@ -139,7 +148,7 @@ def main(argv=None):
     except ImportError as e:
         return broken_environment(e)
     try:
-        path, pages = choose(convert, a.document, kind, params.ocr)
+        path, pages = choose(convert, a.document, kind, params.ocr, params.blocks)
     except lib.Rejected as e:
         return fail(INVALID, str(e))
     except ImportError as e:
@@ -149,9 +158,10 @@ def main(argv=None):
     say(f"{kind}" + (f", {pages} pages" if pages is not None else "") + f": the {path} path")
     try:
         if path == "text":
-            markdown, document, pages, tables, added, vram = text_path(convert, a.document, pages)
+            markdown, document, pages, tables, added, vram, block_pages = text_path(convert, a.document, pages)
         else:
-            markdown, document, pages, tables, added, vram = ocr_path(convert, a.document, kind, pages)
+            threshold = params.min_confidence if params.blocks else None
+            markdown, document, pages, tables, added, vram, block_pages = ocr_path(convert, a.document, kind, pages, threshold)
     except lib.Rejected as e:
         return fail(INVALID, str(e))
     except common.Unavailable as e:
@@ -162,16 +172,20 @@ def main(argv=None):
         return fail(FAILED, lib.failure_text(e, "converting the document failed"))
     markdown = lib.finish_markdown(markdown)
     meta = lib.output_meta(path, kind, pages, tables, markdown, added, time.monotonic() - started, vram, docling_version())
+    files = {"document.md": markdown, "document.json": json.dumps(document, ensure_ascii=False)}
+    blocks_meta = None
+    if block_pages is not None:
+        every = [b for page in block_pages for b in page["blocks"]]
+        blocks_meta = {"format": "fornax-blocks", "blocks": len(every), "uncertain_words": sum(len(b["uncertain"]) for b in every)}
+        files["blocks.json"] = json.dumps(lib.blocks_json(block_pages, params.min_confidence), ensure_ascii=False)
+    files["outputs.json"] = json.dumps(lib.outputs_json(meta, blocks_meta), ensure_ascii=False)
     try:
-        write_outputs(a.out, {
-            "document.md": markdown,
-            "document.json": json.dumps(document, ensure_ascii=False),
-            "outputs.json": json.dumps(lib.outputs_json(meta), ensure_ascii=False),
-        })
+        write_outputs(a.out, files)
     except OSError as e:
         return fail(FAILED, f"the outputs could not be written ({lib.one_line(e)})")
     progress(1.0, "done")
-    say(f"document.md: {meta['characters']} characters from {pages} pages in {meta['seconds']} s")
+    blocks_said = f", {blocks_meta['blocks']} blocks, {blocks_meta['uncertain_words']} uncertain words" if blocks_meta else ""
+    say(f"document.md: {meta['characters']} characters from {pages} pages in {meta['seconds']} s{blocks_said}")
     return OK
 
 

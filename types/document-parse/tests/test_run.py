@@ -234,3 +234,48 @@ class OcrPathTest(RunCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BlocksTest(RunCase):
+    """Spec 16 G1: blocks.json from the full-page read's paragraphs with token confidence."""
+
+    def blocks(self):
+        return json.loads((self.out / "blocks.json").read_text(encoding="utf-8"))
+
+    def test_an_image_with_blocks_gets_blocks_json(self):
+        behavior = {"full": "EN: Take 2 tablets daily,\n\nDE: 2 Tabletten", "low_words": {"daily,": 0.5}, "regions": []}
+        code, out, err = self.run_job(self.doc("label.jpg", b"made up"), params={"blocks": True}, behavior=behavior)
+        self.assertEqual(code, 0, err)
+        blocks = self.blocks()
+        self.assertEqual(blocks["min_confidence"], 0.85)
+        self.assertEqual([b["marked"] for b in blocks["pages"][0]["blocks"]], ["EN: Take 2 tablets [[daily,]]", "DE: 2 Tabletten"])
+        listed = json.loads((self.out / "outputs.json").read_text(encoding="utf-8"))
+        self.assertEqual(listed["blocks.json"]["meta"], {"format": "fornax-blocks", "blocks": 2, "uncertain_words": 1})
+        reads = [c for c in calls(self.root) if c.get("call") == "read" and not c["crop"]]
+        self.assertEqual([c["scored"] for c in reads], [True])
+        self.assertEqual(self.markdown(), "EN: Take 2 tablets daily,\n\nDE: 2 Tabletten\n")
+        self.assertIn("2 blocks, 1 uncertain words", last_line(err))
+
+    def test_min_confidence_sets_the_threshold(self):
+        behavior = {"full": "EN: Take 2 tablets daily,", "low_words": {"daily,": 0.5}, "regions": []}
+        code, _, err = self.run_job(self.doc("label.jpg", b"made up"), params={"blocks": True, "min_confidence": 0.4}, behavior=behavior)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.blocks()["pages"][0]["blocks"][0]["uncertain"], [])
+
+    def test_without_blocks_nothing_changes(self):
+        code, _, err = self.run_job(self.doc("label.jpg", b"made up"), behavior={"regions": []})
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("blocks.json", self.outputs())
+        self.assertNotIn("blocks.json", json.loads((self.out / "outputs.json").read_text(encoding="utf-8")))
+        self.assertFalse(any(c.get("scored") for c in calls(self.root) if c.get("call") == "read"))
+
+    def test_blocks_take_a_text_pdf_through_ocr(self):
+        code, _, err = self.run_job(self.doc("a.pdf", PDF), params={"blocks": True}, behavior={"pdf_chars": [1500, 1500], "regions": []})
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.meta()["path"], "ocr")
+        self.assertEqual([p["page"] for p in self.blocks()["pages"]], [1, 2])
+
+    def test_blocks_with_an_office_document_is_exit_2(self):
+        code, _, err = self.run_job(self.doc("a.docx", DOCX), params={"blocks": True})
+        self.assertEqual((code, last_line(err)), (2, "document-parse: blocks needs an image or a PDF"))
+        self.assertEqual(self.outputs(), [])
