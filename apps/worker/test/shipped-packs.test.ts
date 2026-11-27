@@ -124,7 +124,7 @@ describe('built-in type packs', () => {
 
   test('document-parse: contract, tools and commands', () => {
     const pack = loadPack(shippedPack('document-parse')!);
-    expect(pack.contract).toMatchObject({ name: 'document-parse', version: 1, max_runtime_s: 10800 });
+    expect(pack.contract).toMatchObject({ name: 'document-parse', version: 2, max_runtime_s: 10800 });
     expect(pack.contract).not.toHaveProperty('default_priority');
     expect(Object.keys(pack.contract.inputs)).toEqual(['document']);
     expect(pack.contract.inputs.document).toMatchObject({
@@ -132,8 +132,11 @@ describe('built-in type packs', () => {
       max_mb: 200,
     });
     const props = pack.contract.params.properties;
-    expect(Object.keys(props)).toEqual(['ocr']);
+    expect(Object.keys(props)).toEqual(['ocr', 'blocks', 'min_confidence']);
     expect(props.ocr).toMatchObject({ enum: ['auto', 'always'], default: 'auto' });
+    // Spec 16 G1: blocks.json with the uncertain words marked.
+    expect(props.blocks).toMatchObject({ type: 'boolean', default: false });
+    expect(props.min_confidence).toMatchObject({ type: 'number', minimum: 0, maximum: 1, default: 0.85 });
     expect(pack.contract.description.length).toBeLessThanOrEqual(500);
     expect(pack.impl.tools).toEqual(['python']);
     const tools = { python: 'py' };
