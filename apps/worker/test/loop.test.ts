@@ -175,8 +175,8 @@ describe('runWorker', () => {
     expect(sent).toEqual([{ echo: 'Node fake 1.0' }, null]);
     expect(lines).toContain('offering: echo');
     // Deferred 0.14.1: any 400 lands here, so the line carries the server's own reason instead of blaming its age.
-    expect(lines.filter((l) => l.startsWith('the server refused the type environments'))).toEqual([
-      'the server refused the type environments (invalid body: environments: unrecognized key): offering the types without them; a server older than this worker needs an update',
+    expect(lines.filter((l) => l.startsWith('the server refused the types with their environments'))).toEqual([
+      'the server refused the types with their environments (invalid body: environments: unrecognized key): offering them without; a server older than this worker needs an update',
     ]);
   });
 

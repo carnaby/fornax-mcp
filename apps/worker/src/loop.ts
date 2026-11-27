@@ -111,7 +111,7 @@ export async function runWorker(o: LoopOptions): Promise<number> {
         // lands here too, so the line gives the server's reason rather than blaming its age.
         if (!(e instanceof ApiError) || e.status !== 400) throw e;
         if (!saidOldServer) {
-          o.out(`the server refused the type environments (${e.message}): offering the types without them; a server older than this worker needs an update`);
+          o.out(`the server refused the types with their environments (${e.message}): offering them without; a server older than this worker needs an update`);
         }
         saidOldServer = true;
         return o.api.announce(types);

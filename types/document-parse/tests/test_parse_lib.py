@@ -1,4 +1,5 @@
 import sys
+import unicodedata
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -208,11 +209,28 @@ class FillInTest(unittest.TestCase):
         # A page without letters of its own decides nothing.
         self.assertEqual(lib.fill_in("", [("text", "Người bán")]), [("text", "Người bán")])
 
+    def test_fill_in_keeps_symbols_names_and_scripts_a_missed_region_may_bring(self):
+        # Final review: only the stacked Latin letters of the observed misread count; a missed region brings letters
+        # the page lacks by its nature (units, Greek symbols, names, another script).
+        page = "Faktúra číslo 2026001\nDodávateľ: Príklad s.r.o., IČO 12345678, DIČ 2020123456"
+        for text in ("Odpor R1 = 10 kΩ, prúd 5 μA", "hladina významnosti α = 0,05", "Ștefan Ionescu", "HAUPTSTRAẞE 5", "Zertiﬁkat Nummer",
+                     "Адреса доставки Київ"):
+            self.assertEqual(lib.fill_in(page, [("text", text)]), [("text", text)], text)
+        # A page in decomposed form (NFD) still counts its own letters.
+        nfd = unicodedata.normalize("NFD", "Hóa đơn điện tử số 12")
+        self.assertEqual(lib.fill_in(nfd, [("text", "Người bán hàng")]), [("text", "Người bán hàng")])
+
     def test_fill_in_takes_a_garbled_repeat_of_page_words_as_found(self):
         # Deferred 0.14.0 (phone photo): a garbled repeat of a field label was added as new text.
         page = "Variabilný symbol 2026001 Dátum splatnosti 15.12.2026"
         self.assertEqual(lib.fill_in(page, [("text", "Varlabilny symboI")]), [])
         self.assertEqual(lib.fill_in(page, [("text", "Konštantný symbol 0308")]), [("text", "Konštantný symbol 0308")])
+
+    def test_fill_in_never_takes_a_different_number_as_a_repeat(self):
+        # Final review: a garbled number is a different number; only words of letters are compared loosely.
+        page = "IČO 12345678 IBAN SK31 1200 0000 1987 4263 7541"
+        self.assertEqual(lib.fill_in(page, [("text", "12345679")]), [("text", "12345679")])
+        self.assertEqual(lib.fill_in(page, [("text", "7542 9910")]), [("text", "7542 9910")])
 
 
 class MarkdownTest(unittest.TestCase):

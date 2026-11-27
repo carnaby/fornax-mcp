@@ -101,8 +101,6 @@ class ImagePagesTest(unittest.TestCase):
         self.assertEqual(convert.rgb(Image.new("L", (4, 4), 7)).getpixel((0, 0)), (7, 7, 7))
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 @unittest.skipUnless(importlib.util.find_spec("docling_core") is not None, "docling-core is not installed in this Python")
@@ -114,3 +112,7 @@ class BuildDocumentTest(unittest.TestCase):
         doc = convert.build_document([page, dict(page, added=[("list_item", "next page")])])
         groups = [g for g in doc["groups"] if g["label"] == "list"]
         self.assertEqual([len(g["children"]) for g in groups], [2, 1, 1])
+
+
+if __name__ == "__main__":
+    unittest.main()

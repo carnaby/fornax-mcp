@@ -72,8 +72,9 @@ function render(s: Snapshot, force = false): void {
   renderHistory(s);
   renderLog(s.log);
   renderFooter(s);
-  restoreFocus(focused);
+  // The Quit question first: while it is asked the window under it is inert and takes no focus.
   renderQuit(s);
+  restoreFocus(focused);
   tabsDrawn();
 }
 

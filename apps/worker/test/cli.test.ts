@@ -40,6 +40,8 @@ function cli() {
     clipboard: () => null,
     loopOptions: { claimWaitS: 0, checkTimeoutMs: 10_000 },
     nvidiaSmi: [process.execPath, FAKE_SMI, 'one'],
+    // The PC's own registry stays out of the tests; the long paths test sets its answer.
+    longPaths: async () => null,
   };
   const run = async (...argv: string[]) => {
     lines.length = 0;

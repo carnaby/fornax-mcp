@@ -13,7 +13,7 @@ export function initQuit(): void {
   });
 }
 
-/** Drawn last: the question takes the focus when it appears. */
+/** Drawn before the focus is restored: the question takes the focus when it appears, and the window under it is inert. */
 export function renderQuit(s: Snapshot): void {
   el('quit').hidden = !s.confirmQuit;
   // The window under the question cannot be reached with Tab while it is asked (deferred 06e).

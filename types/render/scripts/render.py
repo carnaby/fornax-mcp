@@ -193,7 +193,8 @@ def main():
         kind, names = enable_gpu()
         if kind is None:
             leave(3, "Cycles finds no GPU (OptiX, CUDA, HIP, oneAPI or Metal); check the driver, then fornax doctor render")
-        # The card is logged as soon as it is known, before anything else can stop the job (deferred 0.14.2).
+        # The card is logged as soon as it is known, before the scene's settings are made (deferred 0.14.2); the
+        # refusals of the scene itself (files, nodes, no camera) come first.
         print(f"render: Cycles on {kind} ({', '.join(names)})", file=sys.stderr, flush=True)
     else:
         # Spec 15 § 4.2: the check's result is not known here; a failing probe is exit 2, so the type stays offered.

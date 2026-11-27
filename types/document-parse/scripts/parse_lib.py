@@ -184,20 +184,14 @@ def crop_box(bbox, scale, width, height):
     return box
 
 
-def _block(ch):
-    """The Unicode block of a letter outside Basic Latin, Latin-1 and Latin Extended-A (those are common in European
-    names on any page: None); Latin beyond them by its range, other scripts by the first word of their name."""
-    code = ord(ch)
-    if code < 0x180:
-        return None
-    for start, end in ((0x180, 0x24F), (0x250, 0x2AF), (0x1E00, 0x1EFF)):
-        if start <= code <= end:
-            return start
-    return unicodedata.name(ch, "?").split()[0]
+CAPITAL_SHARP_S = chr(0x1E9E)  # German, in the same block as the stacked letters
 
 
-def _blocks(text):
-    return {b for b in (_block(ch) for ch in text if ch.isalpha()) if b is not None}
+def _stacked(text):
+    """Whether the text has a letter of Latin Extended Additional (U+1E00-U+1EFF: Vietnamese and other letters with two
+    marks), the letters of the misread the rule is for. Only these: a missed region brings other letters a page lacks by
+    its nature (kΩ, μA, α, a Romanian ș, another script), so they decide nothing (final review)."""
+    return any(0x1E00 <= ord(ch) <= 0x1EFF and ch != CAPITAL_SHARP_S for ch in unicodedata.normalize("NFKC", text) if ch.isalpha())
 
 
 def _fold(word):
@@ -207,23 +201,28 @@ def _fold(word):
 
 def fill_in(page_text, regions):
     """The regions (label, text) whose words the page's text mostly misses, each added once, junk left out. Two rules
-    read the page (deferred 0.14.0, phone photos): a region with letters of a script the page's own text never uses is
-    a misread (a Slovak field label came back in Vietnamese letters), and a word that is a garbled form of a page word
-    (FUZZY_CUTOFF after folding diacritics, words of 4 or more characters) counts as found."""
+    read the page (deferred 0.14.0, phone photos): a region with stacked Latin letters on a page whose own text has
+    none is a misread (a Slovak field label came back as "IỆDPH/DRỖ"), and a word of letters that is a garbled form of a
+    page word of the same length (FUZZY_CUTOFF after folding diacritics, 4 or more letters) counts as found. Numbers
+    are never compared loosely: a garbled number is a different number. Accepted: an inflected repeat of page words
+    ("faktúry" for "faktúra") counts as found too."""
     have = Counter(words(page_text))
-    scripts = _blocks(page_text) if any(ch.isalpha() for ch in page_text) else None
+    misread = any(ch.isalpha() for ch in page_text) and not _stacked(page_text)
     added = []
     for label, text in regions:
         text = text.strip()
-        if is_junk(text) or (scripts is not None and not _blocks(text) <= scripts):
+        if is_junk(text) or (misread and _stacked(text)):
             continue
         found = words(text)
         if not found:
             continue
         exact = Counter(found) & have
-        folded = {_fold(w) for w in have}
+        by_length = {}
+        for w in have:
+            if w.isalpha():
+                by_length.setdefault(len(w), set()).add(_fold(w))
         near = sum(n for w, n in (Counter(found) - exact).items()
-                   if len(w) >= 4 and difflib.get_close_matches(_fold(w), folded, n=1, cutoff=FUZZY_CUTOFF))
+                   if len(w) >= 4 and w.isalpha() and difflib.get_close_matches(_fold(w), by_length.get(len(w), ()), n=1, cutoff=FUZZY_CUTOFF))
         if (sum(exact.values()) + near) / len(found) < FILL_FOUND:
             added.append((label, text))
             have.update(found)
