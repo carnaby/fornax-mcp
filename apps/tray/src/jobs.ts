@@ -2,7 +2,7 @@
 // pause), and the error of its last action.
 import { call } from './bridge';
 import type { JobView } from './types';
-import { button, make, rerender } from './ui';
+import { button, focusAfterDraw, make, rerender } from './ui';
 
 /** The job and action whose question waits for Yes ("<id> <action>"; one at a time). */
 let confirming: string | null = null;
@@ -31,22 +31,31 @@ export function confirmControls(j: JobView, o: ConfirmText): HTMLElement[] {
     return [
       button(key, o.label, o.title, () => {
         confirming = key;
+        focusAfterDraw(`${key} no`);
         rerender();
       }, { disabled: j.pending || o.stale, className: o.className }),
     ];
   }
+  // Answered or dismissed (Escape too, deferred 06e): the focus goes back to the button that asked.
+  const close = () => {
+    confirming = null;
+    focusAfterDraw(key);
+    rerender();
+  };
   const box = make('span', 'confirm');
+  box.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    e.preventDefault();
+    e.stopPropagation();
+    close();
+  });
   box.append(
     make('span', undefined, o.question),
     button(`${key} yes`, 'Yes', o.title, () => {
-      confirming = null;
       call(o.command ?? 'cancel_job', o.args ?? { id: j.id });
-      rerender();
+      close();
     }),
-    button(`${key} no`, 'No', 'Keep it', () => {
-      confirming = null;
-      rerender();
-    }),
+    button(`${key} no`, 'No', 'Keep it', close),
   );
   return [box];
 }

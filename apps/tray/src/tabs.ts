@@ -3,9 +3,9 @@
 // becomes as high as what it still shows; the core remembers it open or closed (window.rs) with the window's size and
 // place.
 import { call, invoke } from './bridge';
+import { heightToSend, otherTab, storedTab, type Tab } from './logic';
 import { el } from './ui';
 
-type Tab = 'history' | 'log';
 const KEY = 'fornax.tab';
 const TABS: Tab[] = ['history', 'log'];
 let active: Tab = 'history';
@@ -17,7 +17,7 @@ let drawn = false;
 
 function stored(): Tab {
   try {
-    return localStorage.getItem(KEY) === 'log' ? 'log' : 'history';
+    return storedTab(localStorage.getItem(KEY));
   } catch {
     return 'history';
   }
@@ -53,8 +53,8 @@ const measured = (): number => Math.ceil(el('tray').getBoundingClientRect().heig
 /** Closed: tells the core the window's new height, when it changed. */
 function fit(): void {
   if (open || !drawn) return;
-  const height = measured();
-  if (height === sentHeight) return;
+  const height = heightToSend({ open, drawn, height: measured(), sent: sentHeight });
+  if (height === null) return;
   sentHeight = height;
   call('set_history', { open: false, height });
 }
@@ -96,7 +96,7 @@ export function initTabs(): void {
   el('tablist').addEventListener('keydown', (e) => {
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
     e.preventDefault();
-    select(active === 'history' ? 'log' : 'history', true);
+    select(otherTab(active), true);
   });
   el('history-toggle').addEventListener('click', () => setOpen(!open));
   // Closed, the window follows what it shows: a waiting job, a banner.

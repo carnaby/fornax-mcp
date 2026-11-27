@@ -22,9 +22,10 @@ import { initQuit, renderQuit } from './quit';
 import { renderRunning } from './running';
 import { mountSkeleton } from './skeleton';
 import { initTabs, tabsDrawn } from './tabs';
+import { chooseFocus } from './logic';
 import { dayKey } from './text';
 import type { Snapshot } from './types';
-import { el, setOffset, setRerender, tickTimes } from './ui';
+import { el, setOffset, setRerender, takeAskedFocus, tickTimes } from './ui';
 import { isDragging, onDragEnd, renderWaiting } from './waiting';
 
 let current: Snapshot | null = null;
@@ -33,6 +34,20 @@ let current: Snapshot | null = null;
 let drawn: DrawKeys | null = null;
 /** A snapshot that came during a drag; drawn when it ends. */
 let held: Snapshot | null = null;
+
+/** A button that lost the focus because it was disabled (Pause while it waits): it gets it back when it can. */
+let wanted: string | undefined;
+
+/** Deferred 06e: the focus stays where the user was, also when an action replaced or disabled the focused button. */
+function restoreFocus(focused: string | undefined): void {
+  const lost = document.activeElement === null || document.activeElement === document.body;
+  const key = chooseFocus({ asked: takeAskedFocus(), focused, wanted, lost });
+  wanted = undefined;
+  if (key === undefined) return;
+  const node = [...document.querySelectorAll<HTMLElement>('[data-key]')].find((n) => n.dataset.key === key);
+  if (node instanceof HTMLButtonElement && node.disabled) wanted = key;
+  else node?.focus({ preventScroll: true });
+}
 
 /** Draws `s`, unless it equals the snapshot drawn last (`force`: the window's own state changed). */
 function render(s: Snapshot, force = false): void {
@@ -57,11 +72,7 @@ function render(s: Snapshot, force = false): void {
   renderHistory(s);
   renderLog(s.log);
   renderFooter(s);
-  if (focused !== undefined) {
-    for (const node of document.querySelectorAll<HTMLElement>('[data-key]')) {
-      if (node.dataset.key === focused) node.focus({ preventScroll: true });
-    }
-  }
+  restoreFocus(focused);
   renderQuit(s);
   tabsDrawn();
 }

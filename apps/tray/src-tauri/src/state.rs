@@ -2883,6 +2883,17 @@ mod tests {
         let mut gpu_keys: Vec<&str> = v["gpu"].as_object().unwrap().keys().map(String::as_str).collect();
         gpu_keys.sort_unstable();
         assert_eq!(gpu_keys, ["name", "problem", "state", "temperature", "totalMib", "usedMib", "utilization"]);
+        // Deferred 06e: the other objects ts reads keep their names too.
+        let inner = |v: &serde_json::Value| {
+            let mut k: Vec<String> = v.as_object().unwrap().keys().cloned().collect();
+            k.sort_unstable();
+            k
+        };
+        assert_eq!(inner(&v["status"]), ["label", "tone"]);
+        assert_eq!(inner(&v["gpuHolder"]), ["kind", "owner"]);
+        m.apply(waiting_queue(busy_card(), None, false), NOW);
+        let w = serde_json::to_value(m.snapshot()).unwrap();
+        assert_eq!(inner(&w["cardWait"]), ["error", "limitMib", "reason", "totalMib", "usedMib"]);
         assert_eq!(v["icon"], "busy");
         assert_eq!(v["log"][0].as_object().unwrap().keys().cloned().collect::<Vec<_>>().len(), 3);
     }

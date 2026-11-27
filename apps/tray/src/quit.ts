@@ -16,6 +16,8 @@ export function initQuit(): void {
 /** Drawn last: the question takes the focus when it appears. */
 export function renderQuit(s: Snapshot): void {
   el('quit').hidden = !s.confirmQuit;
+  // The window under the question cannot be reached with Tab while it is asked (deferred 06e).
+  el('tray').inert = s.confirmQuit;
   if (s.confirmQuit && !shown) el('quit-no').focus();
   shown = s.confirmQuit;
 }

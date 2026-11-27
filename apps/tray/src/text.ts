@@ -108,6 +108,12 @@ export function waitingNote(s: Snapshot): { text: string; lease: boolean } {
   return { text: 'in the order they run', lease: false };
 }
 
+/** The turn shown left of each waiting job: a job whose type is not offered has none, as on the server. */
+export function turns(jobs: JobView[]): string[] {
+  let n = 0;
+  return jobs.map((j) => (j.typeUnavailable ? '–' : String(++n)));
+}
+
 /** Spec 06e § 2.5: the notes of a waiting job. */
 export function waitingNotes(j: JobView): { text: string; bad: boolean }[] {
   const notes: { text: string; bad: boolean }[] = [];

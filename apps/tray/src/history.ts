@@ -3,6 +3,7 @@
 // their own, older ones not at all.
 import { call } from './bridge';
 import { actionError } from './jobs';
+import { errorHeadline } from './logic';
 import { historyDays, historySub } from './text';
 import type { JobView, Snapshot } from './types';
 import { button, el, make } from './ui';
@@ -17,7 +18,7 @@ function historyRow(j: JobView): HTMLElement {
   main.append(make('span', 'htitle', [j.type, j.what].filter(Boolean).join(' · ')));
   if (j.state === 'failed' && j.error) {
     const details = make('details', 'herror');
-    const summary = make('summary', undefined, j.error.split('\n')[0] ?? j.error);
+    const summary = make('summary', undefined, errorHeadline(j.error));
     summary.dataset.key = `${j.id} error`;
     details.append(summary, make('p', undefined, j.error));
     details.open = expanded.has(j.id);

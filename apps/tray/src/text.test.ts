@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 import { base, FIXTURES, job } from '../preview/fixtures';
 import {
   ago, cardBusySentence, chipClass, clock, dayKey, duration, etaMs, gb, gbShort, historyDays, historySub, holderText, idleJobs, idleNote, nothingRuns,
-  pauseQuestion, progressText, requeueQuestion, uptime, waitingJobs, waitingNote, waitingNotes,
+  pauseQuestion, progressText, requeueQuestion, turns, uptime, waitingJobs, waitingNote, waitingNotes,
 } from './text';
 
 const MIN = 60_000;
@@ -121,6 +121,11 @@ describe('history by day', () => {
 });
 
 describe('spec 07 texts', () => {
+  test('the turn numbers skip a job whose type is not offered: the server places it nowhere', () => {
+    const jobs = [job({ id: 'A' }), job({ id: 'B', typeUnavailable: true }), job({ id: 'C' })];
+    expect(turns(jobs)).toEqual(['1', '–', '2']);
+  });
+
   test('waiting and idle split the queued jobs', () => {
     const s = { ...base(), queued: [job({ id: 'A', priority: 'high' }), job({ id: 'B', priority: 'idle' }), job({ id: 'C' })] };
     expect(waitingJobs(s).map((j) => j.id)).toEqual(['A', 'C']);

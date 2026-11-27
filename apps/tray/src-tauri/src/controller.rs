@@ -879,6 +879,9 @@ mod tests {
             _ => None,
         });
         assert_eq!(read.map(|g| (g.used_mib, g.total_mib)), Ok((6400, 16311)));
+        // Deferred 06e: one reading, one answer; nothing more comes for it.
+        let more = rx.recv_timeout(Duration::from_millis(500));
+        assert!(!matches!(more, Ok(Input::GpuRead(_))), "a second answer: {more:?}");
     }
 
     #[test]

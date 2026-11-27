@@ -15,6 +15,18 @@ export function make<K extends keyof HTMLElementTagNameMap>(tag: K, className?: 
   return node;
 }
 
+let asked: string | undefined;
+/** The button to focus after the next redraw (an action that replaces the focused button names its successor). */
+export function focusAfterDraw(key: string): void {
+  asked = key;
+}
+/** The key asked for, once. */
+export function takeAskedFocus(): string | undefined {
+  const key = asked;
+  asked = undefined;
+  return key;
+}
+
 /** `key` (job id and action) finds the button again after a redraw, so that the focus stays on it. */
 export function button(
   key: string,

@@ -5,7 +5,7 @@
 import { call } from './bridge';
 import { actionError, cancelControls } from './jobs';
 import { priorityMenu, priorityTrigger } from './priority';
-import { idleJobs, idleNote, waitingJobs, waitingNote, waitingNotes } from './text';
+import { idleJobs, idleNote, turns, waitingJobs, waitingNote, waitingNotes } from './text';
 import type { JobView, Snapshot } from './types';
 import { button, chip, el, make, timeSpan } from './ui';
 
@@ -27,7 +27,7 @@ function clearMarks(): void {
   for (const r of document.querySelectorAll('.drop-before, .drop-after')) r.classList.remove('drop-before', 'drop-after');
 }
 
-type RowContext = { block: Block; jobs: JobView[]; stale: boolean; can: boolean };
+type RowContext = { block: Block; jobs: JobView[]; turns: string[]; stale: boolean; can: boolean };
 
 function row(j: JobView, index: number, c: RowContext): HTMLElement {
   const { block, jobs, stale, can } = c;
@@ -46,7 +46,7 @@ function row(j: JobView, index: number, c: RowContext): HTMLElement {
   const main = make('div', 'wmain');
   main.append(line, sub, ...actionError(j));
   const high = block === 'waiting' && j.priority === 'high';
-  const trigger = priorityTrigger(j, block === 'idle' ? '◷' : high ? 'HIGH' : String(index + 1), high ? 'prio prio-high' : 'wpos', { stale, can });
+  const trigger = priorityTrigger(j, block === 'idle' ? '◷' : high ? 'HIGH' : c.turns[index]!, high ? 'prio prio-high' : 'wpos', { stale, can });
   // ⤒ ⤓ move inside the block: before its first row, after its last.
   const first = jobs[0]!.id;
   const last = jobs[jobs.length - 1]!.id;
@@ -106,7 +106,7 @@ function renderIdle(s: Snapshot, stale: boolean): void {
   const error = el('start-idle-error');
   error.hidden = s.startIdleError === null;
   error.textContent = s.startIdleError ?? '';
-  const c: RowContext = { block: 'idle', jobs, stale, can: s.canPrioritize };
+  const c: RowContext = { block: 'idle', jobs, turns: [], stale, can: s.canPrioritize };
   el('idle').replaceChildren(...jobs.map((j, i) => row(j, i, c)));
 }
 
@@ -120,7 +120,7 @@ export function renderWaiting(s: Snapshot, stale: boolean): void {
   const list = el('waiting');
   if (!jobs.length) list.replaceChildren(make('li', 'wempty', s.queueKnown ? 'Nothing waits.' : (s.queueNote ?? '')));
   else {
-    const c: RowContext = { block: 'waiting', jobs, stale, can: s.canPrioritize };
+    const c: RowContext = { block: 'waiting', jobs, turns: turns(jobs), stale, can: s.canPrioritize };
     list.replaceChildren(...jobs.map((j, i) => row(j, i, c)));
   }
   renderIdle(s, stale);
