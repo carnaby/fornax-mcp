@@ -1,6 +1,6 @@
 {
   "name": "fornax",
-  "version": "0.16.1",
+  "version": "0.17.0",
   "private": true,
   "type": "module",
   "description": "A GPU job queue served over MCP: one worker owns the GPU, agents and apps send it jobs.",
