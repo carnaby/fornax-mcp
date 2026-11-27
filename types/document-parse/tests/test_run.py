@@ -155,20 +155,21 @@ class TextPathTest(RunCase):
         self.assertEqual(self.outputs(), [])
 
     def test_a_long_conversion_keeps_saying_it_runs(self):
-        code, out, err = self.run_job(self.doc("a.pdf", PDF), behavior={"pdf_chars": [1500, 1500], "convert_seconds": 2.6, "tick_s": 1})
+        code, out, err = self.run_job(self.doc("a.pdf", PDF), behavior={"pdf_chars": [1500, 1500], "convert_seconds": 5, "tick_s": 2})
         self.assertEqual(code, 0, err)
         messages = self.messages(out)
-        self.assertIn("converting 2 pages, 1 s", messages)
+        # A second of room on each side of every tick (deferred 0.14.2: the margins were half a second).
         self.assertIn("converting 2 pages, 2 s", messages)
+        self.assertIn("converting 2 pages, 4 s", messages)
         self.assertEqual(messages[-1], "done")
 
     def test_a_failed_conversion_stops_the_ticker(self):
-        code, out, err = self.run_job(self.doc("a.docx", DOCX), behavior={"convert_error": "Invalid code point", "convert_seconds": 1.6, "tick_s": 1})
+        code, out, err = self.run_job(self.doc("a.docx", DOCX), behavior={"convert_error": "Invalid code point", "convert_seconds": 3, "tick_s": 2})
         self.assertEqual(code, 1, err)
         messages = self.messages(out)
-        self.assertIn("converting, 1 s", messages)
-        self.assertNotIn("converting, 2 s", messages)
-        self.assertEqual(messages[-1], "converting, 1 s")  # nothing after the failure
+        self.assertIn("converting, 2 s", messages)
+        self.assertNotIn("converting, 4 s", messages)
+        self.assertEqual(messages[-1], "converting, 2 s")  # nothing after the failure
 
     def test_document_md_ends_with_one_newline(self):
         code, _, err = self.run_job(self.doc("a.docx", DOCX), behavior={"markdown": "# Zmluva\n\nText."})

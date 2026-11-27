@@ -49,7 +49,7 @@ class ImagePagesTest(unittest.TestCase):
         data = path.read_bytes()
         path.write_bytes(data[: len(data) // 2])
         with self.assertRaises(lib.Rejected) as cm:
-            convert.image_frames(path)
+            convert.image_frames(path, 200)
         self.assertTrue(str(cm.exception).startswith("the document is not a readable image ("), str(cm.exception))
 
     def test_a_multi_page_tiff_still_counts_its_pages(self):
@@ -57,7 +57,19 @@ class ImagePagesTest(unittest.TestCase):
 
         path = Path(self.tmp.name) / "pages.tif"
         Image.new("L", (20, 20), 255).save(path, save_all=True, append_images=[Image.new("L", (20, 20), 0)])
-        self.assertEqual(convert.image_frames(path), 2)
+        self.assertEqual(convert.image_frames(path, 200), 2)
+
+    def test_a_tiff_over_the_limit_is_counted_without_decoding_its_frames(self):
+        # Deferred 0.14.1: thousands of frames are refused by their count, not after every one of them is decoded.
+        from unittest import mock
+
+        from PIL import Image
+
+        path = Path(self.tmp.name) / "many.tif"
+        Image.new("L", (20, 20), 255).save(path, save_all=True, append_images=[Image.new("L", (20, 20), 0)] * 2)
+        with mock.patch.object(Image.Image, "load", side_effect=AssertionError("a frame was decoded")):
+            self.assertEqual(convert.image_frames(path, 2), 3)
+        self.assertEqual(convert.image_frames(path, 3), 3)
 
     def test_transparent_parts_become_white_not_black(self):
         from PIL import Image
@@ -91,3 +103,14 @@ class ImagePagesTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(importlib.util.find_spec("docling_core") is not None, "docling-core is not installed in this Python")
+class BuildDocumentTest(unittest.TestCase):
+    def test_neighbouring_added_list_items_share_one_list(self):
+        # Deferred 0.14.1: each added list item used to get a list group of its own.
+        page = {"width": 100, "height": 100, "paragraphs": ["Intro"],
+                "added": [("list_item", "first point"), ("list_item", "second point"), ("caption", "a caption"), ("list_item", "third point")]}
+        doc = convert.build_document([page, dict(page, added=[("list_item", "next page")])])
+        groups = [g for g in doc["groups"] if g["label"] == "list"]
+        self.assertEqual([len(g["children"]) for g in groups], [2, 1, 1])

@@ -111,10 +111,16 @@ class EnvironmentLine(unittest.TestCase):
 
 class GpuSettings(unittest.TestCase):
     def test_denoising_on_the_gpu_and_persistent_data(self):
-        scene = SimpleNamespace(cycles=SimpleNamespace(denoising_use_gpu=False), render=SimpleNamespace(use_persistent_data=False))
+        scene = SimpleNamespace(cycles=SimpleNamespace(use_denoising=True, denoising_use_gpu=False), render=SimpleNamespace(use_persistent_data=False))
         self.assertEqual(gpu_settings(scene), ["denoising on the GPU", "persistent data"])
         self.assertTrue(scene.cycles.denoising_use_gpu)
         self.assertTrue(scene.render.use_persistent_data)
+
+    def test_a_scene_with_denoising_off_says_so(self):
+        # Deferred 0.14.2: the setting is made either way, but the log says what the render does.
+        scene = SimpleNamespace(cycles=SimpleNamespace(use_denoising=False, denoising_use_gpu=False), render=SimpleNamespace(use_persistent_data=False))
+        self.assertEqual(gpu_settings(scene), ["denoising off", "persistent data"])
+        self.assertTrue(scene.cycles.denoising_use_gpu)
 
     def test_a_blender_without_gpu_denoising_still_keeps_persistent_data(self):
         scene = SimpleNamespace(cycles=SimpleNamespace(), render=SimpleNamespace(use_persistent_data=False))

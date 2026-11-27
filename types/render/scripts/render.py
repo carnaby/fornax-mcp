@@ -184,11 +184,17 @@ def main():
     refuse_nodes()
     refuse_sequencer_files()
     refuse_freestyle_scripts()
+    scene = bpy.context.scene
+    # Before the Eevee probe, which costs a Blender of its own (deferred 0.16.0).
+    if scene.camera is None:
+        leave(2, "the scene has no camera")
     engine = engine_of(params)
     if engine == "cycles":
         kind, names = enable_gpu()
         if kind is None:
             leave(3, "Cycles finds no GPU (OptiX, CUDA, HIP, oneAPI or Metal); check the driver, then fornax doctor render")
+        # The card is logged as soon as it is known, before anything else can stop the job (deferred 0.14.2).
+        print(f"render: Cycles on {kind} ({', '.join(names)})", file=sys.stderr, flush=True)
     else:
         # Spec 15 § 4.2: the check's result is not known here; a failing probe is exit 2, so the type stays offered.
         backend, reason = probe_eevee(bpy.app.binary_path, os.path.join(HERE, "eevee_probe.py"))
@@ -206,16 +212,12 @@ def main():
         if cycles is not None:
             cycles.shading_system = False  # no OSL
 
-    scene = bpy.context.scene
-    if scene.camera is None:
-        leave(2, "the scene has no camera")
     scene.render.use_multiview = False
     samples = samples_for(params)
     if engine == "cycles":
         scene.render.engine = "CYCLES"
         scene.cycles.device = "GPU"
-        on_card = gpu_settings(scene)
-        print(f"render: Cycles on {kind} ({', '.join(names)}); {'; '.join(on_card)}", file=sys.stderr, flush=True)
+        print(f"render: {'; '.join(gpu_settings(scene))}", file=sys.stderr, flush=True)
         scene.cycles.samples = samples
     else:
         scene.render.engine = eevee_id

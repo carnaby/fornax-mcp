@@ -87,18 +87,22 @@ def rgb(image):
     return image.convert("RGB")
 
 
-def image_frames(path):
-    """The number of pages of an image (a multi-page TIFF has several). Every frame is read once here, so a cut-off or
-    broken file is refused (exit 2) before any model loads."""
+def image_frames(path, limit):
+    """The number of pages of an image (a multi-page TIFF has several). Up to `limit` frames, every frame is read once
+    here, so a cut-off or broken file is refused (exit 2) before any model loads; more frames than that are only
+    counted (the caller refuses them by their number)."""
     from PIL import Image, ImageSequence
 
     with _open_image(path) as image:
         try:
+            count = getattr(image, "n_frames", 1)
+            if count > limit:
+                return count
             for frame in ImageSequence.Iterator(image):
                 frame.load()
         except (Image.DecompressionBombError, OSError, SyntaxError, EOFError, ValueError) as e:
             raise lib.Rejected(f"the document is not a readable image ({lib.one_line(e)})") from None
-        return getattr(image, "n_frames", 1)
+        return count
 
 
 def image_pages(path):
@@ -184,13 +188,17 @@ def build_document(pages):
         whole = BoundingBox(l=0, t=0, r=page["width"], b=page["height"], coord_origin=CoordOrigin.TOPLEFT)
         for text in page["paragraphs"]:
             doc.add_text(label=DocItemLabel.TEXT, text=text, prov=ProvenanceItem(page_no=no, bbox=whole, charspan=(0, len(text))))
+        group = None  # neighbouring list items share one list; anything else between them ends it
         for label, text in page["added"]:
             prov = ProvenanceItem(page_no=no, bbox=whole, charspan=(0, len(text)))
             kept = lib.added_label(label)
+            if kept == "list_item" and label not in lib.HEADING_LABELS:
+                group = group or doc.add_list_group()
+                doc.add_list_item(text=text, parent=group, prov=prov)
+                continue
+            group = None
             if label in lib.HEADING_LABELS:
                 doc.add_heading(text=text, level=1, prov=prov)
-            elif kept == "list_item":
-                doc.add_list_item(text=text, parent=doc.add_list_group(), prov=prov)
             else:
                 doc.add_text(label=DocItemLabel(kept), text=text, prov=prov)
     return doc.export_to_dict()

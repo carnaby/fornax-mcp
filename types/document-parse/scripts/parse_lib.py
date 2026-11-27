@@ -1,8 +1,10 @@
 """Pure functions of the document-parse pack (spec 11): the request, the kind of document and the path it takes, the
 limits, the fill-in from the layout, the Markdown and the outputs. No processes and no model libraries: the tests run
 it with the standard library only."""
+import difflib
 import json
 import re
+import unicodedata
 from collections import Counter
 
 LIMIT_PAGES = {"text": 1000, "ocr": 200}
@@ -118,6 +120,8 @@ CROP_SCALE = 2.0
 CROP_PAD = 4
 CROP_MIN = 8
 FILL_FOUND = 0.5
+# How close a garbled word must be to a page word (difflib ratio, diacritics folded) to count as found.
+FUZZY_CUTOFF = 0.8
 FILL_LABELS = ("text", "section_header", "title", "list_item", "caption", "page_header", "page_footer", "picture")
 HEADING_LABELS = ("section_header", "title")
 KEPT_LABELS = ("list_item", "caption", "page_header", "page_footer")
@@ -146,7 +150,8 @@ def added_label(label):
 
 def has_latex(text):
     """Whether the text holds a LaTeX command (a backslash before a letter) or a LaTeX math opener; a backslash before
-    anything else (a Windows path, a lone backslash) is text."""
+    anything else (a digit, a space, a lone backslash at the end) is text. A Windows path such as C:\\Users counts as
+    LaTeX by this rule, which is what OCR of an icon needs (spec 12 ruling)."""
     i = text.find(BACKSLASH)
     while i >= 0:
         after = text[i + 1:i + 2]
@@ -179,18 +184,47 @@ def crop_box(bbox, scale, width, height):
     return box
 
 
+def _block(ch):
+    """The Unicode block of a letter outside Basic Latin, Latin-1 and Latin Extended-A (those are common in European
+    names on any page: None); Latin beyond them by its range, other scripts by the first word of their name."""
+    code = ord(ch)
+    if code < 0x180:
+        return None
+    for start, end in ((0x180, 0x24F), (0x250, 0x2AF), (0x1E00, 0x1EFF)):
+        if start <= code <= end:
+            return start
+    return unicodedata.name(ch, "?").split()[0]
+
+
+def _blocks(text):
+    return {b for b in (_block(ch) for ch in text if ch.isalpha()) if b is not None}
+
+
+def _fold(word):
+    """A word without its diacritics, as OCR of a photo often loses them."""
+    return "".join(ch for ch in unicodedata.normalize("NFKD", word) if not unicodedata.combining(ch))
+
+
 def fill_in(page_text, regions):
-    """The regions (label, text) whose words the page's text mostly misses, each added once, junk left out."""
+    """The regions (label, text) whose words the page's text mostly misses, each added once, junk left out. Two rules
+    read the page (deferred 0.14.0, phone photos): a region with letters of a script the page's own text never uses is
+    a misread (a Slovak field label came back in Vietnamese letters), and a word that is a garbled form of a page word
+    (FUZZY_CUTOFF after folding diacritics, words of 4 or more characters) counts as found."""
     have = Counter(words(page_text))
+    scripts = _blocks(page_text) if any(ch.isalpha() for ch in page_text) else None
     added = []
     for label, text in regions:
         text = text.strip()
-        if is_junk(text):
+        if is_junk(text) or (scripts is not None and not _blocks(text) <= scripts):
             continue
         found = words(text)
         if not found:
             continue
-        if sum((Counter(found) & have).values()) / len(found) < FILL_FOUND:
+        exact = Counter(found) & have
+        folded = {_fold(w) for w in have}
+        near = sum(n for w, n in (Counter(found) - exact).items()
+                   if len(w) >= 4 and difflib.get_close_matches(_fold(w), folded, n=1, cutoff=FUZZY_CUTOFF))
+        if (sum(exact.values()) + near) / len(found) < FILL_FOUND:
             added.append((label, text))
             have.update(found)
     return added

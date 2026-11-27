@@ -51,7 +51,7 @@ def choose(convert, document, kind, ocr):
     if chars is not None:
         pages = len(chars)
     elif kind == "image":
-        pages = convert.image_frames(document)
+        pages = convert.image_frames(document, lib.LIMIT_PAGES[path])
     else:
         pages = None
     if pages is not None:

@@ -197,6 +197,23 @@ class FillInTest(unittest.TestCase):
         # One of three: added.
         self.assertEqual(lib.fill_in(page, [("text", "Finančná správa Levice")]), [("text", "Finančná správa Levice")])
 
+    def test_fill_in_skips_letters_of_a_script_the_page_never_uses(self):
+        # Deferred 0.14.0 (phone photo): a field label came back as "IỆDPH/DRỖ"; Slovak text has no such letters.
+        page = "Faktúra číslo 2026001\nDodávateľ: Príklad s.r.o., IČO 12345678, DIČ 2020123456"
+        self.assertEqual(lib.fill_in(page, [("text", "IỆDPH/DRỖ")]), [])
+        # Letters of Latin-1 and Latin Extended-A always pass (a name like Müller on a page without umlauts).
+        self.assertEqual(lib.fill_in(page, [("text", "Müller Straße 5")]), [("text", "Müller Straße 5")])
+        # A page whose own text uses that script keeps the region.
+        self.assertEqual(lib.fill_in("Hóa đơn điện tử số 12", [("text", "Người bán hàng")]), [("text", "Người bán hàng")])
+        # A page without letters of its own decides nothing.
+        self.assertEqual(lib.fill_in("", [("text", "Người bán")]), [("text", "Người bán")])
+
+    def test_fill_in_takes_a_garbled_repeat_of_page_words_as_found(self):
+        # Deferred 0.14.0 (phone photo): a garbled repeat of a field label was added as new text.
+        page = "Variabilný symbol 2026001 Dátum splatnosti 15.12.2026"
+        self.assertEqual(lib.fill_in(page, [("text", "Varlabilny symboI")]), [])
+        self.assertEqual(lib.fill_in(page, [("text", "Konštantný symbol 0308")]), [("text", "Konštantný symbol 0308")])
+
 
 class MarkdownTest(unittest.TestCase):
     def test_paragraphs(self):

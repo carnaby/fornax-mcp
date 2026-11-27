@@ -185,11 +185,15 @@ def environment_line(version_string, kind, names, ffmpeg=None, eevee=None):
 def gpu_settings(scene):
     """Cycles settings that keep the work on the card: the denoiser on the GPU (it runs on the CPU otherwise, and
     the CPU of a small PC becomes the bottleneck) and persistent data (the scene is not rebuilt for every frame).
-    Returns what was set, for the log."""
+    Returns what the render does, for the log: a scene with denoising off is not denoised at all."""
     done = []
+    denoised = getattr(scene.cycles, "use_denoising", True)
     if hasattr(scene.cycles, "denoising_use_gpu"):
         scene.cycles.denoising_use_gpu = True
-        done.append("denoising on the GPU")
+        if denoised:
+            done.append("denoising on the GPU")
+    if not denoised:
+        done.append("denoising off")
     scene.render.use_persistent_data = True
     done.append("persistent data")
     return done

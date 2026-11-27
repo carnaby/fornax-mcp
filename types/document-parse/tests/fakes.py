@@ -51,7 +51,7 @@ def pdf_profile(path):
     return B.get("pdf_chars", [1500, 1500])
 
 
-def image_frames(path):
+def image_frames(path, limit):
     log({"call": "image_frames"})
     if B.get("image_error"):
         raise lib.Rejected("the document is not a readable image (" + B["image_error"] + ")")

@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -99,6 +100,42 @@ class ToolTest(unittest.TestCase):
             self.assertTrue(encode.remove_soon(p))
             self.assertTrue(encode.remove_soon(p))  # already gone is fine
             self.assertFalse(p.exists())
+
+    # Deferred 0.13.0: the Windows branches of remove_soon and kill_tree were untested here (upscale has the same).
+    @unittest.skipUnless(os.name == "nt", "Windows: a file still open cannot be removed")
+    def test_a_file_held_for_a_moment_is_removed_once_it_is_let_go(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "x.part.mp3"
+            f = open(p, "wb")  # Python opens without FILE_SHARE_DELETE: removing it fails while it is open
+            try:
+                threading.Timer(0.3, f.close).start()
+                self.assertTrue(encode.remove_soon(p, 5))
+            finally:
+                f.close()
+            self.assertFalse(p.exists())
+
+    @unittest.skipUnless(os.name == "nt", "Windows: a file still open cannot be removed")
+    def test_a_file_held_all_along_gives_up_without_raising(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "x.part.mp3"
+            with open(p, "wb"):
+                self.assertFalse(encode.remove_soon(p, 0.2))
+            self.assertTrue(encode.remove_soon(p))
+
+    @unittest.skipUnless(os.name == "nt", "Windows: kill_tree is taskkill /T")
+    def test_kill_tree_ends_the_launcher_and_its_child(self):
+        child = "import time; time.sleep(60)"
+        launcher = f"import subprocess, sys, time; p = subprocess.Popen([sys.executable, '-c', {child!r}]); print(p.pid, flush=True); time.sleep(60)"
+        p = subprocess.Popen([sys.executable, "-c", launcher], stdout=subprocess.PIPE, text=True)
+        try:
+            pid = int(p.stdout.readline())
+            encode.kill_tree(p.pid)
+            p.wait(timeout=10)
+            listed = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"], capture_output=True, text=True).stdout
+            self.assertNotIn(str(pid), listed)
+        finally:
+            p.kill()
+            p.stdout.close()
 
 
 if __name__ == "__main__":
