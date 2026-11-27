@@ -12,8 +12,18 @@ from parse_lib import Rejected  # noqa: E402
 
 class ParamsTest(unittest.TestCase):
     def test_ocr_defaults_to_auto(self):
-        self.assertEqual(lib.read_params(b"{}"), "auto")
-        self.assertEqual(lib.read_params(b'{"ocr": "always"}'), "always")
+        self.assertEqual(lib.read_params(b"{}").ocr, "auto")
+        self.assertEqual(lib.read_params(b'{"ocr": "always"}').ocr, "always")
+
+    def test_read_params_defaults_and_values(self):
+        self.assertEqual(lib.read_params(b"{}"), lib.Params("auto", False, 0.85))
+        self.assertEqual(lib.read_params(b'{"blocks": true, "min_confidence": 0.7}'), lib.Params("auto", True, 0.7))
+        self.assertEqual(lib.read_params(b'{"min_confidence": 1}'), lib.Params("auto", False, 1))
+        for bad, msg in ((b'{"blocks": "true"}', "^blocks must be true or false$"),
+                         (b'{"min_confidence": 1.5}', "^min_confidence must be a number from 0 to 1$"),
+                         (b'{"min_confidence": true}', "^min_confidence must be a number from 0 to 1$")):
+            with self.subTest(bad=bad), self.assertRaisesRegex(Rejected, msg):
+                lib.read_params(bad)
 
     def test_what_is_not_a_request_is_rejected(self):
         for data, sentence in ((b"{text", r"^params\.json does not hold valid parameters \(JSONDecodeError: "),
@@ -284,6 +294,73 @@ class OutputTest(unittest.TestCase):
     def test_outputs_json(self):
         meta = {"path": "text"}
         self.assertEqual(lib.outputs_json(meta), {"document.md": {"meta": meta}, "document.json": {"meta": {"format": "DoclingDocument"}}})
+
+
+def one_token_per_word(text, low):
+    """(token_ends, token_probs) with one token per word and one per run of whitespace; a word's probability from
+    `low` (1.0 otherwise), whitespace 1.0."""
+    import re
+
+    ends, probs = [], []
+    for m in re.finditer(r"\S+|\s+", text):
+        ends.append(m.end())
+        probs.append(1.0 if m.group().isspace() else low.get(m.group(), 1.0))
+    return ends, probs
+
+
+class BlocksTest(unittest.TestCase):
+    """Spec 16 § 4 (G1): words, their confidence and the paragraph blocks of blocks.json."""
+
+    def test_blocks_send_a_pdf_down_the_ocr_path_and_refuse_office(self):
+        self.assertEqual(lib.choose_path("pdf", "auto", [1500, 1500], blocks=True), "ocr")
+        self.assertEqual(lib.choose_path("pdf", "auto", [1500, 1500]), "text")
+        self.assertEqual(lib.choose_path("image", "auto", None, blocks=True), "ocr")
+        with self.assertRaisesRegex(Rejected, "^blocks needs an image or a PDF$"):
+            lib.choose_path("docx", "auto", None, blocks=True)
+
+    def test_word_confidence_is_the_lowest_overlapping_token(self):
+        # "Košice, ok": tokens "Ko" "šice" "," " ok"
+        self.assertEqual(lib.word_confidences("Košice, ok", [2, 6, 7, 10], [0.99, 0.6, 0.9, 0.98]), [(0, 7, 0.6), (8, 10, 0.98)])
+
+    def test_empty_token_spans_are_ignored(self):
+        self.assertEqual(lib.word_confidences("ab", [0, 2, 2], [0.1, 0.9, 0.2]), [(0, 2, 0.9)])
+
+    def test_paragraph_blocks_mark_uncertain_words(self):
+        text = "EN: Take 2 tablets daily,\nWarnings: none.\n\nDE: Dosierung: 2 Tabletten"
+        words = lib.word_confidences(text, *one_token_per_word(text, {"daily,": 0.7, "Dosierung:": 0.9}))
+        blocks = lib.paragraph_blocks(text, words, 0.85)
+        self.assertEqual([b["text"][:3] for b in blocks], ["EN:", "DE:"])
+        self.assertEqual(blocks[0], {
+            "label": "paragraph", "bbox": None,
+            "text": "EN: Take 2 tablets daily,\nWarnings: none.", "marked": "EN: Take 2 tablets [[daily,]]\nWarnings: none.",
+            "confidence": 0.7, "uncertain": [{"word": "daily,", "confidence": 0.7}],
+        })
+        self.assertEqual((blocks[1]["confidence"], blocks[1]["uncertain"]), (0.9, []))
+
+    def test_blocks_from_text_with_crlf_and_padding(self):
+        text = "  Erste Zeile\r\n\r\nzweite  "
+        words = lib.word_confidences(text, *one_token_per_word(text, {"zweite": 0.5}))
+        self.assertEqual([(b["text"], b["marked"]) for b in lib.paragraph_blocks(text, words, 0.85)],
+                         [("Erste Zeile", "Erste Zeile"), ("zweite", "[[zweite]]")])
+
+    def test_threshold_edges(self):
+        text = "a b"
+        words = lib.word_confidences(text, *one_token_per_word(text, {"a": 0.99}))
+        self.assertEqual(lib.paragraph_blocks(text, words, 0)[0]["uncertain"], [])
+        self.assertEqual(lib.paragraph_blocks(text, words, 1)[0]["marked"], "[[a]] b")
+
+    def test_a_block_without_words_is_certain(self):
+        self.assertEqual(lib.paragraph_blocks("x", [], 0.85)[0]["confidence"], 1.0)
+
+    def test_empty_page_has_no_blocks(self):
+        doc = lib.blocks_json([{"width": 10, "height": 20, "blocks": lib.paragraph_blocks("", [], 0.85)}], 0.85)
+        self.assertEqual(doc, {"min_confidence": 0.85, "marker": "[[ ]]",
+                               "pages": [{"page": 1, "width": 10, "height": 20, "preprocessed": False, "blocks": []}]})
+
+    def test_outputs_json_lists_blocks_only_when_written(self):
+        self.assertNotIn("blocks.json", lib.outputs_json({"path": "ocr"}))
+        meta = {"format": "fornax-blocks", "blocks": 2, "uncertain_words": 1}
+        self.assertEqual(lib.outputs_json({"path": "ocr"}, meta)["blocks.json"], {"meta": meta})
 
 
 if __name__ == "__main__":

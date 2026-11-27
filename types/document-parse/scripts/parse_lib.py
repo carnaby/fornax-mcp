@@ -5,7 +5,7 @@ import difflib
 import json
 import re
 import unicodedata
-from collections import Counter
+from collections import Counter, namedtuple
 
 LIMIT_PAGES = {"text": 1000, "ocr": 200}
 SCAN_CHARS_PER_PAGE = 50
@@ -16,6 +16,10 @@ KINDS = {
     ".tiff": "image", ".bmp": "image",
 }
 OCR_MODES = ("auto", "always")
+# Spec 16: the params of blocks.json and the default threshold of an uncertain word.
+Params = namedtuple("Params", "ocr blocks min_confidence")
+DEFAULT_MIN_CONFIDENCE = 0.85
+BLOCK_MARKER = "[[ ]]"
 PDF_MAGIC = b"%PDF-"
 ZIP_MAGIC = bytes([0x50, 0x4B, 0x03, 0x04])
 OFFICE = ("docx", "xlsx", "pptx")
@@ -61,7 +65,13 @@ def read_params(data):
     ocr = params.get("ocr", "auto")
     if not isinstance(ocr, str) or ocr not in OCR_MODES:
         raise Rejected(f"ocr must be auto or always, not {ocr!r}")
-    return ocr
+    blocks = params.get("blocks", False)
+    if not isinstance(blocks, bool):
+        raise Rejected("blocks must be true or false")
+    threshold = params.get("min_confidence", DEFAULT_MIN_CONFIDENCE)
+    if isinstance(threshold, bool) or not isinstance(threshold, (int, float)) or not 0 <= threshold <= 1:
+        raise Rejected("min_confidence must be a number from 0 to 1")
+    return Params(ocr, blocks, threshold)
 
 
 def kind_of(name):
@@ -87,13 +97,16 @@ def content_problem(kind, head):
     return None
 
 
-def choose_path(kind, ocr, chars_per_page):
-    """`ocr` (PaddleOCR-VL page by page) or `text` (Docling's standard pipeline); spec § 4.1."""
+def choose_path(kind, ocr, chars_per_page, blocks=False):
+    """`ocr` (PaddleOCR-VL page by page) or `text` (Docling's standard pipeline); spec § 4.1. With blocks (spec 16)
+    a PDF is read by OCR and a text-path kind is refused."""
     if kind == "image":
         return "ocr"
     if kind != "pdf":
+        if blocks:
+            raise Rejected("blocks needs an image or a PDF")
         return "text"
-    if ocr == "always":
+    if ocr == "always" or blocks:
         return "ocr"
     pages = len(chars_per_page or [])
     if not pages:
@@ -280,8 +293,58 @@ def output_meta(path, kind, pages, tables, markdown, added, seconds, peak_vram_m
     return meta
 
 
-def outputs_json(meta):
-    return {"document.md": {"meta": meta}, "document.json": {"meta": {"format": "DoclingDocument"}}}
+def outputs_json(meta, blocks_meta=None):
+    out = {"document.md": {"meta": meta}, "document.json": {"meta": {"format": "DoclingDocument"}}}
+    if blocks_meta is not None:
+        out["blocks.json"] = {"meta": blocks_meta}
+    return out
+
+
+def word_confidences(text, token_ends, token_probs):
+    """(start, end, confidence) of each word of `text` (a run without whitespace): the lowest probability of the tokens
+    whose characters overlap it (spec 16 § 4). Token i covers text[token_ends[i-1]:token_ends[i]]; a token that adds
+    no character is ignored."""
+    spans, start = [], 0
+    for end, prob in zip(token_ends, token_probs):
+        if end > start:
+            spans.append((start, end, prob))
+        start = max(start, end)
+    words = []
+    for m in re.finditer(r"\S+", text):
+        probs = [p for s, e, p in spans if s < m.end() and e > m.start()]
+        words.append((m.start(), m.end(), min(probs) if probs else 1.0))
+    return words
+
+
+def paragraph_blocks(text, words, min_confidence):
+    """The paragraphs of a page's read (split at blank lines, stripped) as blocks of blocks.json: each word under
+    `min_confidence` is uncertain and wrapped in [[ ]] in `marked` (spec 16 § 4)."""
+    blocks = []
+    for m in re.finditer(r"\S(?:.*?\S)?(?=\s*\n\s*\n|\s*$)", text, re.S):
+        start, end = m.span()
+        inside = [w for w in words if start <= w[0] < end]
+        uncertain = [w for w in inside if w[2] < min_confidence]
+        marked, at = [], start
+        for s, e, _ in uncertain:
+            marked += [text[at:s], "[[", text[s:e], "]]"]
+            at = e
+        marked.append(text[at:end])
+        blocks.append({
+            "label": "paragraph",
+            "bbox": None,
+            "text": m.group().replace("\r\n", "\n"),
+            "marked": "".join(marked).replace("\r\n", "\n"),
+            "confidence": round(min((w[2] for w in inside), default=1.0), 2),
+            "uncertain": [{"word": text[s:e], "confidence": round(c, 2)} for s, e, c in uncertain],
+        })
+    return blocks
+
+
+def blocks_json(pages, min_confidence):
+    """blocks.json (spec 16 § 4): `pages` items {"width", "height", "blocks"}, numbered from 1."""
+    return {"min_confidence": min_confidence, "marker": BLOCK_MARKER,
+            "pages": [{"page": i, "width": p["width"], "height": p["height"], "preprocessed": False, "blocks": p["blocks"]}
+                      for i, p in enumerate(pages, 1)]}
 
 
 def converting(pages, seconds):

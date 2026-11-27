@@ -34,14 +34,14 @@ def docling_version():
 
 
 def read_request(params_path, document):
-    """The ocr mode and the kind of the document, checked before anything heavy is imported."""
-    ocr = lib.read_params(Path(params_path).read_bytes())
+    """The params (spec 11, spec 16) and the kind of the document, checked before anything heavy is imported."""
+    params = lib.read_params(Path(params_path).read_bytes())
     kind = lib.kind_of(Path(document).name)
     with open(document, "rb") as f:
         problem = lib.content_problem(kind, f.read(1024))
     if problem:
         raise lib.Rejected(problem)
-    return ocr, kind
+    return params, kind
 
 
 def choose(convert, document, kind, ocr):
@@ -129,7 +129,7 @@ def main(argv=None):
     a = p.parse_args(argv)
     started = time.monotonic()
     try:
-        ocr, kind = read_request(a.params, a.document)
+        params, kind = read_request(a.params, a.document)
     except lib.Rejected as e:
         return fail(INVALID, str(e))
     except OSError as e:
@@ -139,7 +139,7 @@ def main(argv=None):
     except ImportError as e:
         return broken_environment(e)
     try:
-        path, pages = choose(convert, a.document, kind, ocr)
+        path, pages = choose(convert, a.document, kind, params.ocr)
     except lib.Rejected as e:
         return fail(INVALID, str(e))
     except ImportError as e:
